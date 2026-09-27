@@ -1,4 +1,4 @@
-# Pygame Piano Animator
+# Hand-thesia - Animated Hands for Piano
 
 What if Synthesia had nice lively hands to go along with those falling notes? Well look no further!
 
