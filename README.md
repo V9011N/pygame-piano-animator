@@ -14,6 +14,10 @@ editable by hand.
 
 Bach Solfeggietto with Skeleton Hands
 
+[![Beethoven Waldstein Example with Robot Hands](https://img.youtube.com/vi/h--70K8a0XE/0.jpg)](https://www.youtube.com/watch?v=h--70K8a0XE)
+
+Beethoven Waldstein with Robot Hands
+
 ## Features
 
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
