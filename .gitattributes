@@ -1,0 +1,8 @@
+# Normalise line endings in the repository; check out with the platform's own
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.mid binary
+*.midi binary
+*.png binary

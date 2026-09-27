@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Your own pianists (saved from the Pianists & hands screen) - personal settings
+pianists/
+
+# Previews and exports made along the way
+Claude outputs/
+*.png
+!docs/**/*.png
+
+# Third-party material that isn't ours to redistribute:
+#   the PIG fingering dataset (research licence), score PDFs, skin reference
+#   images, and MIDI files downloaded from elsewhere (MAESTRO is CC BY-NC-SA,
+#   others vary). Keep them locally; only the small test files are tracked.
+FingeringFiles/
+PianoFingeringDataset_v*.zip
+PDFs/
+Hand Skin References/
+MIDIs/*
+!MIDIs/demo_song.mid
+!MIDIs/right_hand_test.mid
+!MIDIs/right_hand_octaves_test.mid
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Claude Code: personal settings stay local (shared project settings are .claude/settings.json)
+.claude/settings.local.json
