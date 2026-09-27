@@ -8,7 +8,11 @@ editable by hand.
 
 ***NOTE: VIBE-CODED PROJECT! Do not post issues, you'll fix them faster just vibe-coding yourself.***
 
+### Sample Vids Showing the Different Hand Skins
+
 [![Bach Solfeggietto Example with Skeleton Hands](https://img.youtube.com/vi/gj3QNIqWuMY/0.jpg)](https://www.youtube.com/watch?v=gj3QNIqWuMY)
+
+Bach Solfeggietto with Skeleton Hands
 
 ## Features
 
