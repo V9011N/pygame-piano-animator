@@ -1,5 +1,7 @@
 # Pygame Piano Animator
 
+What if Synthesia had nice lively hands to go along with those falling notes? Well look no further!
+
 Reads MIDI files and animates, in real time and seen from above, the piano keys and a pair of
 procedurally animated hands playing them - with fingering worked out automatically and
 editable by hand.
