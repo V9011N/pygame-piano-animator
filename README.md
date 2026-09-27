@@ -22,6 +22,10 @@ Beethoven Waldstein with Robot Hands
 
 Debussy Arabesque with Human Hands
 
+[![Cuphead Show Example with White Gloves](https://img.youtube.com/vi/4Zgt4DTOMAo/0.jpg)](https://www.youtube.com/watch?v=4Zgt4DTOMAo)
+
+From The Cuphead Show with White Gloves
+
 ## Features
 
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
