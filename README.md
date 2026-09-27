@@ -18,6 +18,10 @@ Bach Solfeggietto with Skeleton Hands
 
 Beethoven Waldstein with Robot Hands
 
+[![Debussy Arabesque Example with Human Hands](https://img.youtube.com/vi/aiAx60huEHE/0.jpg)](https://www.youtube.com/watch?v=aiAx60huEHE)
+
+Debussy Arabesque with Human Hands
+
 ## Features
 
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
