@@ -1,5 +1,7 @@
 # Hand-thesia - Animated Hands for Piano
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/V9011N/pygame-piano-animator)
+
 What if Synthesia had nice lively hands to go along with those falling notes? Well look no further!
 
 Hand-thesia reads MIDI files and animates, in real time and seen from above, the piano keys and a pair of
