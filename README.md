@@ -6,6 +6,8 @@ Hand-thesia reads MIDI files and animates, in real time and seen from above, the
 procedurally animated hands playing them - with fingering worked out automatically and
 editable by hand.
 
+***NOTE: VIBE-CODED PROJECT! Do not post issues, you'll fix them faster just vibe-coding yourself.***
+
 ## Features
 
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
