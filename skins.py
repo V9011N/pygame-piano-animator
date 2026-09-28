@@ -411,6 +411,9 @@ def _creases(pen, h, f, color):
                      (q[0] - nx * r * 0.45, q[1] - ny * r * 0.45), color, max(1, r * 0.12))
 
 
+NAIL_HIDE_DEG = (95.0, 115.0)   # phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
+
+
 def _nail(pen, h, f, fill, edge):
     """
     The nail on the back of the distal phalanx, seen from above. As the
@@ -418,7 +421,9 @@ def _nail(pen, h, f, fill, edge):
     is foreshortened along the finger and slides out toward the end of the
     finger (it sits on the top of the phalanx, which now faces forward), so
     the skin in front of it shrinks away until the squashed nail fills the
-    rounded end of the finger.
+    rounded end of the finger. Curled on past straight down, with the tip
+    tucked back under the last knuckle, it turns out of sight over that end
+    (NAIL_HIDE_DEG) instead of showing on the knuckle.
     """
     segs = h.radius[f]
     a, b, r = segs[-1]
@@ -428,10 +433,17 @@ def _nail(pen, h, f, fill, edge):
     L = math.hypot(math.hypot(dx, dy), drop)             # true length of the phalanx
     if L < 3:
         return
-    # the finger's forward direction on screen: the phalanx's own, or the one
-    # before it once it is seen nearly end-on (a curled tip can even tuck back)
-    px, py = _unit(pb[0] - pa[0], pb[1] - pa[1])
+    # the finger's forward direction on screen: the phalanx's own, or the
+    # finger's up to it once it is seen nearly end-on (a curled tip can even
+    # tuck back). Not the middle phalanx alone: strongly curved, that one
+    # points straight down too and its direction on screen is noise.
+    px, py = _unit(sum(q[0] - o[0] for o, q, _ in segs[:-1]), sum(q[1] - o[1] for o, q, _ in segs[:-1]))
     fwd = dx * px + dy * py
+    # past straight down (the tip tucked back) the nail turns away over the end
+    pitch = math.degrees(math.atan2(drop, fwd))
+    show = max(0.0, min(1.0, (NAIL_HIDE_DEG[1] - pitch) / (NAIL_HIDE_DEG[1] - NAIL_HIDE_DEG[0])))
+    if show <= 0.0:
+        return
     w = max(0.0, min(1.0, (fwd / L - 0.2) / 0.3))
     dux, duy = _unit(dx, dy)
     ux, uy = _unit(px + (dux - px) * w, py + (duy - py) * w)
@@ -449,7 +461,7 @@ def _nail(pen, h, f, fill, edge):
     # shell, so even seen nearly end-on it keeps some depth.
     s0, s1 = -0.5 * L - 0.35 * r, 0.12 * r
     x1 = s1 * cos + (xc + rc - 0.08 * r) * sin
-    x0 = x1 - max((s1 - s0) * cos, 0.7 * r * sin)
+    x0 = x1 - max((s1 - s0) * cos, 0.7 * r * sin * show)
     mid, hl = (x0 + x1) / 2, (x1 - x0) / 2
 
     def shape(grow):
@@ -457,7 +469,7 @@ def _nail(pen, h, f, fill, edge):
         for i in range(32):
             t = 2 * math.pi * i / 32
             c, s = math.cos(t), math.sin(t)
-            x = mid + (hl + grow * max(cos, 0.35)) * math.copysign(abs(c) ** 0.7, c)
+            x = mid + (hl + grow * max(cos, 0.35 * show)) * math.copysign(abs(c) ** 0.7, c)
             y = (0.5 * r + grow) * math.copysign(abs(s) ** 0.7, s)
             if x > xc:                                   # stay inside the rounded end
                 y = math.copysign(min(abs(y), 0.94 * math.sqrt(max(0.0, rc * rc - (x - xc) ** 2))), y)
