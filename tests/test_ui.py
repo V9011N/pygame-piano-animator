@@ -82,3 +82,28 @@ def test_nail_slides_to_tip_and_squashes_as_finger_curls():
     assert all(x >= y - 1e-6 for x, y in zip(gaps, gaps[1:4]))
     assert all(x >= y - 1e-6 for x, y in zip(lengths, lengths[1:4]))
     assert lengths[3] < 0.5 * lengths[0]
+
+
+def test_no_nail_on_the_knuckle_of_a_tightly_curled_finger():
+    import skins
+
+    class Pen:
+        pts = None
+
+        def poly(self, pts, color):
+            self.pts = pts
+
+    class Hand:
+        pass
+    # strongly curved: the middle phalanx points straight down (its direction
+    # on screen a fraction of a pixel, backward) and the tip tucks back under it
+    pip, dip = (550.7, 572.2, 57.3), (550.7, 572.3, 26.6)
+    h = Hand()
+    h.radius = {3: [((557.2, 622.8, 59.8), pip, 13.8), (pip, dip, 12.0), (dip, (553.2, 591.8, 17.7), 9.7)]}
+    pen = Pen()
+    skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
+    assert pen.pts is None
+    # only just past straight down, the nail still caps the end of the finger
+    h.radius[3][-1] = (dip, (550.9, 573.5, 0.0), 9.7)
+    skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
+    assert pen.pts and min(p[1] for p in pen.pts) < 572.3 - 9.0

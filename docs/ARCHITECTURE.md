@@ -232,6 +232,10 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     nail fills the rounded end, clipped to that circle. Curled tips often tuck back under the last knuckle, so the
     direction comes from the middle phalanx once the distal one is seen nearly end-on, and the outline's end is the
     knuckle's circle when that reaches further than the tip's.
+    The forward direction is the sum of the finger's other segments, not the middle phalanx alone: strongly curved,
+    that one points straight down and its screen direction is sub-pixel noise (it flipped the nail onto the knuckle).
+    Past straight down the nail turns out of sight over the end: its minimum length shrinks between 95° and 115° of
+    pitch (`NAIL_HIDE_DEG`), and it isn't drawn beyond that.
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
