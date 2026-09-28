@@ -422,3 +422,22 @@ def test_octaves_open_to_1_5_around_a_held_inner_note():
     # no pair of fingers in a chord is asked to reach further than it can,
     # neighbours or not: an octave can't be 1-3 with 2 between them
     assert F.inner_room_cost([(70, 1), (74, 2), (82, 4)]) > 0 == F.inner_room_cost([(70, 1), (74, 2), (82, 5)])
+
+
+def test_the_hand_reaches_an_octave_with_a_held_middle_finger():
+    import math
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # A4-D5-A5 held with 1-3-5 (Op. 25 No. 10's middle voice): the hand fit
+    # puts every finger on its key (with the middle finger's old +-12 degree
+    # splay it fell 0.12 in short)
+    ns = [Note(69, 0.2, 1.2, 90, 0, RIGHT, finger=1), Note(74, 0.2, 1.2, 90, 0, RIGHT, finger=3),
+          Note(81, 0.2, 1.2, 90, 0, RIGHT, finger=5)]
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    pose = a.pose(0.7, kb)
+    for n in ns:
+        f = a.fingering[id(n)]
+        tip = pose["struct"]["chains"][f][-1]
+        assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w

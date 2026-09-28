@@ -433,6 +433,23 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     404 of the 430 frames are with a held inner note, where the static poses exist but the hand solver doesn't
     reach them while it moves between octaves (the little finger is now the one off). Fingering changes: bundled
     MIDIs and Winter Wind none, Dante 106 notes (mostly 4 -> 5 at the top of an octave-wide hand with a key held).
+  - Hand solver for these (2026-09-28). Of the frames with a pressed key > 0.1 in out of reach (Op. 25 No. 10,
+    0-30 s: R 224, L 228), about 2/3 were shapes no hand pose reached - the octave pins the thumb and the little
+    finger at their limits, and the middle finger's ±12° splay couldn't take a D5 between A4 and A5 (1-3-5, 0.12 in
+    short) - and 1/3 were reached by `_key_fix` but lost in the ±50 ms smoothing, which mixes in the next chord's
+    pose when chords come every 0.14 s.
+    - `SPLAY_LIMIT_DEG`: middle finger ±18° (was ±12), ring −15..+16 (was −12..+14).
+    - `_smooth_hand_grid` blends ±`LIMIT_SMOOTH_HAND` 3 steps (±50 ms, the hand travelling) with
+      ±`LIMIT_SMOOTH_HAND_ON` 1 step (±17 ms) by how much the keys count (`_key_weight`, max over fingers).
+    - `_key_fix` gives a finger already down on its key its pressing slack (`PRESS_SLACK_DEG`, as `_limit_tip`
+      does) and samples 13 depths along a key (was 7).
+    - Tried and dropped (no measurable gain): a pattern search after Gauss-Newton, warm-starting from the last
+      step, letting chord-to-chord keys go 35 ms early, a shorter release fade.
+    - Frames > 0.1 in out of reach: R 224 -> 61, L 228 -> 84. Pressed tips > 0.1 key off: Op. 25 No. 10 (0-30 s)
+      430 -> 182 (> 0.3 key 69 -> 86: LH black-key octaves on 1-5 with 2 held 3 semitones from the thumb, e.g.
+      A#1-G2-A#2, still 0.34 in beyond any pose), Winter Wind (20-40 s) 29 -> 29 (> 0.3: 14 -> 1), Dante
+      (140-160 s) 33 -> 1, demo 23 -> 25. Winter Wind fingertip jerks 134 -> 275 (the narrower smoothing while
+      keys are down; 846 before any smoothing). ~2.4-2.6 ms per hand per frame.
 - **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
   passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
   splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).

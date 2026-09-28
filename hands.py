@@ -143,7 +143,7 @@ CROSS_LIFT_T = 0.07         # ...and a key held across a wide thumb crossing is 
 # Joint limits. Splay is the angle of the knuckle->fingertip line in the hand's
 # own frame, 0 = straight ahead, + = toward the little finger. The thumb's is
 # measured from its base (CMC); it swings far out and can tuck under the palm.
-SPLAY_LIMIT_DEG = {1: (-64, 34), 2: (-24, 10), 3: (-12, 12), 4: (-12, 14), 5: (-8, 24)}
+SPLAY_LIMIT_DEG = {1: (-64, 34), 2: (-24, 10), 3: (-18, 18), 4: (-15, 16), 5: (-8, 24)}
 PRESS_SLACK_DEG = {1: 6, 2: 6, 3: 6, 4: 6, 5: 3}   # extra splay only while holding a key down
 # The fingertip stays between these shares of the finger's length in front of
 # its knuckle (no curling back under the hand, no locking straight).
@@ -205,7 +205,8 @@ KEY_SPOT_SOFT = (4.0, 0.12)
 TIP_ARM_IN = 7.0            # in, how far the fingertips swing out from the wrist when the hand turns
 LIMIT_RESTART_T = 0.5       # s, the speed limit's chain restarts this far back after a seek
 LIMIT_GRID_T = 1 / 60       # s, the speed limit steps on this grid (linear in between)
-LIMIT_SMOOTH_HAND = 3       # grid steps each side the limited hand is averaged over
+LIMIT_SMOOTH_HAND = 3       # grid steps each side the limited hand is averaged over...
+LIMIT_SMOOTH_HAND_ON = 1    # ...and while its fingers are on keys
 LIMIT_SMOOTH_TIPS = 3       # ...and the fingertips
 SHAPE_FALLOFF = 0.6         # idle fingers follow a busy neighbour by this much per finger
 
@@ -817,14 +818,21 @@ class HandAnimator:
         if q is None:
             if len(cache) > 20000:
                 cache.clear()
-            n = LIMIT_SMOOTH_HAND
-            acc, ws = [0.0, 0.0, 0.0], 0.0
-            for d in range(-n, n + 1):
-                w = n + 1 - abs(d)
-                v = self._limited_grid(k + d)
-                acc = [a + w * x for a, x in zip(acc, v)]
-                ws += w
-            q = cache[k] = tuple(a / ws for a in acc)
+            def avg(n):
+                acc, ws = [0.0, 0.0, 0.0], 0.0
+                for d in range(-n, n + 1):
+                    w = n + 1 - abs(d)
+                    v = self._limited_grid(k + d)
+                    acc = [a + w * x for a, x in zip(acc, v)]
+                    ws += w
+                return [a / ws for a in acc]
+            # wide while the hand travels, narrow while its fingers are on
+            # keys (with chords a few hundredths apart a wide window would
+            # mix in the pose for the next chord): by how much the keys
+            # count now (_key_weight: ramping in before a strike, out after)
+            on = max(self._key_weight(f, k * LIMIT_GRID_T)[0] for f in range(1, 6))
+            wide, narrow = avg(LIMIT_SMOOTH_HAND), avg(LIMIT_SMOOTH_HAND_ON)
+            q = cache[k] = tuple(_lerp(a, b, on) for a, b in zip(wide, narrow))
         return q
 
     def _tips_at(self, t, hand):
@@ -956,9 +964,10 @@ class HandAnimator:
                 continue
             kx, ky = self.key_target(self._pk(n), f, n)
             ylo, yhi = self._key_depths(self._pk(n))
-            ys = sorted([ky] + [ylo + (yhi - ylo) * i / 6 for i in range(7)], key=lambda y: abs(y - ky))
+            ys = sorted([ky] + [ylo + (yhi - ylo) * i / 12 for i in range(13)], key=lambda y: abs(y - ky))
             lo, hi = self.splay[f]
-            m = math.radians(KEY_FIX_MARGIN_DEG)
+            # a finger already down on its key may use its pressing slack (as _limit_tip allows)
+            m = math.radians(KEY_FIX_MARGIN_DEG) - (math.radians(PRESS_SLACK_DEG[f]) if self._pressing(f, t) else 0.0)
             hmin, hmax = self._reach_range(f, self.base_local[f][2] + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
             cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w))
