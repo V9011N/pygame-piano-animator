@@ -55,6 +55,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   keyboard pattern is symmetric about D, so white/black properties survive mirroring.
 - Behaviour settings live in `pianist.BEHAVIORS`; the studio's behaviour page lists them
   automatically. Read them with `Pianist.b(key)` (e.g. `p.b("wrist_bounce")`) so older pianist files get defaults.
+- Call `hands.pair_hands` on the animators whenever you build them: an idle hand moves out of the playing
+  hand's way (`HandAnimator._placed_at`), and `crossing_episodes` assumes it does.
 - `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while
   typing in sequential mode (`_rebuild_due`). `editor.notes` is the song's own list - update
   `editor.index` when replacing a note object.

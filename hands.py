@@ -146,6 +146,22 @@ RELEASE_NEED = 1.0          # ...fading from this much
 NEED_T = 0.15               # a finger must be able to reach its next key from this long before the strike
 VOTE_POWER = 16             # reach limits count for pressed keys and ones about to be struck, not faint ones
 IDLE_W = 0.05               # faint memory of the last keys so an idle hand stays put
+# A hand with nothing to play gets out of the other hand's way and loosely
+# follows it around, so the hands only cross when the notes make them.
+IDLE_AFTER_T = 0.35         # a hand starts counting as idle this long after its last key is let go...
+IDLE_RAMP_T = 0.5           # ...and is fully idle this much later
+IDLE_BEFORE_T = 1.1         # it stops being idle this long before its next note...
+IDLE_READY_T = 0.35         # ...and is back at work from this long before it
+IDLE_CLEAR_SPAN = 0.8       # an idle hand keeps its wrist this many hand spans clear of the playing one...
+IDLE_FAR_SPAN = 1.5         # ...and drifts after it once it is further off than this
+IDLE_TRAIL_T = 1.2          # s, it follows where the playing hand has been over this long
+IDLE_LOOK_T = 0.5           # s, and clears where it is about to be...
+IDLE_DRIFT_IN = 6.0         # in/s, ...drifting back no faster than this once it has passed
+IDLE_MEMORY_T = 8.0         # s, long enough to drift back across the whole keyboard
+IDLE_TICK_T = 0.1           # the playing hand's path is sampled this often
+IDLE_EDGE_IN = 1.5          # in, it isn't pushed further than this inside the keyboard's end
+IDLE_GRID_T = 1 / 30        # the shift is solved on this time grid...
+IDLE_SMOOTH_T = 0.25        # ...and averaged over +-this many seconds
 SHAPE_FALLOFF = 0.6         # idle fingers follow a busy neighbour by this much per finger
 
 
@@ -174,6 +190,42 @@ def _lerp3(a, b, s): return tuple(_lerp(x, y, s) for x, y in zip(a, b))
 def _smooth(x):
     x = min(1.0, max(0.0, x))
     return x * x * x * (x * (x * 6 - 15) + 10)          # smootherstep
+
+
+def busy_spans(intervals):
+    """Sorted, merged (start, end) spans in which a hand is holding keys."""
+    out = []
+    for a, b in sorted(intervals):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def idle_weight(spans, starts, t):
+    """
+    0..1 how idle a hand is at t: 0 while it holds a key or is about to play
+    (from IDLE_READY_T before its next note), 1 once it has been free for
+    IDLE_AFTER_T + IDLE_RAMP_T and has nothing coming within IDLE_BEFORE_T.
+    `starts` is [s for s, _ in spans].
+    """
+    i = bisect.bisect_right(starts, t) - 1
+    if i >= 0 and t < spans[i][1]:
+        return 0.0
+    last = spans[i][1] if i >= 0 else -math.inf
+    nxt = spans[i + 1][0] if i + 1 < len(spans) else math.inf
+    a = _smooth((t - last - IDLE_AFTER_T) / IDLE_RAMP_T)
+    b = _smooth((nxt - t - IDLE_READY_T) / (IDLE_BEFORE_T - IDLE_READY_T))
+    return a * b
+
+
+def pair_hands(animators):
+    """Let two hands (HandAnimators) know about each other, so an idle one keeps out of the other's way."""
+    anims = list(animators)
+    for a in anims:
+        a.partner = next((b for b in anims if b is not a and b.hand != a.hand), None)
+        a._idle_cache, a._clear_cache, a._path_cache = {}, {}, {}
 
 
 def _ease_out(x):
@@ -471,6 +523,10 @@ class HandAnimator:
         # what this hand actually plays: [(press, release, note)]
         self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                             for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+        self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
+        self.span_starts = [a for a, _ in self.spans]
+        self.partner = None                      # the other hand, see pair_hands
+        self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
         self._layout_sig = None
 
@@ -768,6 +824,7 @@ class HandAnimator:
         self.splay = {f: tuple(math.radians(a) for a in SPLAY_LIMIT_DEG[f]) for f in range(1, 6)}
         self.travel = KEY_TRAVEL_IN * self.ppi
         self._cache = {}
+        self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
         self.axis_x = kb.key_rects[62].centerx if 62 in kb.key_rects else kb.rect.centerx
@@ -1057,6 +1114,98 @@ class HandAnimator:
             sx, sy, sp, sw = sx + w * x, sy + w * y, sp + w * p, sw + w
         return sx / sw, sy / sw, sp / sw
 
+    def idle_at(self, t):
+        """0..1 how idle this hand is at t (see idle_weight)."""
+        return idle_weight(self.spans, self.span_starts, t) if self.spans else 1.0
+
+    def _placed_at(self, t):
+        """
+        _hand_at, moved out of the other hand's way while this one is idle
+        and the other is playing: the idle hand keeps clear of where the
+        playing hand is and is about to be, and drifts after it when it
+        gets far away, so the playing hand never has to cross over it.
+        """
+        wx, wy, psi = self._hand_at(t)
+        p = self.partner
+        if p is None or not p.spans:
+            return wx, wy, psi
+        p._ensure_layout(self.kb)
+        g, span = IDLE_GRID_T, IDLE_SMOOTH_T
+        k0, k1 = math.ceil((t - span) / g), math.floor((t + span) / g)
+        sd = sw = 0.0
+        for k in range(k0, k1 + 1):
+            w = 1.0 - abs(k * g - t) / span
+            if w > 0:
+                d = self._idle_cache.get(k)
+                if d is None:
+                    if len(self._idle_cache) > 4000:
+                        self._idle_cache.clear()
+                    d = self._idle_cache[k] = self._idle_shift(k * g)
+                sd, sw = sd + w * d, sw + w
+        dx = sd / sw if sw else 0.0
+        if abs(dx) < 1e-6:
+            return wx, wy, psi
+        return wx + dx, wy, psi + self._yaw(wx + dx) - self._yaw(wx)
+
+    def _idle_shift(self, t):
+        """How far (working-frame x, + = away from the other hand) to move the idle hand at t."""
+        p = self.partner
+        w = self.idle_at(t) * (1.0 - p.idle_at(t))
+        if w <= 0.0:
+            return 0.0
+        raw = self._hand_at(t)[0]
+        span = self.geo.span_units() * self.S
+        i1 = math.floor(t / IDLE_TICK_T)
+        ticks = range(i1 - int(round(IDLE_TRAIL_T / IDLE_TICK_T)), i1 + 1)
+        trail = sum(self._partner_x(i) for i in ticks) / len(ticks)
+        lo = self._clear_line(int(round(t / IDLE_GRID_T))) + IDLE_CLEAR_SPAN * span
+        hi = max(lo, trail + IDLE_FAR_SPAN * span)
+        target = min(max(raw, lo), hi)
+        if target > raw:                             # stay on the keyboard
+            edge = max(self._mx(self.kb.rect.left), self._mx(self.kb.rect.right)) - IDLE_EDGE_IN * self.ppi
+            target = min(target, max(raw, edge))
+        return w * (target - raw)
+
+    def _partner_x(self, i):
+        """The other hand's wrist x at tick i (IDLE_TICK_T), in this hand's frame."""
+        x = self._path_cache.get(i)
+        if x is None:
+            if len(self._path_cache) > 20000:
+                self._path_cache.clear()
+            p = self.partner
+            x = self._path_cache[i] = self._mx(p._mx(p._grid_pose(int(round(i * IDLE_TICK_T / HAND_GRID_T)))[0]))
+        return x
+
+    def _clear_line(self, k):
+        """
+        On the idle grid: how far toward this hand the other one reaches now
+        and over the next IDLE_LOOK_T (in this hand's frame), remembered
+        through the idle stretch with a fall-off of IDLE_DRIFT_IN, so that
+        once the playing hand has passed, the idle one drifts back rather
+        than springing.
+        """
+        cache, p, g = self._clear_cache, self.partner, IDLE_GRID_T
+        if k in cache:
+            return cache[k]
+        if len(cache) > 20000:
+            cache.clear()
+        at, tick = self._partner_x, IDLE_TICK_T
+
+        def ahead(j):
+            i0 = math.floor(j * g / tick)
+            return max(at(i) for i in range(i0, math.ceil((j * g + IDLE_LOOK_T) / tick) + 1))
+        todo, j = [], k
+        while j not in cache and len(todo) < IDLE_MEMORY_T / g and \
+                (j == k or self.idle_at(j * g) * (1.0 - p.idle_at(j * g)) > 0.0):
+            todo.append(j)
+            j -= 1
+        prev = cache.get(j)
+        fall = IDLE_DRIFT_IN * self.ppi * g
+        for j in reversed(todo):
+            a = ahead(j)
+            prev = cache[j] = a if prev is None else max(a, prev - fall)
+        return prev
+
     def _grid_pose(self, k):
         cache = self._cache
         pose = cache.get(k)
@@ -1211,7 +1360,7 @@ class HandAnimator:
         """
         self._ensure_layout(kb)
         S, rot = self.S, self._rot
-        wx, wy, psi = self._hand_at(t)
+        wx, wy, psi = self._placed_at(t)
         # The wrist playing (repeated chords, tremolos): the hand is a rigid
         # unit that takes the keys down itself - it drops by the key's depth
         # while a chord is held and springs up between chords (lift), and in
@@ -1465,6 +1614,8 @@ def crossing_episodes(song):
     - the right hand playing below where the left hand is - the right hand
       crossed going down, and it's on top.
 
+    A hand that is idle doesn't count: it moves out of the playing hand's way
+    instead (HandAnimator._placed_at), so a leap by the other hand is no crossing.
     A crossing lasts until the hands are back on their own sides; the other
     hand playing on underneath meanwhile doesn't change who is on top. When
     both hands move into the crossing at the same moment, the one further
@@ -1475,7 +1626,7 @@ def crossing_episodes(song):
         return cached
     from midi_loader import LEFT
     episodes = []
-    groups = {}
+    groups, spans = {}, {}
     for h in (RIGHT, LEFT):
         ns = sorted((n for n in song.notes if n.hand == h), key=lambda n: n.start)
         gs = []
@@ -1485,11 +1636,19 @@ def crossing_episodes(song):
             else:
                 gs.append((n.start, [n.pitch]))
         groups[h] = [(t, min(ps), max(ps)) for t, ps in gs]
+        spans[h] = busy_spans((n.start, n.end) for n in ns)
     if groups[RIGHT] and groups[LEFT]:
         starts = {h: [g[0] for g in groups[h]] for h in groups}
+        span_starts = {h: [a for a, _ in spans[h]] for h in spans}
 
         def current(h, t):
-            """(low, high) of the hand's latest chord at t (its next one if it has been silent)."""
+            """
+            (low, high) of the hand's latest chord at t (its next one if it has
+            been silent), or None while it is idle: then it has moved out of
+            the playing hand's way (HandAnimator._placed_at), so it can't be crossed.
+            """
+            if idle_weight(spans[h], span_starts[h], t) > 0.5:
+                return None
             gs, i = groups[h], bisect.bisect_right(starts[h], t + 1e-6) - 1
             if i >= 0 and (t - gs[i][0] < CROSS_STALE or i + 1 >= len(gs)):
                 return gs[i][1], gs[i][2]
@@ -1512,9 +1671,7 @@ def crossing_episodes(song):
         for t in clustered:
             tt = t + CROSS_GROUP * 0.99
             L, R = current(LEFT, tt), current(RIGHT, tt)
-            if L is None or R is None:
-                continue
-            crossed = L[1] > R[0]
+            crossed = L is not None and R is not None and L[1] > R[0]
             if not crossed:
                 if state is not None:
                     runs.append((t_on, t, state, depth, full))

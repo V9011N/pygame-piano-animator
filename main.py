@@ -44,7 +44,7 @@ from common import (BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LA
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     MAX_FRAME_DT, show_loading)
 import pianist as pianists
-from hands import HandAnimator, draw_hands
+from hands import HandAnimator, draw_hands, pair_hands
 from midi_loader import LEFT, RIGHT, load_song
 
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
@@ -78,6 +78,7 @@ class Visualizer(Transport):
         self.song = song
         self.hands = {h: HandAnimator(song, h) for h in (RIGHT, LEFT)
                       if any(n.hand == h for n in song.notes)}
+        pair_hands(self.hands.values())
         # what's heard and the keys that go down follow what the hands play
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.t = -LEAD_IN

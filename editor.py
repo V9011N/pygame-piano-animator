@@ -57,7 +57,7 @@ from common import (ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAND_COLORS, HAND_
                     save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
-from hands import HandAnimator, draw_hands
+from hands import HandAnimator, draw_hands, pair_hands
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, load_song, note_name, save_fingered_midi,
                          save_pig)
@@ -293,6 +293,7 @@ class FingeringEditor(Transport):
         self.finger = [planned[n.hand].finger_for(n) if n.hand in planned else None
                        for n in self.notes]
         self.hands = planned
+        pair_hands(planned.values())
         self.difficulty = None
         self.perf = Performance.from_animators(planned.values()) if planned else None
         self.index = {id(n): i for i, n in enumerate(self.notes)}
@@ -321,6 +322,7 @@ class FingeringEditor(Transport):
         fing = {id(n): f for n, f in zip(self.notes, self.finger) if f}
         self.hands = {h: HandAnimator(self.song, h, fingering=fing) for h in (RIGHT, LEFT)
                       if any(n.hand == h for n in self.notes)}
+        pair_hands(self.hands.values())
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.difficulty = None
         self.seek(self.t)
