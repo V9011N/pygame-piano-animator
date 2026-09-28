@@ -248,7 +248,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
-- **Pianist skin data**: `Pianist.skin` = `{style, colors{style: {slot: rgb}}, finger_width 0.7–1.35, outline 0–2.5, details, sleeve, shadow}`.
+- **Pianist skin data**: `Pianist.skin` = `{style, colors{style: {slot: rgb}}, finger_width 0.5–1.2 (default 0.75; was 0.7–1.35, 1.0), outline 0–2.5, details, sleeve, shadow}`.
   - The Default pianist uses the cartoon skin.
   - Pianists saved before skins existed load as skeleton, keeping their bone colour.
   - `badge_color` is the primary colour of the current skin.
