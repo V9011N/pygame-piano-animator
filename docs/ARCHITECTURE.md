@@ -404,6 +404,35 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     30 s: pressed tips > 0.1 key off 54 → 217-285); as an aim it stays at 55.
   - Op. 25 No. 10 (RH, velocity 92-127 after the opening): wrist in/out 4.6 (0-10 s) and 6.0 in/s (20-30 s) - between
     all-front (7.9) and all-up (2.5).
+- **Held notes through hand moves** (2026-09-28; Op. 25 No. 10, 0:06 - the held middle voice, RH D5 / LH D3 with 2
+  under octaves moving by step): both were let go 0.11 s after the strike (0.83 s written).
+  - `_speed_schedule`'s hand-trip rule released every key still held whenever the hand's range moved at all -
+    here by 0.08 white keys (0.001 s of travel), because an octave pinned the range to a point. Now a shift under
+    `HAND_MOVE_TOL_WK` 0.25 isn't a trip, and on a real trip a held key stays down unless its finger is needed or
+    it doesn't fit with the new chord and the keys already kept (`fingering.shape_cost`).
+  - `fingering.hand_range`: a stretch the hand can make (`shape_cost` below `IMPOSSIBLE`) spans the positions
+    between its conflicting bounds instead of collapsing to the midpoint.
+  - The early release for a finger moving to a new key (`_jump_lift`) scales with the move: `LEGATO_LIFT_T` 0.03 s
+    up to `LEGATO_STEP_WK` 2.5 white keys, the pianist's full early release from `JUMP_WK` 6. The D5 -> B4 step at
+    8.3 s was let go 0.22 s early.
+  - Op. 25 No. 10: middle notes held 0.83 / 0.77 s (were 0.11 and 0.51 / 0.24); notes >= 0.4 s held < 80% of their
+    length R 135 -> 8, L 159 -> 48. Fingering: bundled MIDIs unchanged, Dante 3 notes.
+  - Limit: with a black-key octave on 1-4 (A#4-A#5) the held 2 on D5 is just beyond the animated hand (best pose
+    0.2 in short; the index's splay toward the thumb, the 4's and the thumb's limits all bind), so there the index
+    sits 0.2-0.3 key off D5. With 1-5 it's exact. Op. 25 No. 10 (0-30 s) pressed tips > 0.1 key off 69 -> 332
+    (most of it the held 2s), > 0.3 key 14 -> 80.
+  - Fingering for that (2026-09-28): `figures.detect` suggests 1-5 for an octave with an inner note down in the same
+    hand (struck with it, or held - `_inner_note_down`, up to 4 s back) instead of the "4 on black keys" rule, and
+    `fingering.inner_room_cost` prices it in the planner (the chord itself, and with the keys still held):
+    `inner_room` 12 for 1-4 around an inner note, `inner_finger` 4 when the inner note isn't on the finger lying
+    over it in the spread hand (2 up to half the octave's width from the thumb, 3 to `INNER_3_TOP` 0.72, 4 above).
+    Chords also check every pair of fingers against its reach, not only neighbours (an octave was taken 3-1 with 2
+    between them). Static reach with 2 on D5: 1-5 octaves 0.00-0.07 in short, 1-4 up to 0.20.
+  - Op. 25 No. 10: all octaves around the held middle notes are now 1-5 (inner notes on 2, or 3 where 2 must step
+    on); the middle notes are held 0.83 s. Pressed tips > 0.1 key off (0-30 s) 332 -> 430, > 0.3 key 80 -> 69:
+    404 of the 430 frames are with a held inner note, where the static poses exist but the hand solver doesn't
+    reach them while it moves between octaves (the little finger is now the one off). Fingering changes: bundled
+    MIDIs and Winter Wind none, Dante 106 notes (mostly 4 -> 5 at the top of an octave-wide hand with a key held).
 - **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
   passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
   splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).
