@@ -56,18 +56,24 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - 39–60 were read from the scan and encoded as rules (scratchpad `hanon/rules.py`, `hanon/scales.py`). figures.py reuses these rules.
 
 ## Hand separation (hand_split.py)
-- A beam search (24 candidates) over onset groups (35 ms tolerance). The lowest k notes go to the LH.
+- A beam search (32 candidates; 24 lost the good split in the Dante Sonata's chord alternations) over onset groups (35 ms tolerance). The lowest k notes go to the LH.
 - Initial hand centres come from the upper/lower quartile of the opening notes.
 - Costs:
   - **Span** of notes struck together: free to an octave, then 2.5 per semitone. Past 16 it costs `SPAN_OVER` 12 plus 3 per semitone. That is priced as a rolled chord: it is cheaper than a hand leaping two octaves and back in a sixteenth.
   - **Held keys**: a soft 0.8 per semitone beyond the chord's own span, plus 20 past 19.
   - **Load**: more than 5 notes per hand.
-  - **Speed**:
-    - A strain beyond `5 + 55·dt` semitones: 1.0·ex + `LEAP_IMPOSSIBLE` 0.15·ex². Quadratic, so impossible round trips are ruled out.
+  - **Speed** (2026-09-28: the pianist's top speed, see "Top travel speed" below):
+    - A hand covering its last notes reaches anything within `HAND_WK` 7 white keys. The least it must travel is the
+      gap between where it can be for its last notes and for the new ones; `fingering.travel_time(gap)` must fit in
+      `MOVE_SHARE` 0.75 of the time since it last played, else `TOO_FAST` 60·(r + r²), r = the share over.
+      This replaced the strain beyond `5 + 55·dt` semitones, which let the LH take the bottom of the RH's chords and
+      leap 2½ octaves in 0.12 s.
     - Distance is measured to the farthest new note, so a chord reaching back into the other hand's range counts in full.
     - `SPEED_COST` 0.25 per 40 semitones/s of travel. Relative speed: of two hands, the one that needn't hurry takes the note.
     - A small shift cost.
-  - **Chords at speed**: `CHORD_COST·size·(n−1)^1.5·min(3, 0.4/dt)`. `size` is 0 for shapes of ≤ 5 semitones, 0.5 for ≤ 9 and 1 above.
+  - **Chords at speed**: `CHORD_COST·size·(n−1)^1.5·min(3, 0.4/dt)`, `CHORD_COST` 0.5 (was 1.5, which split fast
+    repeated chords between the hands). `size` is 0 for shapes of ≤ 5 semitones, 0.5 for ≤ 9 and 1 above.
+  - **Repeats**: a chord struck again within 0.5 s and split differently from the time before costs 4.
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
@@ -166,6 +172,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 | cross_turn | `CROSS_TURN_DEG` |
 | smoothness | `HAND_SMOOTH_T` |
 | early_release | `EARLY_LIFT_T` |
+| max_speed | top travel speed of any part of the hand (m/s): hand split, fingering, schedule and animation limit |
 | roll_speed | time between rolled-chord notes |
 | weak_bias | `finger_4` / `finger_5` weights |
 | stretch_bias | stretch vs cross/leap/shift weights; share of the anatomical reach used |
@@ -177,6 +184,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - Performance: `HandAnimator.performance` is `[(press, release, note)]`.
   - Chords wider than the physical reach are rolled bottom-up, and their lower notes are released early.
   - Finger early lifts shorten notes.
+  - Keys are let go early, or struck late, to keep to the pianist's top travel speed (see below).
   - Notes a hand drops (a 6th note) aren't played.
   - `common.Performance` feeds `Transport`, which sends note on/off events in time order along with the pedal CCs (64/66/67 from `MidiSong.controls`).
   - The keyboard shows the performed keys.
@@ -350,6 +358,56 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `_hand_at`: a ±0.07 s triangular window on a 1/120 s grid.
 - Early lifts for jumps, crossed held keys and wide thumb crossings.
 - Fingertips: a free finger leaves at once and arrives early; idle fingers fan out; tips are clamped before IK.
+- **Fingers square on their keys** (2026-09-28): the hand solver's limits are soft and its smoothing blends poses
+  from moments when other keys were down, so a held key could end up outside its finger's splay/reach and the clamp
+  pulled the tip off it (LH 5–2–1 on Bb–F–Ab with 2 repeating: up to 0.6 key off, 0.2 key of twitch per strike).
+  - Keys have a playable depth range, not one spot (`_key_depths`): white 0.3 in from the front to 0.45 in past the
+    black keys' front; black 0.25–1.6 in from their front. `_key_spot` keeps the tip centred across the key and at
+    its usual depth, sliding along the key only as far as the joint limits (with a 1° / 2 % margin) need. The same
+    spot is used for the approach, strike, press and release, so a repeated key doesn't wobble.
+  - `_key_fix` then nudges the smoothed hand (damped Gauss-Newton, downhill steps only) as little as it takes for
+    every held key, any depth along it, to be reachable. Keys count from 0.12 s before the strike to 0.05 s after
+    release (eased in), so a finger that has just let go doesn't drag the hand off the keys still held.
+  - Demo song: pressed-tip frames more than 0.1 key off went from 228 to 34 (the rest are one-frame handovers into
+    leaps). A pinky–index 6th (G#2–F3 in the LH) is just past the default hand's reach and still compromises.
+- **Impossible given fingerings and leaps with keys still down** (2026-09-28; Liszt, Dante Sonata fragment, 0:52):
+  - The file fingered RH octaves 4–5. Given fingers were always kept, so no hand pose could reach both keys and both
+    fingers ended up between them. `plan_fingering(repair=True)` (the player's `HandAnimator` default) keeps a
+    chord's given fingers unless together they are impossible (a pair beyond `MAX_SPAN`, i.e. an `IMPOSSIBLE` chord
+    cost); then it keeps as many of them as still leave a playable chord and plans the rest. The changed notes are
+    in `HandAnimator.repaired` (3 of 3022 in that file). The editor loads with `repair=False` and shows the file's
+    fingering as it is; `score_fingering` and the editor's re-planning never repair.
+  - A key still held when a new chord starts out of its finger's reach (distance > `MAX_SPAN` + 0.5 white keys, in
+    either order) is let go `early_lift` before it, like a crossed held key. Performance MIDI often overlaps leaps
+    by a few tens of ms. Dante fragment: pressed-tip frames > 0.3 key off 82 → 29, worst 5.6 → 1.8 keys (the rest
+    are the last frames of leaps). Demo song: > 0.1 key 34 → 8, worst 1.86 → 0.28.
+- **Top travel speed** (2026-09-28; pianist `max_speed`, default 3.0 m/s, 0.5–5): no part of a hand - wrist or
+  fingertip - travels faster, and what is heard is what the hands then play.
+  - Model (`fingering.travel_time`): moves ease in and out like the animation's smootherstep, whose peak is 1.875× the
+    average speed, so d white keys take 1.875·d·0.0236 m / top speed. `hand_range(ps, fingers)` is where the hand (its
+    thumb's natural spot) can be for a chord: each key minus its finger's natural offset, ±1.5 white keys;
+    `range_gap` is how far it must move between two chords.
+  - Hand split: see "Hand separation" (`TOO_FAST`). Fingering: `speed_cost` in `_transition` - the hand's range gap,
+    and any finger moving to a new key, must fit in 0.75 of the time between the chords, else `too_fast` 40 per 100%
+    over (a leap costs 4-8), so a fingering that makes the hand teleport loses to almost anything.
+  - Schedule (`HandAnimator._speed_schedule`, after the early-lift rules): chord by chord, a finger moving to a new key
+    lets go of its last one travel time + `STRIKE_MIN_T` 0.03 s before; when the hand's range has to move, every key
+    it still holds does the same for the hand's trip. Keys are held at least `MIN_HOLD_T` 0.04 s (or half the time to
+    the new chord); if that isn't enough the chord is struck late (by at most `MAX_DELAY_T` 0.25 s, never past the
+    hand's next chord). `self.lead` holds each note's travel time: `_prep_window` starts long trips early and cuts the
+    final drop, and `_travel` never spreads a trip over less than it.
+  - Animation: `_limited_at` holds the drawn hand to the top speed (wrist movement plus its turn at 7 in out, per
+    `LIMIT_GRID_T` 1/60 s step), and `_limited_tip_grid` does the same for each fingertip across the keys (height is
+    left alone, so strikes are unchanged). The chains are cached step to step and restart 0.5 s back after a seek.
+    This mostly trims `_key_fix`, which snapped a lagging hand into place just before a strike (8.8 m/s).
+  - Audio and display: `HandAnimator.performance` (and so `common.Performance`, the synth, the lit keys, the glow and
+    now the lit note bars in the player and the editor) carries the late strikes and early releases.
+  - Dante fragment (single track, 3022 notes): hand moves over the limit (planned) R 6 → 0, L 33 → 2 (both at 1.0×);
+    finger moves R 7 → 1, L 54 → 0. Animated over the whole piece: wrist frames over 3 m/s 0 (was up to 56 m/s in
+    140-160 s), fingertips 28 of 48 000 frames (max 4.1, the joint clamp re-applied after the limit). 35 R / 49 L of
+    1522 chords struck late (median 15 ms, max 84 ms). Pressed-tip frames > 0.3 key off 101 → 80, worst 1.80 → 0.78.
+    156 notes changed hands and 337 fingers; the bundled MIDIs are unchanged. Loading: split 0.8 → 1.2 s (beam 32),
+    plan unchanged; ~1.4 ms per hand per frame (demo), cold seek ~60-100 ms.
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

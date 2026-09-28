@@ -15,10 +15,11 @@ pianist's hands can actually do:
   * span   - notes one hand plays or holds at the same time must fit in the
              hand (an octave is easy, a 10th is the limit; wider chords are
              priced as rolled, since that is what a pianist does with them);
-  * speed  - a hand can't jump far between notes that are very close in time
-             (the cost grows quadratically past what the time allows, so a
-             two-octave round trip in a sixteenth is effectively ruled out),
-             and every move is priced by how fast the hand must travel, so of
+  * speed  - no hand travels faster than the pianist's top speed
+             (pianist "max_speed", fingering.travel_time): a move that would
+             need more is priced far above anything else, rising steeply, so
+             a hand never "teleports" to notes the other hand could take; and
+             every move is priced by how fast the hand must travel, so of
              two hands that could take a note, the one that needn't hurry does;
   * load   - at most five notes per hand, counting ones still held;
   * order  - the right hand normally stays above the left, and the hands
@@ -26,7 +27,8 @@ pianist's hands can actually do:
              double note;
   * range  - a mild preference for the right hand high and the left hand low;
   * voices - in files split into several (unlabelled) tracks, a track's
-             notes tend to stay in one hand.
+             notes tend to stay in one hand;
+  * repeats - a chord struck again straight away is split the way it was.
 
 Only the hand labels are decided here; fingering comes later.
 """
@@ -34,29 +36,33 @@ from __future__ import annotations
 
 import math
 
+from fingering import key_pos, travel_time, MOVE_SHARE
+
 LEFT, RIGHT = "L", "R"
 
 CHORD_TOL = 0.035        # onsets closer than this count as one group
-BEAM = 24                # candidates kept per group
+BEAM = 32                # candidates kept per group
 
 # span within one hand (semitones): free up to an octave, costly to a 10th
 SPAN_FREE = 12
 SPAN_MAX = 16
 SPAN_HELD_MAX = 19       # with keys still held
 SPAN_OVER = 12.0         # a chord wider than SPAN_MAX has to be rolled
-LEAP_IMPOSSIBLE = 0.15   # quadratic cost of moving further than time allows
-# movement: how many semitones a hand can travel in dt seconds without strain
-MOVE_BASE = 5.0
-MOVE_SPEED = 55.0
+# movement: a hand covering its last notes can reach anything within
+# HAND_WK white keys without moving; beyond that it travels, at most at the
+# pianist's top speed (TOO_FAST per 100% over the time that needs, squared)
+HAND_WK = 7.0
+TOO_FAST = 60.0
 MOVE_COST = 0.06         # per semitone of any shift (hands prefer to stay put)
-MOVE_STRAIN = 1.0        # per semitone beyond what the time allows
 SPEED_COST = 0.25        # per 40 semitones/second of travel the note demands
-CHORD_COST = 1.5         # per extra note in a chord, when chords come quickly
+CHORD_COST = 0.5         # per extra note in a chord, when chords come quickly
 HELD_TOL = 0.03
 TRACK_T = 1.5            # a track's notes played by one hand ...
 TRACK_SWITCH = 12.0       # ... cost this to move to the other hand within TRACK_T
 CROWD_GAP = 5            # semitones the hands want between them ...
 CROWD = 1.5              # ... per semitone short of that
+REPEAT_T = 0.5           # a chord repeated within this ...
+REPEAT_SPLIT = 4.0       # ... and split differently from the last time costs this
 CROWD_T = 0.25           # a hand's last notes count this long for crowding          # a note ending within this after the onset counts as released
 
 
@@ -140,12 +146,17 @@ def _hand_cost(hand, t, notes, side, other):
         shift = abs(m - hand.center)
         fade = math.exp(-dt / 1.5)                    # old positions matter less
         c += fade * MOVE_COST * shift
-        allowed = MOVE_BASE + MOVE_SPEED * dt
-        if d > allowed:
-            # beyond what the time allows it quickly becomes impossible: a
+        # the least the hand must travel (white keys): from where it could
+        # play its last notes to where it can play these
+        was = (key_pos(hand.last_hi) - HAND_WK, key_pos(hand.last_lo))
+        now = (key_pos(hi) - HAND_WK, key_pos(lo))
+        gap = max(0.0, now[0] - was[1], was[0] - now[1])
+        if gap > 0:
+            # beyond the top speed it quickly becomes impossible: a
             # two-octave leap in a sixteenth is not just twice as hard as one
-            ex = d - allowed
-            c += MOVE_STRAIN * ex + LEAP_IMPOSSIBLE * ex * ex
+            r = travel_time(gap, MAX_SPEED) / max(1e-3, MOVE_SHARE * dt) - 1.0
+            if r > 0:
+                c += TOO_FAST * (r + r * r)
         # how fast the hand must travel to get there: of two hands that could
         # take a note, the one that needn't hurry should
         c += SPEED_COST * d / max(dt, 0.05) / 40.0
@@ -191,6 +202,9 @@ def _fit_spans(pianist):
     SPAN_FREE, SPAN_MAX, SPAN_HELD_MAX = (v * k for v in _BASE_SPANS)
 
 
+MAX_SPEED = 3.0          # m/s, from the pianist (split_hands)
+
+
 def split_hands(notes, pianist=None):
     """
     {id(note): 'L' or 'R'} for every note. Works on any note objects with
@@ -204,6 +218,8 @@ def split_hands(notes, pianist=None):
         except Exception:
             pianist = None
     _fit_spans(pianist)
+    global MAX_SPEED
+    MAX_SPEED = float(pianist.b("max_speed")) if pianist is not None else 3.0
     groups = _groups(notes)
     if not groups:
         return {}
@@ -220,13 +236,19 @@ def split_hands(notes, pianist=None):
     multi = len({getattr(n, "track", 0) for _, ns in groups for n in ns}) > 1
     beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, ())]
     history = []
+    prev = None
     for t, ns in groups:
+        repeat = prev is not None and t - prev[0] < REPEAT_T and \
+            [n.pitch for n in prev[1]] == [n.pitch for n in ns]
+        prev = (t, ns)
         cand = []
-        for bi, (cost, rh, lh, _, _, tr) in enumerate(beam):
+        for bi, (cost, rh, lh, _, pk, tr) in enumerate(beam):
             last = dict(tr)
             for k in range(len(ns) + 1):              # lowest k notes -> left hand
                 ln, rn = ns[:k], ns[k:]
                 c = cost + _hand_cost(rh, t, rn, RIGHT, lh) + _hand_cost(lh, t, ln, LEFT, rh)
+                if repeat and k != pk:
+                    c += REPEAT_SPLIT
                 c += _crowding(rh, lh, t, rn, ln)
                 if multi:
                     for n, h in [(n, LEFT) for n in ln] + [(n, RIGHT) for n in rn]:

@@ -69,6 +69,7 @@ def clamp_bone(bid, v):
 def _pct(v): return f"{int(round(v * 100))}%"
 def _ms(v): return f"{int(round(v * 1000))} ms"
 def _deg(v): return f"{int(round(v))}°"
+def _mps(v): return f"{v:.1f} m/s"
 def _bias(v):
     if abs(v) < 0.05:
         return "neutral"
@@ -122,6 +123,12 @@ BEHAVIORS = [
          min=0.05, max=0.40, default=0.22, fmt=_ms, lo="Legato, late", hi="Detached, early",
          desc="How early a finger lets go of its key when it has to jump straight to another one. "
               "This changes what you hear (without the pedal)."),
+    dict(id="max_speed", group="Motion", label="Top travel speed", kind="slider",
+         min=0.5, max=5.0, default=3.0, fmt=_mps, lo="Unhurried", hi="Virtuoso leaps",
+         desc="The fastest any part of the hand - wrist or fingertip - can travel across the keys. "
+              "Fingerings and the split between the hands are chosen so the hands never need to "
+              "move faster; when the music still asks for more, the key is let go earlier or struck "
+              "late, and that is what you hear."),
     dict(id="roll_speed", group="Motion", label="Rolled chord speed", kind="slider",
          min=0.015, max=0.08, default=0.035, fmt=_ms, lo="Quick roll", hi="Slow roll",
          desc="Chords too wide for this hand are rolled from the bottom up; this is the time "

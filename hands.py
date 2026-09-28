@@ -63,6 +63,10 @@ GESTURE_REPEAT_T = 0.45                  # repeated chords closer than this boun
 GESTURE_KEY_UP_T = 0.04                  # keys springing back as the hand lifts off them
 GESTURE_TREMOLO_T = 0.3                  # alternations quicker than this rotate the forearm
 BLACK_DEPTH_IN = 0.35                    # distance in from the black key's front edge
+# How far along a key a fingertip may slide from those spots when the hand
+# can't reach them (a white key between black ones is played further in):
+WHITE_SPAN_IN = (0.3, 0.45)              # from the front edge / past the black keys' front
+BLACK_SPAN_IN = (0.25, 1.6)              # in from the black key's front edge
 
 # --------------------------------------------------------------------------- #
 # Hand model: right hand, palm down, units are roughly centimetres.
@@ -112,6 +116,9 @@ RETURN_T = 0.35             # ... then drifts back to its resting spot
 # stretch, the little finger barely abducts, so it stays near its rest position.
 FIT_WEIGHT = {1: 0.35, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.6}
 EARLY_LIFT_T = 0.22         # a finger that jumps to a new key leaves the old one this early
+MIN_HOLD_T = 0.04           # ...but holds its key at least this long (or half the time to the next)
+STRIKE_MIN_T = 0.03         # the shortest final drop onto a key (a finger arriving at the top speed)
+MAX_DELAY_T = 0.25          # a chord the hand can't reach in time is struck at most this late
 CROSS_LIFT_T = 0.07         # ...and a key held across a wide thumb crossing is let go this early
 
 # Joint limits. Splay is the angle of the knuckle->fingertip line in the hand's
@@ -162,6 +169,18 @@ IDLE_TICK_T = 0.1           # the playing hand's path is sampled this often
 IDLE_EDGE_IN = 1.5          # in, it isn't pushed further than this inside the keyboard's end
 IDLE_GRID_T = 1 / 30        # the shift is solved on this time grid...
 IDLE_SMOOTH_T = 0.25        # ...and averaged over +-this many seconds
+# After smoothing, the hand is nudged so every finger on (or about to strike)
+# its key can reach it inside its joint limits - the fingertip lands squarely
+# on the key instead of being clamped off it.
+KEY_FIX_T = 0.12            # s, a finger's key starts counting this long before the strike...
+KEY_FIX_RELEASE_T = 0.05    # s, ...and stops this soon after it is let go (the finger lifts away)
+KEY_FIX_K = 12.0            # how much a key being held outweighs keeping the smoothed hand where it was
+KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
+KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
+KEY_FIX_ITERS = 6
+TIP_ARM_IN = 7.0            # in, how far the fingertips swing out from the wrist when the hand turns
+LIMIT_RESTART_T = 0.5       # s, the speed limit's chain restarts this far back after a seek
+LIMIT_GRID_T = 1 / 60       # s, the speed limit steps on this grid (linear in between)
 SHAPE_FALLOFF = 0.6         # idle fingers follow a busy neighbour by this much per finger
 
 
@@ -226,6 +245,7 @@ def pair_hands(animators):
     for a in anims:
         a.partner = next((b for b in anims if b is not a and b.hand != a.hand), None)
         a._idle_cache, a._clear_cache, a._path_cache = {}, {}, {}
+        a._limit_cache, a._tip_limit_cache = {}, {}
 
 
 def _ease_out(x):
@@ -424,7 +444,7 @@ class HandAnimator:
         before the bones are solved, so no finger ever bends out of the hand.
     """
 
-    def __init__(self, song, hand=RIGHT, fingering=None, pianist=None):
+    def __init__(self, song, hand=RIGHT, fingering=None, pianist=None, repair=True):
         import pianist as pianists
         self.pianist = pianist or pianists.active()
         self.geo = HandGeometry(self.pianist.anatomy)
@@ -442,9 +462,12 @@ class HandAnimator:
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
         # fingering editor already knows every finger
+        # a chord the file fingers impossibly (an octave with 4-5) is played
+        # with fingers that reach (unless `repair` is off); those notes:
+        self.repaired = set()
         if fingering is None:
             fingering = plan_fingering(self.groups, self.vp, hand=hand, context=song.notes,
-                                       pianist=self.pianist)
+                                       pianist=self.pianist, repair=repair, repaired=self.repaired)
         self.fingering = {id(n): fingering[id(n)] for _, ns in self.groups for n in ns
                           if fingering.get(id(n))}
         # notes without a finger (a sixth note in one hand's chord) aren't animated
@@ -495,6 +518,9 @@ class HandAnimator:
         # A held key that the next chord's fingers have to cross (5 landing
         # left of a held 2, say - anything but the thumb passing under) is
         # let go early too, so the hand isn't asked to do both at once.
+        # So is one that a new chord is out of reach of (a leap while the
+        # last notes are still down): the hand can't be on both.
+        from fingering import MAX_SPAN
         starts = [g[0] for g in self.groups]
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
@@ -507,7 +533,9 @@ class HandAnimator:
                     if g == f or m.pitch == n.pitch:
                         continue
                     vn, vm = self.vp(n.pitch), self.vp(m.pitch)
-                    if 1 in (f, g):
+                    if abs(key_pos(vm) - key_pos(vn)) > MAX_SPAN[(min(f, g), max(f, g))] + 0.5:
+                        lift = self.early_lift
+                    elif 1 in (f, g):
                         # a wide thumb-under / finger-over: not quite legato
                         if is_crossing(vn, f, vm, g) and abs(key_pos(vm) - key_pos(vn)) > 2.0:
                             lift = CROSS_LIFT_T
@@ -520,6 +548,9 @@ class HandAnimator:
                     sm = so[id(m)]
                     e = max(s0 + 0.5 * (sm - s0), sm - lift)
                     self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
+        # Nothing travels faster than the pianist's top speed: keys are let
+        # go early enough to get to the next ones, or those are struck late.
+        self._speed_schedule()
         # what this hand actually plays: [(press, release, note)]
         self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                             for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
@@ -712,6 +743,201 @@ class HandAnimator:
             return True
         return i + 1 < len(starts) and starts[i + 1] - t < win
 
+    def _key_weight(self, f, t):
+        """(0..1, note) how much finger f's key must be reachable at t: 1 while held, ramping around the strike and release."""
+        starts, ends = self.finger_starts[f], self.finger_ends[f]
+        i = bisect.bisect_right(starts, t) - 1
+        best, note = 0.0, None
+        if i >= 0:
+            w = 1.0 if t < ends[i] else (1.0 - _smooth((t - ends[i]) / KEY_FIX_RELEASE_T)) ** 2
+            if w > 0:
+                best, note = w, self.by_finger[f][i]
+        if i + 1 < len(starts):
+            w = _smooth(1.0 - (starts[i + 1] - t) / KEY_FIX_T) ** 2
+            if w > best:
+                best, note = w, self.by_finger[f][i + 1]
+        return best, note
+
+    def _limited_at(self, t):
+        """
+        The hand (wx, wy, psi) at t as it is drawn: placed (_placed_at),
+        fitted to its keys (_key_fix) and then held to the top speed. On its
+        grid (LIMIT_GRID_T), each step may move the wrist plus the fingertips' swing
+        about it (turn times TIP_ARM_IN) at most the top speed allows; the
+        schedule already keeps to it, so this only trims what the solver's
+        own corrections add. Steps follow on from the one before (cached);
+        after a seek the chain restarts LIMIT_RESTART_T earlier, long enough
+        for any lag to have settled. Between grid points: linear.
+        """
+        g = LIMIT_GRID_T
+        k = math.floor(t / g)
+        a, b = self._limited_grid(k), self._limited_grid(k + 1)
+        u = t / g - k
+        return tuple(x + (y - x) * u for x, y in zip(a, b))
+
+    def _tips_at(self, t, hand):
+        """
+        {finger: (x, y, z)} fingertip targets at t for the hand at `hand`
+        (wx, wy, psi): first with the plain rest spots, then again with rest
+        spots shaped around the busy fingers; each kept inside its finger's
+        range (_limit_tip).
+        """
+        wx, wy, psi = hand
+        rot = self._rot
+
+        def to_world_xy(lx, ly):
+            x, y = rot(lx, ly, psi)
+            return wx + x, wy + y
+        tips, busy, local = {}, {}, {}
+        rb = self.retract_back
+        for f in range(1, 6):
+            rx, ry = self.rest_local[f]
+            tips[f], busy[f] = self._tip_target(f, t, to_world_xy(rx, ry - rb[f]), hand)
+            local[f] = rot(tips[f][0] - wx, tips[f][1] - wy, -psi)
+        shaped = self._shaped_rests(busy, local)
+        for f in range(1, 6):
+            if busy[f] < 1.0:
+                tips[f], _ = self._tip_target(f, t, to_world_xy(shaped[f][0], shaped[f][1] - rb[f]), hand)
+            tips[f] = self._limit_tip(f, tips[f], wx, wy, psi)
+        return tips
+
+    def _limited_tips(self, t):
+        """
+        {finger: (x, y, z)} fingertips at t: _tips_at on the hand grid, held
+        to the top speed across the keys like the hand (_limited_at); linear
+        between grid points.
+        """
+        g = LIMIT_GRID_T
+        k = math.floor(t / g)
+        a, b = self._limited_tip_grid(k), self._limited_tip_grid(k + 1)
+        u = t / g - k
+        return {f: tuple(x + (y - x) * u for x, y in zip(a[f], b[f])) for f in a}
+
+    def _limited_tip_grid(self, k):
+        cache = self._tip_limit_cache
+        if k in cache:
+            return cache[k]
+        if len(cache) > 20000:
+            cache.clear()
+        g = LIMIT_GRID_T
+        step = self.max_speed / 0.0254 * self.ppi * g
+        j, todo = k, []
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
+            todo.append(j)
+            j -= 1
+        prev = cache.get(j)
+        for j in reversed(todo):
+            tips = self._tips_at(j * g, self._limited_grid(j))
+            q = {}
+            for f, (x, y, z) in tips.items():
+                if prev is not None:
+                    px, py, _ = prev[f]
+                    d = math.hypot(x - px, y - py)
+                    if d > step:
+                        x, y = px + (x - px) * step / d, py + (y - py) * step / d
+                q[f] = (x, y, z)
+            prev = cache[j] = q
+        return prev
+
+    def _limited_grid(self, k):
+        cache = self._limit_cache
+        if k in cache:
+            return cache[k]
+        if len(cache) > 20000:
+            cache.clear()
+        g = LIMIT_GRID_T
+        step = self.max_speed / 0.0254 * self.ppi * g           # pixels per grid step
+        arm = TIP_ARM_IN * self.ppi
+        j = k
+        todo = []
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
+            todo.append(j)
+            j -= 1
+        prev = cache.get(j)
+        for j in reversed(todo):
+            tt = j * g
+            q = self._key_fix(tt, *self._placed_at(tt))
+            if prev is not None:
+                dx, dy, dp = q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]
+                move = math.hypot(dx, dy) + abs(dp) * arm
+                if move > step:
+                    k_ = step / move
+                    q = (prev[0] + dx * k_, prev[1] + dy * k_, prev[2] + dp * k_)
+            prev = cache[j] = q
+        return prev
+
+    def _key_fix(self, t, wx, wy, psi):
+        """
+        The smoothed hand (wx, wy, psi), moved and turned as little as it
+        takes for every finger holding a key (or about to strike one, see
+        _key_weight) to reach it within its splay and reach limits, so
+        _limit_tip never has to pull a fingertip off its key.
+        """
+        cons = []
+        for f in range(1, 6):
+            w, n = self._key_weight(f, t)
+            if n is None or not self._has_key(self._pk(n)):
+                continue
+            kx, ky = self.key_target(self._pk(n), f)
+            ylo, yhi = self._key_depths(self._pk(n))
+            ys = sorted([ky] + [ylo + (yhi - ylo) * i / 6 for i in range(7)], key=lambda y: abs(y - ky))
+            lo, hi = self.splay[f]
+            m = math.radians(KEY_FIX_MARGIN_DEG)
+            hmin, hmax = self._reach_range(f, self.base_local[f][2] + self.travel, 0.99)
+            dm = KEY_FIX_MARGIN * self.length[f]
+            cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w))
+        if not cons:
+            return wx, wy, psi
+        arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
+
+        def residuals(q):
+            x, y, p = q
+            c, s_ = math.cos(p), math.sin(p)
+            out = [x - wx, y - wy, arm * (p - psi)]
+            for kx, ys, (blx, bly, _), lo, hi, hmin, hmax, k in cons:
+                # anywhere along the key will do: the depth that needs the least
+                best = None
+                for ky in ys:
+                    dx = kx - (x + blx * c - bly * s_)
+                    dy = ky - (y + blx * s_ + bly * c)
+                    lx, ly = dx * c + dy * s_, -dx * s_ + dy * c
+                    a, h = math.atan2(lx, ly), math.hypot(lx, ly)
+                    ea = h * (max(0.0, a - hi) + min(0.0, a - lo))
+                    eh = max(0.0, h - hmax) + min(0.0, h - hmin)
+                    if best is None or ea * ea + eh * eh < best[0] - 1e-9:
+                        best = (ea * ea + eh * eh, ea, eh)
+                out += [k * best[1], k * best[2]]
+            return out
+        q = [wx, wy, psi]
+        r0 = residuals(q)
+        cost = sum(v * v for v in r0)
+        eps = (0.5, 0.5, 1e-3)
+        for _ in range(KEY_FIX_ITERS):
+            if sum(v * v for v in r0[3:]) < 1e-6:
+                break
+            cols = []
+            for j in range(3):
+                qq = list(q)
+                qq[j] += eps[j]
+                cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq), r0)])
+            A = [[sum(ci * cj for ci, cj in zip(cols[i], cols[j])) for j in range(3)] for i in range(3)]
+            g = [-sum(ci * r for ci, r in zip(cols[i], r0)) for i in range(3)]
+            for i in range(3):
+                A[i][i] *= 1.0 + GN_DAMPING
+            dq = _solve3(A, g)
+            # only ever downhill: halve a step that would overshoot
+            for _ in range(6):
+                qn = [q[i] + dq[i] for i in range(3)]
+                rn = residuals(qn)
+                cn = sum(v * v for v in rn)
+                if cn < cost:
+                    q, r0, cost = qn, rn, cn
+                    break
+                dq = [d * 0.5 for d in dq]
+            else:
+                break
+        return tuple(q)
+
     def _pressing(self, f, t):
         starts = self.finger_starts[f]
         i = bisect.bisect_right(starts, t) - 1
@@ -729,6 +955,7 @@ class HandAnimator:
         self.cross_norm = math.radians(CROSS_TURN_DEG)     # the crossing prior is tuned to 14 deg
         self.smooth_t = p.b("smoothness")
         self.early_lift = p.b("early_release")
+        self.max_speed = float(p.b("max_speed"))
         self.roll_dt = p.b("roll_speed")
         self.cross_arc_in = 0.5 + 3.0 * p.b("cross_height")
         self.curl_k = curl_factor(p)
@@ -744,6 +971,84 @@ class HandAnimator:
         self.bounce_release = 0.85 - 0.4 * p.b("wrist_bounce")      # 65% of the way at the default
         self.roll_max = math.radians(ROLL_MAX_DEG) * p.b("tremolo_rotation")
         self.gesture_act = p.b("gesture_finger_action")
+
+    def _speed_schedule(self):
+        """
+        Make the timeline keep to the top speed (pianist "max_speed"). Chord
+        by chord: a finger moving to a new key must let go of its last one
+        early enough to get there (fingering.travel_time) and drop onto it
+        (STRIKE_MIN_T); when the
+        whole hand has to move (its range for the last chord and this one
+        don't meet), every key it still holds must be let go early enough
+        for that. A key is held at least MIN_HOLD_T (or half the time to the
+        new chord); if that leaves too little time the chord is struck late,
+        by at most MAX_DELAY_T and never past the hand's next chord.
+        `self.lead` keeps the travel time each note needs, for _prep_window
+        and _travel; `self.delayed` counts late chords.
+        """
+        import fingering as fg
+        so = self.start_of
+        fe = {id(n): self.finger_ends[f][i] for f, ns in self.by_finger.items() for i, n in enumerate(ns)}
+        prev_of = {}
+        for f, ns in self.by_finger.items():
+            for i, n in enumerate(ns):
+                j = i - 1
+                while j >= 0 and so[id(n)] - so[id(ns[j])] < 0.01:      # a thumb on two keys at once
+                    j -= 1
+                prev_of[id(n)] = ns[j] if j >= 0 else None
+        self.lead = {}
+        self.delayed = 0
+        prev_range = None
+        groups = self.groups
+        for gi, (_, ns) in enumerate(groups):
+            s1 = min(so[id(m)] for m in ns)
+            nxt = min(so[id(m)] for m in groups[gi + 1][1]) if gi + 1 < len(groups) else math.inf
+            vps = [self.vp(m.pitch) for m in ns]
+            fs = [self.fingering[id(m)] for m in ns]
+            rng = fg.hand_range(vps, fs)
+            cons = []                                   # (note, must be let go this long before s1)
+            for m in ns:
+                n = prev_of[id(m)]
+                if n is not None and n.pitch != m.pitch:
+                    need = fg.travel_time(key_pos(self.vp(m.pitch)) - key_pos(self.vp(n.pitch)), self.max_speed)
+                    self.lead[id(m)] = need
+                    cons.append((n, STRIKE_MIN_T + need))
+            if prev_range is not None:
+                need = fg.travel_time(fg.range_gap(prev_range, rng), self.max_speed)
+                if need > 0:
+                    lead = STRIKE_MIN_T + need
+                    for m in ns:
+                        self.lead[id(m)] = max(self.lead.get(id(m), 0.0), need)
+                    for gj in range(gi - 1, -1, -1):
+                        if s1 - groups[gj][0] > 4.0:
+                            break
+                        for n in groups[gj][1]:
+                            if fe[id(n)] > s1 - lead:
+                                cons.append((n, lead))
+            prev_range = rng
+            delay = 0.0
+            for n, lead in cons:
+                floor = so[id(n)] + min(MIN_HOLD_T, 0.5 * max(0.0, s1 - so[id(n)]))
+                delay = max(delay, floor - (s1 - lead))
+            if delay > 1e-4:
+                delay = min(delay, MAX_DELAY_T, max(0.0, nxt - 0.03 - s1))
+                if delay > 1e-4:
+                    self.delayed += 1
+                    for m in ns:
+                        so[id(m)] += delay
+                        fe[id(m)] += delay
+                    s1 += delay
+            for n, lead in cons:
+                floor = so[id(n)] + min(MIN_HOLD_T, 0.5 * max(0.0, s1 - so[id(n)]))
+                fe[id(n)] = max(floor, min(fe[id(n)], s1 - lead), so[id(n)] + 1e-3)
+        for f, ns in self.by_finger.items():
+            ns.sort(key=lambda n: so[id(n)])
+            self.finger_starts[f] = [so[id(n)] for n in ns]
+            ends = [max(fe[id(n)], so[id(n)] + 1e-3) for n in ns]
+            for i in range(len(ns) - 1):              # a finger lets go before it strikes again
+                if self.finger_starts[f][i + 1] - self.finger_starts[f][i] >= 0.01:
+                    ends[i] = max(self.finger_starts[f][i] + 1e-3, min(ends[i], self.finger_starts[f][i + 1]))
+            self.finger_ends[f] = ends
 
     def _roll_wide_chords(self):
         """
@@ -825,6 +1130,7 @@ class HandAnimator:
         self.travel = KEY_TRAVEL_IN * self.ppi
         self._cache = {}
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
+        self._limit_cache, self._tip_limit_cache = {}, {}
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
         self.axis_x = kb.key_rects[62].centerx if 62 in kb.key_rects else kb.rect.centerx
@@ -852,6 +1158,63 @@ class HandAnimator:
         else:
             y = WHITE_DEPTH_IN[f] * self.ppi
         return self._mx(r.centerx), y
+
+    def _key_depths(self, pk):
+        """(lowest, highest) world Y a fingertip may play key(s) pk at."""
+        if isinstance(pk, tuple):
+            spans = [self._key_depths(p) for p in pk]
+            lo, hi = max(a for a, _ in spans), min(b for _, b in spans)
+            return (lo, hi) if lo <= hi else (hi, lo)
+        front = self.kb.rect.h - self.kb.black_h
+        if is_black_key(pk):
+            return front + BLACK_SPAN_IN[0] * self.ppi, front + BLACK_SPAN_IN[1] * self.ppi
+        return WHITE_SPAN_IN[0] * self.ppi, front + WHITE_SPAN_IN[1] * self.ppi
+
+    def _clamp_tip(self, f, x, y, z, wx, wy, psi, slack=0.0, margin=0.0):
+        """(x, y) clamped into finger f's splay and reach range (shrunk by `margin` share, widened by `slack` rad)."""
+        rot = self._rot
+        blx, bly, blz = self.base_local[f]
+        bx, by = rot(blx, bly, psi)
+        bx, by = wx + bx, wy + by
+        lx, ly = rot(x - bx, y - by, -psi)
+        a, h = math.atan2(lx, ly), math.hypot(lx, ly)
+        lo, hi = self.splay[f]
+        m = math.radians(KEY_FIX_MARGIN_DEG) * margin / KEY_FIX_MARGIN if margin else 0.0
+        lo, hi = lo - slack + m, hi + slack - m
+        hmin, hmax = self._reach_range(f, blz - z, 0.99)
+        if z > 0:
+            hmin *= self.curl_min            # a retracting pianist curls idle fingers further in
+        dm = margin * self.length[f]
+        hmin, hmax = hmin + dm, max(hmin + dm, hmax - dm)
+        a, h = _clamp(a, lo, hi), _clamp(h, hmin, hmax)
+        cx, cy = rot(h * math.sin(a), h * math.cos(a), psi)
+        return bx + cx, by + cy
+
+    def _key_spot(self, pk, f, hand, z=None):
+        """
+        Where finger f plays key(s) pk with the hand at `hand` (wx, wy, psi):
+        squarely across the key, and along it at its usual depth, or as
+        little further in or out (within _key_depths) as it takes to be
+        inside the finger's splay and reach range. None for `hand` gives
+        the usual spot.
+        """
+        kx, ky = self.key_target(pk, f)
+        if hand is None:
+            return kx, ky
+        z = -self.travel if z is None else z
+        lo, hi = self._key_depths(pk)
+        cx, cy = self._clamp_tip(f, kx, ky, z, *hand, margin=KEY_FIX_MARGIN)
+        if math.hypot(cx - kx, cy - ky) > 1.5 * (hi - lo):
+            return kx, ky           # out of reach anyway (on its way there): its usual spot
+        best, best_e = ky, math.inf
+        for y in sorted([ky] + [lo + (hi - lo) * i / 10 for i in range(11)], key=lambda y: abs(y - ky)):
+            cx, cy = self._clamp_tip(f, kx, y, z, *hand, margin=KEY_FIX_MARGIN)
+            e = math.hypot(cx - kx, cy - y)
+            if e < 0.5:
+                return kx, y
+            if e < best_e - 0.5:
+                best, best_e = y, e
+        return kx, best
 
     def _mx(self, x):
         """Screen x <-> this hand's working frame (mirrored for the left hand)."""
@@ -1220,8 +1583,14 @@ class HandAnimator:
         """(prep_start, strike_start, strike) for finger f's note i+1 (i = its last note, or -1)."""
         starts, ends = self.finger_starts[f], self.finger_ends[f]
         nxt = starts[i + 1]
-        prep_start = max(nxt - self.prep_max_t, ends[i] if i >= 0 else -math.inf)
-        strike = min(STRIKE_T, 0.35 * max(0.0, nxt - prep_start))
+        # a long trip at the top speed may start earlier than usual, and
+        # when time is short the final drop is cut so the trip keeps to it
+        need = self.lead.get(id(self.by_finger[f][i + 1]), 0.0)
+        prep_start = max(nxt - max(self.prep_max_t, STRIKE_T + need), ends[i] if i >= 0 else -math.inf)
+        window = max(0.0, nxt - prep_start)
+        strike = min(STRIKE_T, 0.35 * window)
+        if window - strike < need:
+            strike = min(strike, max(STRIKE_MIN_T, window - need))
         return prep_start, nxt - strike, strike
 
     def _travel(self, f, i, t):
@@ -1231,11 +1600,19 @@ class HandAnimator:
         early (TRAVEL_SHARE of the time), then hovers, ready to strike.
         """
         prep_start, strike_start, _ = self._prep_window(f, i)
-        span = max(1e-3, (strike_start - prep_start) * self.travel_share)
+        window = strike_start - prep_start
+        # arrive early and hover - unless that would mean going faster than the top speed
+        need = self.lead.get(id(self.by_finger[f][i + 1]), 0.0)
+        span = max(1e-3, window * self.travel_share, min(need, window))
         return _smooth((t - prep_start) / span), prep_start
 
-    def _tip_target(self, f, t, rest_xy):
-        """(x, y, z) world target for fingertip f at time t, and how busy it is (0..1)."""
+    def _tip_target(self, f, t, rest_xy, hand=None):
+        """
+        (x, y, z) world target for fingertip f at time t, and how busy it is
+        (0..1). With the hand's (wx, wy, psi), keys are aimed at where this
+        hand can play them (_key_spot), the same spot all the way from the
+        approach through the strike, the press and the release.
+        """
         S = self.S
         hover = HOVER[f] * S + self.retract_up_in * self.ppi * (0.5 if f == 1 else 1.0)
         prep = self.prep_h[f] * S
@@ -1247,11 +1624,11 @@ class HandAnimator:
         prev_end = ends[i] if prev else -math.inf
 
         if prev and t < prev_end:                                    # pressing
-            kx, ky = self.key_target(self._pk(prev), f)
+            kx, ky = self._key_spot(self._pk(prev), f, hand)
             return (kx, ky, -travel * min(1.0, (t - starts[i]) / PRESS_T)), 1.0
 
         if prev:                                                     # released
-            kx, ky = self.key_target(self._pk(prev), f)
+            kx, ky = self._key_spot(self._pk(prev), f, hand)
             since = t - prev_end
             z = _lerp(-travel, hover, _ease_out(since / RELEASE_T))
             s = _smooth((since - LINGER_T) / RETURN_T)
@@ -1268,7 +1645,7 @@ class HandAnimator:
         prep_start, strike_start, strike = self._prep_window(f, i)
         if t < prep_start:
             return idle, busy
-        kx, ky = self.key_target(self._pk(nxt), f)
+        kx, ky = self._key_spot(self._pk(nxt), f, hand)
         if t < strike_start:
             s, _ = self._travel(f, i, t)
             arc = 0.0
@@ -1330,24 +1707,11 @@ class HandAnimator:
 
     def _limit_tip(self, f, tip, wx, wy, psi):
         """Clamp a fingertip target to the finger's splay and reach range."""
-        rot = self._rot
-        blx, bly, blz = self.base_local[f]
-        bx, by = rot(blx, bly, psi)
-        bx, by = wx + bx, wy + by
-        lx, ly = rot(tip[0] - bx, tip[1] - by, -psi)
-        a, h = math.atan2(lx, ly), math.hypot(lx, ly)
-        lo, hi = self.splay[f]
-        if tip[2] < 0:
-            # a finger already down on its key may stretch a touch further
-            # rather than slide off it while the hand is still moving
-            slack = math.radians(PRESS_SLACK_DEG[f])
-            lo, hi = lo - slack, hi + slack
-        hmin, hmax = self._reach_range(f, blz - tip[2], 0.99)
-        if tip[2] > 0:
-            hmin *= self.curl_min            # a retracting pianist curls idle fingers further in
-        a, h = _clamp(a, lo, hi), _clamp(h, hmin, hmax)
-        x, y = rot(h * math.sin(a), h * math.cos(a), psi)
-        return (bx + x, by + y, tip[2])
+        # a finger already down on its key may stretch a touch further
+        # rather than slide off it while the hand is still moving
+        slack = math.radians(PRESS_SLACK_DEG[f]) if tip[2] < 0 else 0.0
+        x, y = self._clamp_tip(f, tip[0], tip[1], tip[2], wx, wy, psi, slack)
+        return (x, y, tip[2])
 
     # ----- full pose ------------------------------------------------------------
     def pose(self, t, kb):
@@ -1360,7 +1724,7 @@ class HandAnimator:
         """
         self._ensure_layout(kb)
         S, rot = self.S, self._rot
-        wx, wy, psi = self._placed_at(t)
+        wx, wy, psi = self._limited_at(t)
         # The wrist playing (repeated chords, tremolos): the hand is a rigid
         # unit that takes the keys down itself - it drops by the key's depth
         # while a chord is held and springs up between chords (lift), and in
@@ -1381,23 +1745,8 @@ class HandAnimator:
             x, y = rot(xc + (lx - xc) * cos_r, p[1] * S, psi)
             return (wx + x, wy + y, p[2] * S + self.z_off + gw * (hb[0] + droll(lx)))
 
-        def to_world_xy(lx, ly):
-            x, y = rot(lx, ly, psi)
-            return wx + x, wy + y
-
-        # fingertip targets: first pass with the plain rest spots, then again
-        # with rest spots shaped around the busy fingers
-        tips, busy, local = {}, {}, {}
-        rb = self.retract_back
-        for f in range(1, 6):
-            rx, ry = self.rest_local[f]
-            tips[f], busy[f] = self._tip_target(f, t, to_world_xy(rx, ry - rb[f]))
-            local[f] = rot(tips[f][0] - wx, tips[f][1] - wy, -psi)
-        shaped = self._shaped_rests(busy, local)
-        for f in range(1, 6):
-            if busy[f] < 1.0:
-                tips[f], _ = self._tip_target(f, t, to_world_xy(shaped[f][0], shaped[f][1] - rb[f]))
-            tips[f] = self._limit_tip(f, tips[f], wx, wy, psi)
+        # fingertips, held to the top speed across the keys (_limited_tips)
+        tips = {f: self._limit_tip(f, p, wx, wy, psi) for f, p in self._limited_tips(t).items()}
         if gw > 0:
             travel = self.travel
             lxs = {f: rot(tips[f][0] - wx, tips[f][1] - wy, -psi)[0] for f in tips}
