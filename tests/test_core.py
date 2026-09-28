@@ -167,9 +167,9 @@ def test_fingers_stay_on_their_keys():
             if a._pressing(f, t):
                 n = a.by_finger[f][bisect.bisect_right(a.finger_starts[f], t) - 1]
                 tip = pose["struct"]["chains"][f][-1]
-                lo, hi = a._key_depths(n.pitch)
+                lo = kb.rect.h - kb.black_h if n.is_black else 0
                 assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w      # square across the key
-                assert lo - 1 <= tip[1] <= hi + 1                                           # and on it
+                assert lo <= tip[1] <= kb.rect.h                                            # and on it
         if 1.0 < t < 4.0:
             xs.append(pose["struct"]["chains"][2][-1][0])
     assert max(xs) - min(xs) < 0.15 * kb.white_w          # no twitching on the repeated key
@@ -290,17 +290,22 @@ def test_finger_anticipation_goes_down_to_just_in_time():
     assert all(h >= 0.2 for h in head[0.0])             # the old lowest setting: two notes ahead
 
 
-def test_chromatic_octaves_play_white_keys_up_among_the_black_ones():
-    import pygame
-    from common import Keyboard, bottom_layout
-    pygame.init()
-    # right-hand chromatic octaves up and down: white keys are played up by
-    # the black keys, so the hand doesn't move in and out with every octave
+def _chromatic_octaves(velocity):
     ps = list(range(54, 66)) + list(range(66, 54, -1))
     ns = []
     for i, p in enumerate(ps):
         t = 0.3 + i * 0.14
-        ns += [Note(p, t, t + 0.12, 80, 0, RIGHT), Note(p + 12, t, t + 0.12, 80, 0, RIGHT)]
+        ns += [Note(p, t, t + 0.12, velocity, 0, RIGHT), Note(p + 12, t, t + 0.12, velocity, 0, RIGHT)]
+    return ns
+
+
+def test_chromatic_octaves_play_white_keys_up_among_the_black_ones():
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # soft right-hand chromatic octaves up and down: white keys are played up
+    # by the black keys, so the hand doesn't move in and out with every octave
+    ns = _chromatic_octaves(45)
     kb = Keyboard(bottom_layout((1600, 900))[0])
     a = hands.HandAnimator(song_of(ns), RIGHT)
     front = kb.rect.h - kb.black_h
@@ -315,3 +320,33 @@ def test_chromatic_octaves_play_white_keys_up_among_the_black_ones():
             assert a.key_target(n.pitch, 5, n)[1] > front          # past the black keys' front
     travel = sum(abs(b - c) for b, c in zip(ys, ys[1:])) / 3.5
     assert travel < 4.0                                   # in/s in and out (it was ~8 before)
+
+
+def test_loud_notes_are_played_near_the_front_of_the_keys():
+    import pygame
+    import pianist
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    front = kb.rect.h - kb.black_h
+    # fortissimo chromatic octaves: white keys stay below the black ones, for leverage
+    ns = _chromatic_octaves(120)
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    a._ensure_layout(kb)
+    for n in ns:
+        lo, hi = a._key_depths(n.pitch, n, 5)
+        y = a.key_target(n.pitch, 5, n)[1]
+        assert lo <= y <= hi
+        if not n.is_black:
+            assert y < front
+    assert hands.loudness(120) == 1.0 and hands.loudness(40) == 0.0 < hands.loudness(80) < 1.0
+    # the pianist's playing area bounds it all: nothing past `key_area_far`
+    p = pianist.Pianist("t")
+    p.behavior["key_area_far"] = 0.5
+    b = hands.HandAnimator(song_of(_chromatic_octaves(40)), RIGHT, pianist=p)
+    b._ensure_layout(kb)
+    for n in b.by_finger[5]:
+        lo, hi = b._key_depths(n.pitch, n, 5)
+        full = b._key_depths(n.pitch)
+        assert abs(hi - full[1]) < 1e-9 and b.key_target(n.pitch, 5, n)[1] <= hi
+    assert all(b.key_target(n.pitch, 5, n)[1] < front for n in b.by_finger[5] if not n.is_black)

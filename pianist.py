@@ -148,6 +148,14 @@ BEHAVIORS = [
               "Fingerings and the split between the hands are chosen so the hands never need to "
               "move faster; when the music still asks for more, the key is let go earlier or struck "
               "late, and that is what you hear."),
+    dict(id="key_area_near", group="Motion", label="Playing area on the keys: nearest the edge",
+         kind="slider", min=0.0, max=0.5, default=0.0, fmt=_pct, lo="Right at the edge", hi="Well in",
+         desc="How close to a key's front edge a fingertip may play, as a share of the key's playable "
+              "length (on white keys, up to just past the black keys). Loud notes are played near this end."),
+    dict(id="key_area_far", group="Motion", label="Playing area on the keys: furthest up",
+         kind="slider", min=0.3, max=1.0, default=1.0, fmt=_pct, lo="Near the edge only", hi="Up among the black keys",
+         desc="How far up a key a fingertip may play. Within this area the loudness decides: soft notes "
+              "may use all of it, loud ones only the front part, where the key has more leverage."),
     dict(id="roll_speed", group="Motion", label="Rolled chord speed", kind="slider",
          min=0.015, max=0.08, default=0.035, fmt=_ms, lo="Quick roll", hi="Slow roll",
          desc="Chords too wide for this hand are rolled from the bottom up; this is the time "

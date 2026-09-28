@@ -172,6 +172,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 | cross_turn | `CROSS_TURN_DEG` |
 | smoothness | `HAND_SMOOTH_T` |
 | early_release | `EARLY_LIFT_T` |
+| key_area_near, key_area_far | where on a key fingertips may play; loudness sets the aim within it |
 | max_speed | top travel speed of any part of the hand (m/s): hand split, fingering, schedule and animation limit |
 | roll_speed | time between rolled-chord notes |
 | weak_bias | `finger_4` / `finger_5` weights |
@@ -389,6 +390,20 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   still slides a finger along the key if its joints need it. The hand-solver items carry their note so the hand is
   placed for the same spot. Op. 25 No. 10, first 10 s: wrist in/out 7.9 → 2.5 in/s (RH), 8.0 → 2.4 (LH); pressed
   tips > 0.1 key off (first 30 s) 61 → 54. 0.3 / 0.4 in further up didn't help.
+- **Playing area and loudness** (2026-09-28): the white-up rule above was too much in forte octaves.
+  - New behaviours `key_area_near` (0–50%, default 0) and `key_area_far` (30–100%, default 100%) bound where on a
+    key a fingertip may play, as shares of its playable length (`WHITE_SPAN_IN` 0.3 in from the front to 0.45 in
+    past the black keys' front; `BLACK_SPAN_IN` 0.25–1.6 in from a black key's front): `_key_depths(pk)`.
+  - Within that area loudness decides where a finger aims (`_key_depths(pk, note, f)`, used by `key_target`):
+    `loudness(v)` is 0 at velocity ≤ `VEL_SOFT` 50 and 1 at ≥ `VEL_LOUD` 110. Soft notes may aim anywhere in the
+    area (white keys up among the black ones); loud ones no further up than their finger's usual spot plus
+    `LOUD_MARGIN_IN` (0.25 in on white keys, 0.8 in on black ones - long fingers on black keys next to white ones
+    need the room), nearer the front, where the key has leverage.
+  - The loudness only sets the aim: `_key_spot` and `_key_fix` may still slide a finger anywhere in the pianist's
+    area when it can't reach its aim. Capping the slide too put fingertips off their keys (Op. 25 No. 10, first
+    30 s: pressed tips > 0.1 key off 54 → 217-285); as an aim it stays at 55.
+  - Op. 25 No. 10 (RH, velocity 92-127 after the opening): wrist in/out 4.6 (0-10 s) and 6.0 in/s (20-30 s) - between
+    all-front (7.9) and all-up (2.5).
 - **Top travel speed** (2026-09-28; pianist `max_speed`, default 3.0 m/s, 0.5–5): no part of a hand - wrist or
   fingertip - travels faster, and what is heard is what the hands then play.
   - Model (`fingering.travel_time`): moves ease in and out like the animation's smootherstep, whose peak is 1.875× the

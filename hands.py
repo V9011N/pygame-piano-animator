@@ -72,6 +72,14 @@ BLACK_SPAN_IN = (0.25, 1.6)              # in from the black key's front edge
 # and out: fully within WHITE_UP_T of a chord with a black key, fading out
 # by WHITE_UP_FADE_T.
 WHITE_UP_IN = 0.2                        # past the black keys' front
+# Within the pianist's playing area on a key, a loud note is played nearer
+# its front (more leverage): up to VEL_SOFT it may use the whole area; from
+# VEL_LOUD no further up than its finger's usual spot plus LOUD_MARGIN_IN
+# (white, black: the black keys already sit well in, and long fingers on
+# them next to white keys need the room); in between linearly.
+VEL_SOFT = 50
+VEL_LOUD = 110
+LOUD_MARGIN_IN = (0.25, 0.8)
 WHITE_UP_T = 0.3                         # s
 WHITE_UP_FADE_T = 0.6                    # s
 
@@ -216,6 +224,11 @@ def _lerp3(a, b, s): return tuple(_lerp(x, y, s) for x, y in zip(a, b))
 def _smooth(x):
     x = min(1.0, max(0.0, x))
     return x * x * x * (x * (x * 6 - 15) + 10)          # smootherstep
+
+
+def loudness(velocity):
+    """0 (soft, VEL_SOFT and below) .. 1 (loud, VEL_LOUD and above)."""
+    return min(1.0, max(0.0, (velocity - VEL_SOFT) / (VEL_LOUD - VEL_SOFT)))
 
 
 def busy_spans(intervals):
@@ -964,6 +977,8 @@ class HandAnimator:
         self.smooth_t = p.b("smoothness")
         self.early_lift = p.b("early_release")
         self.max_speed = float(p.b("max_speed"))
+        self.area_near = p.b("key_area_near")
+        self.area_far = max(self.area_near + 0.05, p.b("key_area_far"))
         self.roll_dt = p.b("roll_speed")
         self.cross_arc_in = 0.5 + 3.0 * p.b("cross_height")
         self.curl_k = curl_factor(p)
@@ -1190,18 +1205,36 @@ class HandAnimator:
             up = self.white_up.get(id(note), 0.0) if note is not None else 0.0
             if up > 0:
                 y = max(y, _lerp(y, front + WHITE_UP_IN * self.ppi, up))
-        return self._mx(r.centerx), y
+        lo, hi = self._key_depths(pitch, note, f)          # the playing area, for this loudness
+        return self._mx(r.centerx), min(max(y, lo), hi)
 
-    def _key_depths(self, pk):
-        """(lowest, highest) world Y a fingertip may play key(s) pk at."""
+    def _key_depths(self, pk, note=None, f=None):
+        """
+        (lowest, highest) world Y a fingertip may play key(s) pk at: the
+        pianist's playing area on the key (key_area_near .. key_area_far of
+        its playable length, WHITE_SPAN_IN / BLACK_SPAN_IN). With `note`
+        and its finger `f`: where it aims, by its loudness - a loud note no
+        further up than its finger's usual spot (plus LOUD_MARGIN_IN),
+        nearer the key's front, where it has leverage; a soft one anywhere
+        in the area. (A finger that can't reach its aim may still slide
+        within the whole area, see _key_spot.)
+        """
         if isinstance(pk, tuple):
-            spans = [self._key_depths(p) for p in pk]
+            spans = [self._key_depths(p, note, f) for p in pk]
             lo, hi = max(a for a, _ in spans), min(b for _, b in spans)
             return (lo, hi) if lo <= hi else (hi, lo)
         front = self.kb.rect.h - self.kb.black_h
         if is_black_key(pk):
-            return front + BLACK_SPAN_IN[0] * self.ppi, front + BLACK_SPAN_IN[1] * self.ppi
-        return WHITE_SPAN_IN[0] * self.ppi, front + WHITE_SPAN_IN[1] * self.ppi
+            a, b = front + BLACK_SPAN_IN[0] * self.ppi, front + BLACK_SPAN_IN[1] * self.ppi
+        else:
+            a, b = WHITE_SPAN_IN[0] * self.ppi, front + WHITE_SPAN_IN[1] * self.ppi
+        lo, hi = a + (b - a) * self.area_near, a + (b - a) * self.area_far
+        if note is not None and f is not None:
+            black = is_black_key(pk)
+            usual = front + BLACK_DEPTH_IN * self.ppi if black else WHITE_DEPTH_IN[f] * self.ppi
+            cap = max(lo, min(hi, usual + LOUD_MARGIN_IN[black] * self.ppi))
+            hi = _lerp(hi, cap, loudness(note.velocity))
+        return lo, hi
 
     def _clamp_tip(self, f, x, y, z, wx, wy, psi, slack=0.0, margin=0.0):
         """(x, y) clamped into finger f's splay and reach range (shrunk by `margin` share, widened by `slack` rad)."""
@@ -1226,16 +1259,18 @@ class HandAnimator:
     def _key_spot(self, pk, f, hand, z=None, note=None):
         """
         Where finger f plays key(s) pk with the hand at `hand` (wx, wy, psi):
-        squarely across the key, and along it at its usual depth, or as
-        little further in or out (within _key_depths) as it takes to be
-        inside the finger's splay and reach range. None for `hand` gives
+        squarely across the key, and along it where it aims (key_target:
+        its usual depth, bounded by the note's loudness), or as little
+        further in or out (anywhere in the pianist's playing area,
+        _key_depths) as it takes to be inside the finger's splay and reach
+        range. None for `hand` gives
         the usual spot.
         """
         kx, ky = self.key_target(pk, f, note)
         if hand is None:
             return kx, ky
         z = -self.travel if z is None else z
-        lo, hi = self._key_depths(pk)
+        lo, hi = self._key_depths(pk)          # the whole playing area, if reach needs it
         cx, cy = self._clamp_tip(f, kx, ky, z, *hand, margin=KEY_FIX_MARGIN)
         if math.hypot(cx - kx, cy - ky) > 1.5 * (hi - lo):
             return kx, ky           # out of reach anyway (on its way there): its usual spot
