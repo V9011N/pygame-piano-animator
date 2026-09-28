@@ -70,6 +70,22 @@ def _pct(v): return f"{int(round(v * 100))}%"
 def _ms(v): return f"{int(round(v * 1000))} ms"
 def _deg(v): return f"{int(round(v))}°"
 def _mps(v): return f"{v:.1f} m/s"
+
+
+def finger_lead(a):
+    """
+    (longest head start in s, share of it spent travelling) for the finger
+    anticipation setting a (-1..1): from 0 to 1 a finger may set off 0.4 to
+    1.4 s ahead and arrive early to hover; below 0 it sets off later and
+    later (0.05 s at -1) and arrives just in time.
+    """
+    if a >= 0:
+        return 0.4 + a, 0.9 - 0.6 * a
+    return 0.4 + 0.35 * a, 0.9 - 0.1 * a
+
+
+def _lead(v):
+    return f"{int(round(finger_lead(v)[0] * 1000))} ms ahead"
 def _bias(v):
     if abs(v) < 0.05:
         return "neutral"
@@ -90,8 +106,11 @@ BEHAVIORS = [
          min=0.0, max=1.0, default=0.5, fmt=_pct, lo="Last moment", hi="Very early",
          desc="How early the whole hand moves into position for the notes coming up."),
     dict(id="antic_fingers", group="Motion", label="Anticipation speed (fingers)", kind="slider",
-         min=0.0, max=1.0, default=0.5, fmt=_pct, lo="Last moment", hi="Very early",
-         desc="How early each finger travels to its next key and waits there, ready to strike."),
+         min=-1.0, max=1.0, default=0.5, fmt=_lead, lo="Just in time", hi="Very early",
+         desc="How early each finger travels to its next key and waits there, ready to strike - "
+              "a thumb passing under, say. The value is the longest head start; a finger never "
+              "leaves before it has let go of its last key, and never so late that it would have "
+              "to move faster than the top travel speed."),
     dict(id="cross_height", group="Motion", label="Crossing height", kind="slider",
          min=0.0, max=1.0, default=0.33, fmt=_pct, lo="Skim over", hi="Arch high",
          desc="How high a finger arches when it crosses over the thumb."),
@@ -129,6 +148,14 @@ BEHAVIORS = [
               "Fingerings and the split between the hands are chosen so the hands never need to "
               "move faster; when the music still asks for more, the key is let go earlier or struck "
               "late, and that is what you hear."),
+    dict(id="key_area_near", group="Motion", label="Playing area on the keys: nearest the edge",
+         kind="slider", min=0.0, max=0.5, default=0.0, fmt=_pct, lo="Right at the edge", hi="Well in",
+         desc="How close to a key's front edge a fingertip may play, as a share of the key's playable "
+              "length (on white keys, up to just past the black keys). Loud notes are played near this end."),
+    dict(id="key_area_far", group="Motion", label="Playing area on the keys: furthest up",
+         kind="slider", min=0.3, max=1.0, default=1.0, fmt=_pct, lo="Near the edge only", hi="Up among the black keys",
+         desc="How far up a key a fingertip may play. Within this area the loudness decides: soft notes "
+              "may use all of it, loud ones only the front part, where the key has more leverage."),
     dict(id="roll_speed", group="Motion", label="Rolled chord speed", kind="slider",
          min=0.015, max=0.08, default=0.035, fmt=_ms, lo="Quick roll", hi="Slow roll",
          desc="Chords too wide for this hand are rolled from the bottom up; this is the time "

@@ -167,9 +167,9 @@ def test_fingers_stay_on_their_keys():
             if a._pressing(f, t):
                 n = a.by_finger[f][bisect.bisect_right(a.finger_starts[f], t) - 1]
                 tip = pose["struct"]["chains"][f][-1]
-                lo, hi = a._key_depths(n.pitch)
+                lo = kb.rect.h - kb.black_h if n.is_black else 0
                 assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w      # square across the key
-                assert lo - 1 <= tip[1] <= hi + 1                                           # and on it
+                assert lo <= tip[1] <= kb.rect.h                                            # and on it
         if 1.0 < t < 4.0:
             xs.append(pose["struct"]["chains"][2][-1][0])
     assert max(xs) - min(xs) < 0.15 * kb.white_w          # no twitching on the repeated key
@@ -270,3 +270,110 @@ def test_hands_keep_to_the_top_speed_and_play_what_they_do():
     assert sorted((p, r, id(n)) for p, r, n in perf.items) == sorted((p, r, id(n)) for p, r, n in a.performance)
     late = [p - n.start for p, r, n in a.performance if p > n.start + 1e-6]
     assert late and max(late) <= hands.MAX_DELAY_T + 1e-6
+
+
+def test_finger_anticipation_goes_down_to_just_in_time():
+    import pianist
+    # a C major scale at 8 notes a second: how early does the thumb set off
+    # for the notes it passes under to?
+    scale = [60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77]
+    ns = [Note(p, 0.3 + i * 0.125, 0.3 + i * 0.125 + 0.12, 80, 0, RIGHT) for i, p in enumerate(scale)]
+    head = {}
+    for v in (-1.0, 0.0):
+        p = pianist.Pianist("t")
+        p.behavior["antic_fingers"] = v
+        a = hands.HandAnimator(song_of(ns), RIGHT, pianist=p)
+        k = len(a.by_finger[1])
+        assert k >= 3                                  # the thumb passes under at least twice
+        head[v] = [a.finger_starts[1][i + 1] - a._prep_window(1, i)[0] for i in range(k - 1)]
+    assert all(h <= 0.1 for h in head[-1.0])            # just in time
+    assert all(h >= 0.2 for h in head[0.0])             # the old lowest setting: two notes ahead
+
+
+def _chromatic_octaves(velocity):
+    ps = list(range(54, 66)) + list(range(66, 54, -1))
+    ns = []
+    for i, p in enumerate(ps):
+        t = 0.3 + i * 0.14
+        ns += [Note(p, t, t + 0.12, velocity, 0, RIGHT), Note(p + 12, t, t + 0.12, velocity, 0, RIGHT)]
+    return ns
+
+
+def test_chromatic_octaves_play_white_keys_up_among_the_black_ones():
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # soft right-hand chromatic octaves up and down: white keys are played up
+    # by the black keys, so the hand doesn't move in and out with every octave
+    ns = _chromatic_octaves(45)
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    front = kb.rect.h - kb.black_h
+    ys = []
+    for i in range(int(3.5 * 60)):
+        t = 0.6 + i / 60
+        pose = a.pose(t, kb)
+        ys.append(pose["wrist"][1] / pose["ppi"])
+    for n in ns:
+        if not n.is_black:
+            assert a.white_up[id(n)] == 1.0
+            assert a.key_target(n.pitch, 5, n)[1] > front          # past the black keys' front
+    travel = sum(abs(b - c) for b, c in zip(ys, ys[1:])) / 3.5
+    assert travel < 4.0                                   # in/s in and out (it was ~8 before)
+
+
+def test_loud_notes_are_played_near_the_front_of_the_keys():
+    import pygame
+    import pianist
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    front = kb.rect.h - kb.black_h
+    # fortissimo chromatic octaves: white keys stay below the black ones, for leverage
+    ns = _chromatic_octaves(120)
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    a._ensure_layout(kb)
+    for n in ns:
+        lo, hi = a._key_depths(n.pitch, n, 5)
+        y = a.key_target(n.pitch, 5, n)[1]
+        assert lo <= y <= hi
+        if not n.is_black:
+            assert y < front
+    assert hands.loudness(120) == 1.0 and hands.loudness(40) == 0.0 < hands.loudness(80) < 1.0
+    # the pianist's playing area bounds it all: nothing past `key_area_far`
+    p = pianist.Pianist("t")
+    p.behavior["key_area_far"] = 0.5
+    b = hands.HandAnimator(song_of(_chromatic_octaves(40)), RIGHT, pianist=p)
+    b._ensure_layout(kb)
+    for n in b.by_finger[5]:
+        lo, hi = b._key_depths(n.pitch, n, 5)
+        full = b._key_depths(n.pitch)
+        assert abs(hi - full[1]) < 1e-9 and b.key_target(n.pitch, 5, n)[1] <= hi
+    assert all(b.key_target(n.pitch, 5, n)[1] < front for n in b.by_finger[5] if not n.is_black)
+
+
+def test_fingers_aim_where_they_are_going_without_snapping():
+    import math
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(notes_at([60, 64, 67, 72])), RIGHT)
+    a._ensure_layout(kb)
+    wx, wy, psi = 500.0, -60.0, 0.0
+    blx, bly, blz = a.base_local[2]
+    hmin, hmax = a._reach_range(2, blz - 20.0, 0.99)
+    # a target within reach but 60 degrees out, far past the index finger's
+    # splay: it is brought to the nearest point on the limit's line, not
+    # swung round at full length (the old clamp: 0.9 of the reach)
+    ang = math.radians(60)
+    x, y = wx + blx + 0.9 * hmax * math.sin(ang), wy + bly + 0.9 * hmax * math.cos(ang)
+    cx, cy = a._clamp_tip(2, x, y, 20.0, wx, wy, psi)
+    assert math.hypot(cx - wx - blx, cy - wy - bly) < 0.75 * hmax
+    # the spot along a key changes smoothly as the hand moves across (the old
+    # choice jumped up to 1.5 in at once)
+    kx = a.key_target(67, 2)[0]
+    for p in (62, 64, 66, 68):
+        for f in (2, 3, 4, 5):
+            ys = [a._key_spot(p, f, (kx - 300 + i * 0.5, wy, psi))[1] for i in range(1200)]
+            assert max(abs(b - c) for b, c in zip(ys, ys[1:])) < 0.3 * a.ppi

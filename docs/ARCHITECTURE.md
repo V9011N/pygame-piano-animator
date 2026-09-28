@@ -166,12 +166,13 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 |---|---|
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
 | antic_hand | `ANTIC_T` / `NEED_T` |
-| antic_fingers | `TRAVEL_SHARE` / `PREP_MAX_T` |
+| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
 | smoothness | `HAND_SMOOTH_T` |
 | early_release | `EARLY_LIFT_T` |
+| key_area_near, key_area_far | where on a key fingertips may play; loudness sets the aim within it |
 | max_speed | top travel speed of any part of the hand (m/s): hand split, fingering, schedule and animation limit |
 | roll_speed | time between rolled-chord notes |
 | weak_bias | `finger_4` / `finger_5` weights |
@@ -381,6 +382,44 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     either order) is let go `early_lift` before it, like a crossed held key. Performance MIDI often overlaps leaps
     by a few tens of ms. Dante fragment: pressed-tip frames > 0.3 key off 82 → 29, worst 5.6 → 1.8 keys (the rest
     are the last frames of leaps). Demo song: > 0.1 key 34 → 8, worst 1.86 → 0.28.
+- **White keys among black ones** (2026-09-28; Chopin Op. 25 No. 10, chromatic octaves): white keys were always
+  aimed at their finger's usual depth near the front, so the hand moved in for every black-key octave and back out
+  for every white one (wrist 7.9 in/s in and out). `HandAnimator.white_up` ({id(note): 0..1}) raises a white-key
+  note's target (`key_target(pitch, f, note)`) to `WHITE_UP_IN` 0.2 in past the black keys' front: fully within
+  `WHITE_UP_T` 0.3 s of a chord of this hand with a black key, fading out by 0.6 s. It is a preference - `_key_spot`
+  still slides a finger along the key if its joints need it. The hand-solver items carry their note so the hand is
+  placed for the same spot. Op. 25 No. 10, first 10 s: wrist in/out 7.9 → 2.5 in/s (RH), 8.0 → 2.4 (LH); pressed
+  tips > 0.1 key off (first 30 s) 61 → 54. 0.3 / 0.4 in further up didn't help.
+- **Playing area and loudness** (2026-09-28): the white-up rule above was too much in forte octaves.
+  - New behaviours `key_area_near` (0–50%, default 0) and `key_area_far` (30–100%, default 100%) bound where on a
+    key a fingertip may play, as shares of its playable length (`WHITE_SPAN_IN` 0.3 in from the front to 0.45 in
+    past the black keys' front; `BLACK_SPAN_IN` 0.25–1.6 in from a black key's front): `_key_depths(pk)`.
+  - Within that area loudness decides where a finger aims (`_key_depths(pk, note, f)`, used by `key_target`):
+    `loudness(v)` is 0 at velocity ≤ `VEL_SOFT` 50 and 1 at ≥ `VEL_LOUD` 110. Soft notes may aim anywhere in the
+    area (white keys up among the black ones); loud ones no further up than their finger's usual spot plus
+    `LOUD_MARGIN_IN` (0.25 in on white keys, 0.8 in on black ones - long fingers on black keys next to white ones
+    need the room), nearer the front, where the key has leverage.
+  - The loudness only sets the aim: `_key_spot` and `_key_fix` may still slide a finger anywhere in the pianist's
+    area when it can't reach its aim. Capping the slide too put fingertips off their keys (Op. 25 No. 10, first
+    30 s: pressed tips > 0.1 key off 54 → 217-285); as an aim it stays at 55.
+  - Op. 25 No. 10 (RH, velocity 92-127 after the opening): wrist in/out 4.6 (0-10 s) and 6.0 in/s (20-30 s) - between
+    all-front (7.9) and all-up (2.5).
+- **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
+  passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
+  splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).
+  - `_clamp_tip`: a target past the splay limit is brought to the nearest point on the limit's line
+    (distance × cos of the excess angle), not swung round at full length. The finger points toward its key and
+    only stretches as far as that brings it closer.
+  - `_key_spot`: the spot along a key is a soft minimum over 21 spots (distance from the aim + a weight × how far
+    out of reach), continuous in the hand's pose - firm (`KEY_SPOT_FIRM` 20, 0.03 in) on the key, softer
+    (`KEY_SPOT_SOFT` 4, 0.12 in) while travelling (blended by the trip still to go); a key far out of reach fades
+    back to its usual spot. The old "nearest reachable spot" jumped up to 1.5 in for a small hand move.
+  - The drawn hand is averaged over ±3 limit steps (±50 ms, triangular, no delay) after the speed limit, and
+    fingertips in the air over ±3 (a finger on its key stays exactly on it): the limit's grid corners and the
+    key fit's corrections made the whole hand lurch.
+  - Winter Wind RH 20-40 s: fingertip jerks (second difference > 0.15 in/frame² at 120 fps) 846 → 134, worst
+    1.15 → 0.67; frames with a finger > 95% stretched 450 → 166. Pressed tips > 0.1 key off: Op. 25 No. 10 (0-30 s)
+    55 → 69, Winter Wind 27 → 29, demo 9 → 23 (worst 0.35). ~2.0-2.4 ms per hand per frame.
 - **Top travel speed** (2026-09-28; pianist `max_speed`, default 3.0 m/s, 0.5–5): no part of a hand - wrist or
   fingertip - travels faster, and what is heard is what the hands then play.
   - Model (`fingering.travel_time`): moves ease in and out like the animation's smootherstep, whose peak is 1.875× the
