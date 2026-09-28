@@ -60,6 +60,36 @@ _OFF = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4}          # natural spacing: one white key 
 MAX_SPAN = {(1, 2): 5.5, (1, 3): 6.5, (1, 4): 7.2, (1, 5): 8.3, (2, 3): 2.7,
             (2, 4): 4.6, (2, 5): 6.0, (3, 4): 2.4, (3, 5): 4.3, (4, 5): 2.6}
 
+# Speed limit: no part of the hand travels faster than the pianist's top speed
+# (pianist "max_speed", m/s). Moves ease in and out (the animation's
+# smootherstep), so the peak is PEAK_RATIO times the average speed.
+WHITE_KEY_M = 6.5 / 7 * 0.0254   # a white key, in metres
+PEAK_RATIO = 1.875
+DEFAULT_MAX_SPEED = 3.0
+MAX_SPEED = DEFAULT_MAX_SPEED
+HAND_SLACK = 1.5               # white keys a finger may sit from its natural spot without moving the hand
+MOVE_SHARE = 0.75              # share of the time between two chords the hand can spend travelling
+
+
+def travel_time(dist_wk, max_speed=None):
+    """Seconds to travel dist_wk white keys without exceeding the top speed (m/s)."""
+    return PEAK_RATIO * abs(dist_wk) * WHITE_KEY_M / (max_speed or MAX_SPEED)
+
+
+def hand_range(ps, st):
+    """(lo, hi): where the hand (its thumb's natural spot, in white keys) can be to play keys ps with fingers st."""
+    lo = max(key_pos(p) - _OFF[f] - HAND_SLACK for p, f in zip(ps, st))
+    hi = min(key_pos(p) - _OFF[f] + HAND_SLACK for p, f in zip(ps, st))
+    if lo > hi:                  # a stretch: only the middle will do
+        lo = hi = (lo + hi) / 2
+    return lo, hi
+
+
+def range_gap(a, b):
+    """How far a hand in range a must move to be in range b (white keys)."""
+    return max(0.0, b[0] - a[1], a[0] - b[1])
+
+
 CHORD_TOL = 0.03               # onsets closer than this form one chord
 BEAM = 32
 IMPOSSIBLE = 60.0
@@ -109,6 +139,7 @@ W = {
     "steal": 1.5,              # letting a held key go early to reuse its finger
     "held_tol": 0.06,          # a key released this soon after an onset isn't held
     "velocity": 0.05,          # how fast the fingers must travel from a relaxed hand (below)
+    "too_fast": 40.0,          # per 100% over the time a move needs at the pianist's top speed
 }
 
 # Economy of motion (after pianoplayer's cost): after each chord the other
@@ -166,7 +197,7 @@ def apply_pianist(p):
     defaults): reach from their anatomy, the weak-finger, stretch and
     black-key preferences, and their figure fingerings (figures.PREFS).
     """
-    global _applied
+    global _applied, MAX_SPEED
     key = None if p is None else (tuple(sorted(p.anatomy.items())), tuple(sorted(p.behavior.items())))
     if key == _applied:
         return
@@ -178,8 +209,10 @@ def apply_pianist(p):
     MAX_SPAN.update(BASE_MAX_SPAN)
     figures.PREFS.update(figures.DEFAULT_PREFS)
     RELAXED.update(BASE_RELAXED)
+    MAX_SPEED = DEFAULT_MAX_SPEED
     if p is None:
         return
+    MAX_SPEED = float(p.b("max_speed"))
     from hands import reach_scale, hand_span_inches
     k = hand_span_inches(p.anatomy) / hand_span_inches(None)
     for f, v in BASE_RELAXED.items():
@@ -390,7 +423,7 @@ def _transition(pps, pf, ps, st, dt):
             c += 0.3 * sum(1 for a, b in zip(pf, st) if a != b)
             if st == pf and ps[-1] - ps[0] < 7 and abs(moves[0]) <= 2:
                 c += W["same_shape"]
-            return c
+            return c + speed_cost(pps, pf, ps, st, dt)
     c = 0.0
     cross = False
     for p2, f2 in zip(ps, st):
@@ -421,6 +454,7 @@ def _transition(pps, pf, ps, st, dt):
                 sp /= BLACK_EASE[f2]
             v += sp
         c += W["velocity"] * v / len(ps)
+    c += speed_cost(pps, pf, ps, st, dt)
     # How far the whole hand shifts. Legato shifts go through a crossing;
     # anything else is a jump, and jumps take time.
     a1 = sum(key_pos(p) - _OFF[f] for p, f in zip(pps, pf)) / len(pps)
@@ -429,6 +463,24 @@ def _transition(pps, pf, ps, st, dt):
     if over > 0:
         c += W["shift_cost"] * over
     return c
+
+
+def speed_cost(pps, pf, ps, st, dt):
+    """
+    The top speed as a hard-ish limit: the hand must get from where it can
+    play the last chord to where it can play this one, and a finger that
+    played there to its new key, in the time between them (MOVE_SHARE of it:
+    the keys are held a little first). Every 100% more than that costs
+    too_fast - far more than a leap, so a fingering that makes the hand
+    teleport loses to almost anything.
+    """
+    avail = max(1e-3, MOVE_SHARE * dt)
+    need = travel_time(range_gap(hand_range(pps, pf), hand_range(ps, st)))
+    for p2, f2 in zip(ps, st):
+        for p1, f1 in zip(pps, pf):
+            if f1 == f2 and p1 != p2:
+                need = max(need, travel_time(key_pos(p2) - key_pos(p1)))
+    return W["too_fast"] * (need / avail - 1.0) if need > avail else 0.0
 
 
 def _states(given, ps=None):

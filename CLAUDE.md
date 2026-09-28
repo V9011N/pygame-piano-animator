@@ -60,8 +60,10 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while
   typing in sequential mode (`_rebuild_due`). `editor.notes` is the song's own list - update
   `editor.index` when replacing a note object.
-- Audio follows the hands' performance (`HandAnimator.performance`), not the raw MIDI note
-  lengths; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
+- Nothing in a hand moves faster than the pianist's top speed (`max_speed`): the hand split, the
+  fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
+- Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
+  not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead.
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the

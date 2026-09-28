@@ -197,3 +197,76 @@ def test_held_key_is_let_go_before_a_leap():
     a = hands.HandAnimator(song_of(ns), RIGHT)
     ends = {n.pitch: e for s, e, n in a.performance}
     assert ends[84] <= 0.5 - 0.1
+
+
+def test_hand_split_keeps_to_the_top_speed():
+    import hand_split
+    import fingering as F
+    # Liszt-style alternation (Dante Sonata): repeated high chords for the
+    # right hand, low and middle chords for the left, ~0.11 s apart. The left
+    # hand must not take the bottom of the high chords and then leap down.
+    ns = []
+    t = 0.0
+    for _ in range(3):
+        for chord in ([70, 76, 79, 82], [38, 43, 46, 52], [69, 76, 81], [55, 58, 64]):
+            for _ in range(2):
+                ns += [Note(p, t, t + 0.06, 80, 0, None) for p in chord]
+                t += 0.11
+    split = hand_split.split_hands(ns)
+    for n in ns:
+        if n.pitch >= 69:
+            assert split[id(n)] == RIGHT
+    # and no hand has to move faster than the top speed
+    for h in (LEFT, RIGHT):
+        mine = sorted((n for n in ns if split[id(n)] == h), key=lambda n: n.start)
+        groups = F.group_notes(mine)
+        for (t0, a), (t1, b) in zip(groups, groups[1:]):
+            wk = lambda ps: (F.key_pos(max(ps)) - hand_split.HAND_WK, F.key_pos(min(ps)))
+            ra, rb = wk([n.pitch for n in a]), wk([n.pitch for n in b])
+            gap = max(0.0, rb[0] - ra[1], ra[0] - rb[1])
+            assert F.travel_time(gap) <= F.MOVE_SHARE * (t1 - t0) + 1e-6
+
+
+def test_hands_keep_to_the_top_speed_and_play_what_they_do():
+    import math
+    import pygame
+    import fingering as F
+    from common import Keyboard, Performance, bottom_layout
+    pygame.init()
+    # right hand: quick leaps between a middle chord and two octaves up, the
+    # last of them too quick for the default top speed
+    ns = []
+    for k, (t, chord) in enumerate([(0.2, [60, 64, 67]), (0.6, [84, 88, 91]), (0.8, [60, 64, 67]),
+                                    (1.1, [84, 88, 91]), (1.22, [60, 64, 67]), (1.8, [72])]):
+        ns += [Note(p, t, t + 0.15, 80, 0, RIGHT) for p in chord]
+    s = song_of(ns, 2.5)
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(s, RIGHT)
+    # every finger lets go early enough to reach its next key at the top speed
+    for f, fns in a.by_finger.items():
+        st, en = a.finger_starts[f], a.finger_ends[f]
+        for i in range(1, len(fns)):
+            if fns[i].pitch != fns[i - 1].pitch:
+                need = F.travel_time(F.key_pos(fns[i].pitch) - F.key_pos(fns[i - 1].pitch), a.max_speed)
+                assert st[i] - en[i - 1] >= need - 1e-6
+    assert a.delayed >= 1                       # the last leap is struck late rather than rushed
+    # the animation never goes faster than that either
+    ppm = None
+    prev = None
+    fps = 120
+    for i in range(int(2.4 * fps)):
+        pose = a.pose(i / fps, kb)
+        ppm = pose["ppi"] / 0.0254
+        st = pose["struct"]
+        w = ((st["wrist"][0][0] + st["wrist"][1][0]) / 2, (st["wrist"][0][1] + st["wrist"][1][1]) / 2)
+        tips = [c[-1] for c in st["chains"].values()]
+        if prev:
+            assert math.hypot(w[0] - prev[0][0], w[1] - prev[0][1]) * fps / ppm <= a.max_speed * 1.02
+            for p, q in zip(tips, prev[1]):
+                assert math.hypot(p[0] - q[0], p[1] - q[1]) * fps / ppm <= a.max_speed * 1.35
+        prev = (w, tips)
+    # what is heard is exactly what the hands play: their press / release times
+    perf = Performance.from_animators([a])
+    assert sorted((p, r, id(n)) for p, r, n in perf.items) == sorted((p, r, id(n)) for p, r, n in a.performance)
+    late = [p - n.start for p, r, n in a.performance if p > n.start + 1e-6]
+    assert late and max(late) <= hands.MAX_DELAY_T + 1e-6

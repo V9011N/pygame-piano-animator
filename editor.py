@@ -1080,6 +1080,8 @@ class FingeringEditor(Transport):
         self._drawn = []
         font = "finger" if rh >= 13 else "label"
         diff = self._ensure_difficulty() if self.show_difficulty else None
+        perf = self._performance()
+        held = {id(n) for _, _, n in perf.active(self.t)} if perf else set()   # what the hands hold now
         for n in self.song.notes_between(t0, t1):
             if n.pitch > self.pitch_top + 1 or n.pitch < self.u_of(r.bottom) - 1:
                 continue
@@ -1090,7 +1092,7 @@ class FingeringEditor(Transport):
             color = HAND_COLORS[n.hand][1 if n.is_black else 0]
             if diff is not None:
                 color = heat_color(diff[i])
-            if n.start <= self.t < n.end:
+            if id(n) in held:
                 color = mix(color, (255, 255, 255), 0.3)
             if sel:
                 color = mix(color, (255, 255, 255), 0.25)
