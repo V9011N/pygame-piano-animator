@@ -166,7 +166,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 |---|---|
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
 | antic_hand | `ANTIC_T` / `NEED_T` |
-| antic_fingers | `TRAVEL_SHARE` / `PREP_MAX_T` |
+| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.07 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |

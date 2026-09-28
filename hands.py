@@ -948,8 +948,8 @@ class HandAnimator:
         a_hand, a_fing = p.b("antic_hand"), p.b("antic_fingers")
         self.antic_t = 0.15 + 0.5 * a_hand                 # 0.4 s at the default 0.5
         self.need_t = 0.06 + 0.18 * a_hand                 # 0.15 s
-        self.travel_share = 0.9 - 0.6 * a_fing             # 0.6
-        self.prep_max_t = 0.4 + a_fing                     # 0.9 s
+        import pianist as pianists
+        self.prep_max_t, self.travel_share = pianists.finger_lead(a_fing)   # 0.9 s, 0.6
         self.prep_h = {f: h * (0.5 + p.b("lift_height")) for f, h in PREP.items()}
         self.cross_turn = math.radians(p.b("cross_turn"))
         self.cross_norm = math.radians(CROSS_TURN_DEG)     # the crossing prior is tuned to 14 deg
@@ -1586,7 +1586,7 @@ class HandAnimator:
         # a long trip at the top speed may start earlier than usual, and
         # when time is short the final drop is cut so the trip keeps to it
         need = self.lead.get(id(self.by_finger[f][i + 1]), 0.0)
-        prep_start = max(nxt - max(self.prep_max_t, STRIKE_T + need), ends[i] if i >= 0 else -math.inf)
+        prep_start = max(nxt - max(self.prep_max_t, STRIKE_MIN_T + need), ends[i] if i >= 0 else -math.inf)
         window = max(0.0, nxt - prep_start)
         strike = min(STRIKE_T, 0.35 * window)
         if window - strike < need:
