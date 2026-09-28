@@ -421,6 +421,18 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     0.2 in short; the index's splay toward the thumb, the 4's and the thumb's limits all bind), so there the index
     sits 0.2-0.3 key off D5. With 1-5 it's exact. Op. 25 No. 10 (0-30 s) pressed tips > 0.1 key off 69 -> 332
     (most of it the held 2s), > 0.3 key 14 -> 80.
+  - Fingering for that (2026-09-28): `figures.detect` suggests 1-5 for an octave with an inner note down in the same
+    hand (struck with it, or held - `_inner_note_down`, up to 4 s back) instead of the "4 on black keys" rule, and
+    `fingering.inner_room_cost` prices it in the planner (the chord itself, and with the keys still held):
+    `inner_room` 12 for 1-4 around an inner note, `inner_finger` 4 when the inner note isn't on the finger lying
+    over it in the spread hand (2 up to half the octave's width from the thumb, 3 to `INNER_3_TOP` 0.72, 4 above).
+    Chords also check every pair of fingers against its reach, not only neighbours (an octave was taken 3-1 with 2
+    between them). Static reach with 2 on D5: 1-5 octaves 0.00-0.07 in short, 1-4 up to 0.20.
+  - Op. 25 No. 10: all octaves around the held middle notes are now 1-5 (inner notes on 2, or 3 where 2 must step
+    on); the middle notes are held 0.83 s. Pressed tips > 0.1 key off (0-30 s) 332 -> 430, > 0.3 key 80 -> 69:
+    404 of the 430 frames are with a held inner note, where the static poses exist but the hand solver doesn't
+    reach them while it moves between octaves (the little finger is now the one off). Fingering changes: bundled
+    MIDIs and Winter Wind none, Dante 106 notes (mostly 4 -> 5 at the top of an octave-wide hand with a key held).
 - **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
   passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
   splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).

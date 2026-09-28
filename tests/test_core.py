@@ -396,3 +396,29 @@ def test_a_held_middle_voice_stays_down_under_moving_octaves():
     # a stretch the hand can make is a range of places, not a point
     lo, hi = F.hand_range([70, 82], [1, 4])          # an octave with 1-4: wider than 1-4's spacing
     assert hi - lo > 0.5
+
+
+def test_octaves_open_to_1_5_around_a_held_inner_note():
+    import fingering as F
+    # Op. 25 No. 10's middle voice: D5 held under moving octaves - without it
+    # the black-key octaves take 4 on top (Hanon); with it, 1-5 around a 2
+    def octaves(held):
+        ns = []
+        for i, p in enumerate([71, 70, 71, 70, 69, 68, 69, 68]):
+            t = 0.2 + i * 0.139
+            ns += [Note(p, t, t + 0.13, 90, 0, RIGHT), Note(p + 12, t, t + 0.13, 90, 0, RIGHT)]
+        if held:
+            ns.append(Note(74, 0.2, 1.03, 90, 0, RIGHT))
+        return ns
+    for held in (False, True):
+        ns = octaves(held)
+        fing = hands.HandAnimator(song_of(ns), RIGHT).fingering
+        tops = [fing[id(n)] for n in ns if n.pitch >= 80 and n.start < 1.0]
+        if held:
+            assert all(f == 5 for f in tops)
+            assert fing[id(ns[-1])] == 2
+        else:
+            assert 4 in tops
+    # no pair of fingers in a chord is asked to reach further than it can,
+    # neighbours or not: an octave can't be 1-3 with 2 between them
+    assert F.inner_room_cost([(70, 1), (74, 2), (82, 4)]) > 0 == F.inner_room_cost([(70, 1), (74, 2), (82, 5)])

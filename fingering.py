@@ -149,6 +149,8 @@ W = {
     "held_tol": 0.06,          # a key released this soon after an onset isn't held
     "velocity": 0.05,          # how fast the fingers must travel from a relaxed hand (below)
     "too_fast": 40.0,          # per 100% over the time a move needs at the pianist's top speed
+    "inner_room": 12.0,        # an octave on 1-4 with an inner note down between them (1-5 leaves room)
+    "inner_finger": 4.0,       # ...and an inner note on another finger than the one lying over it
 }
 
 # Economy of motion (after pianoplayer's cost): after each chord the other
@@ -363,6 +365,44 @@ def chord_pair_cost(pl, fl, ph, fh):
     if fl == 1 and fh == 4 and rel >= 6.0 and not is_black(ph):
         c += W["octave_4_white"]                 # octaves: 1-5, with 4 only on black keys
     return c
+
+
+def inner_room_cost(pairs):
+    """
+    An octave (or wider) held by the thumb and 4 or 5 with another key
+    between them down - struck with it or still held (Op. 25 No. 10's
+    middle voice):
+      * taken 1-4, the finger on the inner key has too little room (the
+        hand can't turn its index far enough toward the thumb): 1-5 opens
+        the hand (`inner_room`);
+      * the inner key wants the finger that lies over it in the spread
+        hand - 2 in the lower half of the octave, 3 up to INNER_3_TOP of
+        it, 4 above (`inner_finger`, for any other).
+    pairs: [(pitch, finger)] in the RH frame.
+    """
+    thumb = [p for p, f in pairs if f == 1]
+    top = [(p, f) for p, f in pairs if f in (4, 5)]
+    if not thumb or not top:
+        return 0.0
+    lo = min(thumb)
+    hi, fh = max(top)
+    if hi - lo < 11:
+        return 0.0
+    inner = [(p, f) for p, f in pairs if lo < p < hi and f not in (1, fh)]
+    if not inner:
+        return 0.0
+    c = W["inner_room"] if fh == 4 else 0.0
+    span = key_pos(hi) - key_pos(lo)
+    for p, f in inner:
+        r = (key_pos(p) - key_pos(lo)) / span
+        want = 2 if r < INNER_2_TOP else 3 if r < INNER_3_TOP else 4
+        if f != want:
+            c += W["inner_finger"]
+    return c
+
+
+INNER_2_TOP = 0.5            # share of an octave's width (from the thumb) where 2 lies over the key ...
+INNER_3_TOP = 0.72           # ... and 3
 
 
 def shape_cost(pairs):
@@ -589,6 +629,14 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                         c += W["figure"] * s_[1]
                 for (pl, fl), (ph, fh) in zip(zip(ps, st), list(zip(ps, st))[1:]):
                     c += chord_pair_cost(pl, fl, ph, fh)
+                c += inner_room_cost(list(zip(ps, st)))
+                # every pair of fingers within its reach, not only neighbours
+                # (an octave 1-3 with 2 between them passes each neighbour's check)
+                for i in range(len(st)):
+                    for j in range(i + 2, len(st)):
+                        fl, fh = st[i], st[j]
+                        if fl < fh and key_pos(ps[j]) - key_pos(ps[i]) > MAX_SPAN[(fl, fh)]:
+                            c += IMPOSSIBLE
                 local.append(c)
             return local
         states = _states(given, ps)
@@ -634,6 +682,8 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                         if sc > steal * len(rest):
                             sc, keep = steal * len(rest), False
                         c += max(0.0, sc)
+                        if keep:
+                            c += inner_room_cost(rest + list(zip(ps, st))) - inner_room_cost(list(zip(ps, st)))
                 if pf is not None:
                     c += _transition(prev_ps, pf, ps, st, dt)
                 cand.append((c, bi, si, keep))

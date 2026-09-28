@@ -469,7 +469,10 @@ def detect(groups, hand, context=None, vpitch=None):
         pairs = [sorted(groups[g][1], key=lambda n: n.pitch) for g in run]
         _double_notes(pairs, hand, context, put)
     # octaves: in a passage of octaves the book's rule (1-5, 4 on black keys);
-    # a lone octave just wants thumb and 4 or 5, whichever leads on best
+    # a lone octave just wants thumb and 4 or 5, whichever leads on best. An
+    # octave with an inner note down in the same hand (struck with it, or
+    # still held - Op. 25 No. 10's middle voice) is always 1-5: 4 on top
+    # leaves too little room for the finger holding the inner note.
     octs = []
     for gi, (t, ns) in enumerate(groups):
         if len(ns) >= 2:
@@ -483,7 +486,9 @@ def detect(groups, hand, context=None, vpitch=None):
     for gi, s in octs:
         w = W_OCT * (1.0 if len(s) == 2 else 0.6)
         a, b = octave_pair(s[0].pitch, s[-1].pitch, hand)
-        if gi not in in_run and PREFS.get("octaves", "4black") == "4black":
+        if _inner_note_down(groups, gi, s[0].pitch, s[-1].pitch):
+            a, b = (1, 5) if hand == RIGHT else (5, 1)
+        elif gi not in in_run and PREFS.get("octaves", "4black") == "4black":
             if hand == RIGHT:
                 b = frozenset((4, 5))
             else:
@@ -491,6 +496,24 @@ def detect(groups, hand, context=None, vpitch=None):
         put(s[0], a, w)
         put(s[-1], b, w)
     return out
+
+
+INNER_HELD_T = 0.05     # a note counts as held if it lasts this far past the octave's onset
+INNER_LOOKBACK_T = 4.0  # s, how far back held notes are looked for
+
+
+def _inner_note_down(groups, gi, lo, hi):
+    """Is a note strictly between lo and hi down while group gi's octave is struck (in it, or held from before)?"""
+    t = groups[gi][0]
+    if any(lo < n.pitch < hi for n in groups[gi][1]):
+        return True
+    for gj in range(gi - 1, -1, -1):
+        tj, ns = groups[gj]
+        if t - tj > INNER_LOOKBACK_T:
+            break
+        if any(lo < n.pitch < hi and n.end > t + INNER_HELD_T for n in ns):
+            return True
+    return False
 
 
 def _repeated_and_trills(notes, ps, ts, hand, put):
