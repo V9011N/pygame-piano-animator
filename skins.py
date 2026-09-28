@@ -412,15 +412,59 @@ def _creases(pen, h, f, color):
 
 
 def _nail(pen, h, f, fill, edge):
-    a, b, r = h.radius[f][-1]
-    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    """
+    The nail on the back of the distal phalanx, seen from above. As the
+    fingertip curls down, the phalanx turns away from the viewer: the nail
+    is foreshortened along the finger and slides out toward the end of the
+    finger (it sits on the top of the phalanx, which now faces forward), so
+    the skin in front of it shrinks away until the squashed nail fills the
+    rounded end of the finger.
+    """
+    segs = h.radius[f]
+    a, b, r = segs[-1]
+    pa, pb, pr = segs[-2]
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    drop = a[2] - b[2]
+    L = math.hypot(math.hypot(dx, dy), drop)             # true length of the phalanx
     if L < 3:
         return
-    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
-    p0 = (b[0] - ux * L * 0.55, b[1] - uy * L * 0.55)
-    p1 = (b[0] - ux * r * 0.35, b[1] - uy * r * 0.35)
-    pen.capsule(p0, p1, r * 0.62, edge)
-    pen.capsule(p0, p1, r * 0.5, fill)
+    # the finger's forward direction on screen: the phalanx's own, or the one
+    # before it once it is seen nearly end-on (a curled tip can even tuck back)
+    px, py = _unit(pb[0] - pa[0], pb[1] - pa[1])
+    fwd = dx * px + dy * py
+    w = max(0.0, min(1.0, (fwd / L - 0.2) / 0.3))
+    dux, duy = _unit(dx, dy)
+    ux, uy = _unit(px + (dux - px) * w, py + (duy - py) * w)
+    nx, ny = -uy, ux
+    # pitch of the phalanx below the horizontal, capped at straight down
+    cos = max(0.0, fwd / L)
+    sin = max(0.0, drop / L) if fwd > 0 else 1.0
+    # where the finger's outline ends (from b, along u): the tip, or the last
+    # knuckle when the tip is tucked under it; the rounded end is that circle
+    xa = (a[0] - b[0]) * ux + (a[1] - b[1]) * uy
+    xc, rc = (0.0, r) if r >= xa + pr else (xa, pr)
+    # along the phalanx (from b) the nail runs s0..s1 on the back of the finger:
+    # flat, it sits short of the tip; pitched down, its free edge moves out to
+    # the end of the outline and its length is foreshortened. It is a curved
+    # shell, so even seen nearly end-on it keeps some depth.
+    s0, s1 = -0.5 * L - 0.35 * r, 0.12 * r
+    x1 = s1 * cos + (xc + rc - 0.08 * r) * sin
+    x0 = x1 - max((s1 - s0) * cos, 0.7 * r * sin)
+    mid, hl = (x0 + x1) / 2, (x1 - x0) / 2
+
+    def shape(grow):
+        pts = []
+        for i in range(32):
+            t = 2 * math.pi * i / 32
+            c, s = math.cos(t), math.sin(t)
+            x = mid + (hl + grow * max(cos, 0.35)) * math.copysign(abs(c) ** 0.7, c)
+            y = (0.5 * r + grow) * math.copysign(abs(s) ** 0.7, s)
+            if x > xc:                                   # stay inside the rounded end
+                y = math.copysign(min(abs(y), 0.94 * math.sqrt(max(0.0, rc * rc - (x - xc) ** 2))), y)
+            pts.append((b[0] + ux * x + nx * y, b[1] + uy * x + ny * y))
+        return pts
+    pen.poly(shape(0.12 * r), edge)
+    pen.poly(shape(0.0), fill)
 
 
 def _draw_gloves(pen, h):
