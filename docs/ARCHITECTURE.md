@@ -271,6 +271,20 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     - `_crossing_lifts` gives each hand its own smoothed lift, so a handover between two crossings is smooth, and the larger lift is on top.
   - `draw_hands` calls `arrange_crossing`: the crossing hand is drawn on layer 1, and its wrist, palm and forearm are raised by up to 0.8 in (`_lift_pose`). The lift fades to 0 at the fingertips and ramps in and out over 0.4 s.
   - `skins.draw_skinned` and `draw_skeletons` draw layer by layer, and the top hand's shadow falls on the lower hand.
+- **Idle hand keeps out of the way** (2026-09-28): hands cross only when the notes make them.
+  - `idle_weight` (from each hand's merged busy spans): 0 while a key is held; ramps to 1 from 0.35 to 0.85 s after the
+    last release; back to 0 between 1.1 and 0.35 s before the next note.
+  - `pair_hands(animators)` links the two `HandAnimator`s (called by the player and the editor whenever they are built).
+    `pose()` uses `_placed_at`: `_hand_at` shifted sideways by `_idle_shift`, weighted by `idle(self)·(1 − idle(other))`.
+  - The shift keeps the idle wrist at least 0.8 hand spans outside the other hand's furthest reach over the next 0.5 s
+    (`_clear_line`, which then relaxes at 6 in/s so the idle hand drifts back rather than springs), and no more than
+    1.5 spans from the other hand's average place over the last 1.2 s, so it loosely follows. It isn't pushed past
+    1.5 in inside the keyboard's end. The other hand is sampled every 0.1 s; shifts are solved at 30 Hz and averaged
+    over ±0.25 s. The hand's turn follows the forearm's natural yaw at the new place.
+  - `crossing_episodes` treats a hand with idle weight above 0.5 as out of the way, so a leap by the playing hand past
+    the idle one is no longer an episode; a hand playing on the other side still is.
+  - Cost: a cold seek into a long idle stretch ~60 ms (memory capped at 8 s, the time to drift across the keyboard);
+    playback unchanged (~1–2 ms per frame for both hands).
   - Poses now also carry `t` and `song`.
 - **Repeated notes** (2026-09-27; La Campanella 1:36):
   - Fast re-strikes in the planner: below `repeat_t` 0.2 s, the same finger costs up to `repeat_very_fast` 8.0 extra, and a finger change has its `same_key_new_finger` cost waived pro rata. These are physical constants and aren't learned.

@@ -115,3 +115,31 @@ def test_repeated_chords_bounce_and_tremolo_rolls():
         trem += [Note(p, i * 0.1, i * 0.1 + 0.09, 80, 0, RIGHT) for p in ps]
     b = hands.HandAnimator(song_of(trem), RIGHT)
     assert len(b.roll_runs) == 1
+
+
+def test_idle_hand_gets_out_of_the_way():
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # the left hand plays a chord, rests while the right hand leaps down past
+    # it and back up, then plays again
+    ns = [Note(p, t, t + 0.6, 70, 1, LEFT) for t in (0.0, 7.0) for p in (48, 52, 55)]
+    seq = [(0.0, 72), (0.4, 76), (1.6, 48), (1.9, 52), (2.5, 45), (3.0, 40), (3.3, 43),
+           (4.2, 76), (4.5, 79), (5.2, 36), (5.5, 40), (6.2, 72), (6.5, 76)]
+    ns += [Note(p, t, t + 0.28, 80, 0, RIGHT) for t, p in seq]
+    s = song_of(ns, 8.0)
+    assert hands.crossing_episodes(s) == []
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    xs = []
+    for i in range(0, 8 * 30):
+        t = i / 30
+        x = {h: a.pose(t, kb)["wrist"][0] for h, a in an.items()}
+        lx = 2 * an[LEFT].axis_x - x[LEFT]                      # back from the mirrored frame
+        xs.append(lx)
+        if 1.8 <= t <= 6.0:                                      # left hand idle: never crossed
+            assert x[RIGHT] - lx > 0.6 * kb.white_w / 0.9 * hands.hand_span_inches()
+    # it follows smoothly and is back on its chord in time
+    assert max(abs(b - a) for a, b in zip(xs, xs[1:])) < 30
+    assert abs(xs[int(7.0 * 30)] - xs[int(0.3 * 30)]) < 0.3 * kb.white_w
