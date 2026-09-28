@@ -226,6 +226,12 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - A shadow pass is drawn on a cached SRCALPHA surface, offset by each part's height.
 - **The four styles**:
   - `cartoon`: skin with a warm outline, nails, creases, and a white cuff with a button above a coloured sleeve.
+    Nails (`_nail`) follow the distal phalanx's true pitch (its screen length against the height drop): flat, the nail
+    sits short of the tip; as the tip curls down it is foreshortened along the finger (to no less than 0.7 r) and its
+    free edge slides out to the end of the finger's outline, so the skin in front of it disappears and the squashed
+    nail fills the rounded end, clipped to that circle. Curled tips often tuck back under the last knuckle, so the
+    direction comes from the middle phalanx once the distal one is seen nearly end-on, and the outline's end is the
+    knuckle's circle when that reaches further than the tip's.
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
