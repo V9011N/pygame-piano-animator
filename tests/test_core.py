@@ -350,3 +350,30 @@ def test_loud_notes_are_played_near_the_front_of_the_keys():
         full = b._key_depths(n.pitch)
         assert abs(hi - full[1]) < 1e-9 and b.key_target(n.pitch, 5, n)[1] <= hi
     assert all(b.key_target(n.pitch, 5, n)[1] < front for n in b.by_finger[5] if not n.is_black)
+
+
+def test_fingers_aim_where_they_are_going_without_snapping():
+    import math
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(notes_at([60, 64, 67, 72])), RIGHT)
+    a._ensure_layout(kb)
+    wx, wy, psi = 500.0, -60.0, 0.0
+    blx, bly, blz = a.base_local[2]
+    hmin, hmax = a._reach_range(2, blz - 20.0, 0.99)
+    # a target within reach but 60 degrees out, far past the index finger's
+    # splay: it is brought to the nearest point on the limit's line, not
+    # swung round at full length (the old clamp: 0.9 of the reach)
+    ang = math.radians(60)
+    x, y = wx + blx + 0.9 * hmax * math.sin(ang), wy + bly + 0.9 * hmax * math.cos(ang)
+    cx, cy = a._clamp_tip(2, x, y, 20.0, wx, wy, psi)
+    assert math.hypot(cx - wx - blx, cy - wy - bly) < 0.75 * hmax
+    # the spot along a key changes smoothly as the hand moves across (the old
+    # choice jumped up to 1.5 in at once)
+    kx = a.key_target(67, 2)[0]
+    for p in (62, 64, 66, 68):
+        for f in (2, 3, 4, 5):
+            ys = [a._key_spot(p, f, (kx - 300 + i * 0.5, wy, psi))[1] for i in range(1200)]
+            assert max(abs(b - c) for b, c in zip(ys, ys[1:])) < 0.3 * a.ppi

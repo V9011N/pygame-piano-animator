@@ -404,6 +404,22 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     30 s: pressed tips > 0.1 key off 54 → 217-285); as an aim it stays at 55.
   - Op. 25 No. 10 (RH, velocity 92-127 after the opening): wrist in/out 4.6 (0-10 s) and 6.0 in/s (20-30 s) - between
     all-front (7.9) and all-up (2.5).
+- **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
+  passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
+  splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).
+  - `_clamp_tip`: a target past the splay limit is brought to the nearest point on the limit's line
+    (distance × cos of the excess angle), not swung round at full length. The finger points toward its key and
+    only stretches as far as that brings it closer.
+  - `_key_spot`: the spot along a key is a soft minimum over 21 spots (distance from the aim + a weight × how far
+    out of reach), continuous in the hand's pose - firm (`KEY_SPOT_FIRM` 20, 0.03 in) on the key, softer
+    (`KEY_SPOT_SOFT` 4, 0.12 in) while travelling (blended by the trip still to go); a key far out of reach fades
+    back to its usual spot. The old "nearest reachable spot" jumped up to 1.5 in for a small hand move.
+  - The drawn hand is averaged over ±3 limit steps (±50 ms, triangular, no delay) after the speed limit, and
+    fingertips in the air over ±3 (a finger on its key stays exactly on it): the limit's grid corners and the
+    key fit's corrections made the whole hand lurch.
+  - Winter Wind RH 20-40 s: fingertip jerks (second difference > 0.15 in/frame² at 120 fps) 846 → 134, worst
+    1.15 → 0.67; frames with a finger > 95% stretched 450 → 166. Pressed tips > 0.1 key off: Op. 25 No. 10 (0-30 s)
+    55 → 69, Winter Wind 27 → 29, demo 9 → 23 (worst 0.35). ~2.0-2.4 ms per hand per frame.
 - **Top travel speed** (2026-09-28; pianist `max_speed`, default 3.0 m/s, 0.5–5): no part of a hand - wrist or
   fingertip - travels faster, and what is heard is what the hands then play.
   - Model (`fingering.travel_time`): moves ease in and out like the animation's smootherstep, whose peak is 1.875× the
