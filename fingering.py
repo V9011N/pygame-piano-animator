@@ -77,11 +77,20 @@ def travel_time(dist_wk, max_speed=None):
 
 
 def hand_range(ps, st):
-    """(lo, hi): where the hand (its thumb's natural spot, in white keys) can be to play keys ps with fingers st."""
+    """
+    (lo, hi): where the hand (its thumb's natural spot, in white keys) can
+    be to play keys ps with fingers st. A chord wider than the fingers'
+    natural spacing plus HAND_SLACK (an octave, say) is a stretch: if the
+    hand can make it (shape_cost), the hand sits anywhere across what the
+    stretch spans; if not, only in the middle.
+    """
     lo = max(key_pos(p) - _OFF[f] - HAND_SLACK for p, f in zip(ps, st))
     hi = min(key_pos(p) - _OFF[f] + HAND_SLACK for p, f in zip(ps, st))
-    if lo > hi:                  # a stretch: only the middle will do
-        lo = hi = (lo + hi) / 2
+    if lo > hi:
+        if shape_cost(list(zip(ps, st))) < IMPOSSIBLE:
+            lo, hi = hi, lo
+        else:
+            lo = hi = (lo + hi) / 2
     return lo, hi
 
 

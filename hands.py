@@ -131,6 +131,10 @@ RETURN_T = 0.35             # ... then drifts back to its resting spot
 # stretch, the little finger barely abducts, so it stays near its rest position.
 FIT_WEIGHT = {1: 0.35, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.6}
 EARLY_LIFT_T = 0.22         # a finger that jumps to a new key leaves the old one this early
+LEGATO_STEP_WK = 2.5        # a finger moving this many white keys or less lets go only LEGATO_LIFT_T early...
+LEGATO_LIFT_T = 0.03
+JUMP_WK = 6.0               # ...and the full early release from this far
+HAND_MOVE_TOL_WK = 0.25     # a hand shift smaller than this isn't a trip (held keys stay down)
 MIN_HOLD_T = 0.04           # ...but holds its key at least this long (or half the time to the next)
 STRIKE_MIN_T = 0.03         # the shortest final drop onto a key (a finger arriving at the top speed)
 MAX_DELAY_T = 0.25          # a chord the hand can't reach in time is struck at most this late
@@ -540,7 +544,7 @@ class HandAnimator:
                     s1 = so[id(nx)]
                     e = min(e, s1)
                     if nx.pitch != n.pitch:
-                        e = min(e, max(s0 + 0.5 * (s1 - s0), s1 - self.early_lift))
+                        e = min(e, max(s0 + 0.5 * (s1 - s0), s1 - self._jump_lift(n, nx)))
                 ends.append(max(e, s0 + 1e-3))
             self.finger_ends[f] = ends
         # A held key that the next chord's fingers have to cross (5 landing
@@ -1062,6 +1066,16 @@ class HandAnimator:
                         out[id(n)] = up
         return out
 
+    def _jump_lift(self, n, nx):
+        """
+        How early a finger lets go of note n to play nx next: the pianist's
+        early release for a real jump, scaled down for a short move (a step
+        in the same voice stays legato, only lifting LEGATO_LIFT_T before).
+        """
+        d = abs(key_pos(self.vp(nx.pitch)) - key_pos(self.vp(n.pitch)))
+        k = min(1.0, max(0.0, (d - LEGATO_STEP_WK) / (JUMP_WK - LEGATO_STEP_WK)))
+        return LEGATO_LIFT_T + (self.early_lift - LEGATO_LIFT_T) * k
+
     def _speed_schedule(self):
         """
         Make the timeline keep to the top speed (pianist "max_speed"). Chord
@@ -1103,18 +1117,28 @@ class HandAnimator:
                     need = fg.travel_time(key_pos(self.vp(m.pitch)) - key_pos(self.vp(n.pitch)), self.max_speed)
                     self.lead[id(m)] = need
                     cons.append((n, STRIKE_MIN_T + need))
-            if prev_range is not None:
-                need = fg.travel_time(fg.range_gap(prev_range, rng), self.max_speed)
-                if need > 0:
-                    lead = STRIKE_MIN_T + need
-                    for m in ns:
-                        self.lead[id(m)] = max(self.lead.get(id(m), 0.0), need)
-                    for gj in range(gi - 1, -1, -1):
-                        if s1 - groups[gj][0] > 4.0:
-                            break
-                        for n in groups[gj][1]:
-                            if fe[id(n)] > s1 - lead:
+            gap = fg.range_gap(prev_range, rng) if prev_range is not None else 0.0
+            if gap > HAND_MOVE_TOL_WK:
+                need = fg.travel_time(gap, self.max_speed)
+                lead = STRIKE_MIN_T + need
+                for m in ns:
+                    self.lead[id(m)] = max(self.lead.get(id(m), 0.0), need)
+                # keys still held: kept down if they fit with the new chord
+                # (and whatever else is kept) and their finger isn't needed -
+                # a held middle voice under moving octaves, say - else let go
+                chord = list(zip(vps, fs))
+                kept = []
+                for gj in range(gi - 1, -1, -1):
+                    if s1 - groups[gj][0] > 4.0:
+                        break
+                    for n in groups[gj][1]:
+                        if fe[id(n)] > s1 - lead:
+                            key = (self.vp(n.pitch), self.fingering[id(n)])
+                            if key[1] in fs or any(k[1] == key[1] for k in kept) or \
+                                    fg.shape_cost(kept + [key] + chord) >= fg.IMPOSSIBLE:
                                 cons.append((n, lead))
+                            else:
+                                kept.append(key)
             prev_range = rng
             delay = 0.0
             for n, lead in cons:

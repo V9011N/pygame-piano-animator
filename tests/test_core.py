@@ -377,3 +377,22 @@ def test_fingers_aim_where_they_are_going_without_snapping():
         for f in (2, 3, 4, 5):
             ys = [a._key_spot(p, f, (kx - 300 + i * 0.5, wy, psi))[1] for i in range(1200)]
             assert max(abs(b - c) for b, c in zip(ys, ys[1:])) < 0.3 * a.ppi
+
+
+def test_a_held_middle_voice_stays_down_under_moving_octaves():
+    import fingering as F
+    # Op. 25 No. 10, 0:06: the right hand holds D5 with 2 while its octaves
+    # move by step around it (1-5 / 1-4); then 2 steps down to B4
+    ns = []
+    octs = [71, 70, 71, 70, 69, 68, 69, 68, 69, 68, 67, 66, 67]
+    for i, p in enumerate(octs):
+        t = 0.2 + i * 0.139
+        ns += [Note(p, t, t + 0.13, 90, 0, RIGHT), Note(p + 12, t, t + 0.13, 90, 0, RIGHT)]
+    ns += [Note(74, 0.2, 1.03, 90, 0, RIGHT, finger=2), Note(71, 1.034, 1.6, 90, 0, RIGHT, finger=2)]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    held = {n.pitch: r - p for p, r, n in a.performance if n.pitch in (74, 71) and n.finger}
+    assert held[74] >= 0.8 * 0.83                   # kept down, not let go at the next octave
+    assert a._jump_lift(ns[-2], ns[-1]) <= 0.05     # a step in the same voice stays legato
+    # a stretch the hand can make is a range of places, not a point
+    lo, hi = F.hand_range([70, 82], [1, 4])          # an octave with 1-4: wider than 1-4's spacing
+    assert hi - lo > 0.5

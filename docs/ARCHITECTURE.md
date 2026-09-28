@@ -404,6 +404,23 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     30 s: pressed tips > 0.1 key off 54 → 217-285); as an aim it stays at 55.
   - Op. 25 No. 10 (RH, velocity 92-127 after the opening): wrist in/out 4.6 (0-10 s) and 6.0 in/s (20-30 s) - between
     all-front (7.9) and all-up (2.5).
+- **Held notes through hand moves** (2026-09-28; Op. 25 No. 10, 0:06 - the held middle voice, RH D5 / LH D3 with 2
+  under octaves moving by step): both were let go 0.11 s after the strike (0.83 s written).
+  - `_speed_schedule`'s hand-trip rule released every key still held whenever the hand's range moved at all -
+    here by 0.08 white keys (0.001 s of travel), because an octave pinned the range to a point. Now a shift under
+    `HAND_MOVE_TOL_WK` 0.25 isn't a trip, and on a real trip a held key stays down unless its finger is needed or
+    it doesn't fit with the new chord and the keys already kept (`fingering.shape_cost`).
+  - `fingering.hand_range`: a stretch the hand can make (`shape_cost` below `IMPOSSIBLE`) spans the positions
+    between its conflicting bounds instead of collapsing to the midpoint.
+  - The early release for a finger moving to a new key (`_jump_lift`) scales with the move: `LEGATO_LIFT_T` 0.03 s
+    up to `LEGATO_STEP_WK` 2.5 white keys, the pianist's full early release from `JUMP_WK` 6. The D5 -> B4 step at
+    8.3 s was let go 0.22 s early.
+  - Op. 25 No. 10: middle notes held 0.83 / 0.77 s (were 0.11 and 0.51 / 0.24); notes >= 0.4 s held < 80% of their
+    length R 135 -> 8, L 159 -> 48. Fingering: bundled MIDIs unchanged, Dante 3 notes.
+  - Limit: with a black-key octave on 1-4 (A#4-A#5) the held 2 on D5 is just beyond the animated hand (best pose
+    0.2 in short; the index's splay toward the thumb, the 4's and the thumb's limits all bind), so there the index
+    sits 0.2-0.3 key off D5. With 1-5 it's exact. Op. 25 No. 10 (0-30 s) pressed tips > 0.1 key off 69 -> 332
+    (most of it the held 2s), > 0.3 key 14 -> 80.
 - **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
   passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
   splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).
