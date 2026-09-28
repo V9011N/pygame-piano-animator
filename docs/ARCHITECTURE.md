@@ -350,6 +350,18 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `_hand_at`: a ±0.07 s triangular window on a 1/120 s grid.
 - Early lifts for jumps, crossed held keys and wide thumb crossings.
 - Fingertips: a free finger leaves at once and arrives early; idle fingers fan out; tips are clamped before IK.
+- **Fingers square on their keys** (2026-09-28): the hand solver's limits are soft and its smoothing blends poses
+  from moments when other keys were down, so a held key could end up outside its finger's splay/reach and the clamp
+  pulled the tip off it (LH 5–2–1 on Bb–F–Ab with 2 repeating: up to 0.6 key off, 0.2 key of twitch per strike).
+  - Keys have a playable depth range, not one spot (`_key_depths`): white 0.3 in from the front to 0.45 in past the
+    black keys' front; black 0.25–1.6 in from their front. `_key_spot` keeps the tip centred across the key and at
+    its usual depth, sliding along the key only as far as the joint limits (with a 1° / 2 % margin) need. The same
+    spot is used for the approach, strike, press and release, so a repeated key doesn't wobble.
+  - `_key_fix` then nudges the smoothed hand (damped Gauss-Newton, downhill steps only) as little as it takes for
+    every held key, any depth along it, to be reachable. Keys count from 0.12 s before the strike to 0.05 s after
+    release (eased in), so a finger that has just let go doesn't drag the hand off the keys still held.
+  - Demo song: pressed-tip frames more than 0.1 key off went from 228 to 34 (the rest are one-frame handovers into
+    leaps). A pinky–index 6th (G#2–F3 in the LH) is just past the default hand's reach and still compromises.
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

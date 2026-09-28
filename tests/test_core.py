@@ -143,3 +143,33 @@ def test_idle_hand_gets_out_of_the_way():
     # it follows smoothly and is back on its chord in time
     assert max(abs(b - a) for a, b in zip(xs, xs[1:])) < 30
     assert abs(xs[int(7.0 * 30)] - xs[int(0.3 * 30)]) < 0.3 * kb.white_w
+
+
+def test_fingers_stay_on_their_keys():
+    import bisect
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # left hand: 2 repeating on a white key between 5 and 1 on black keys, so
+    # the hand sits forward and the index has to play its key further in
+    ns = []
+    for k in range(12):
+        t = 0.5 + k * 0.3
+        ns.append(Note(53, t, t + 0.27, 80, 1, LEFT, finger=2))
+        ns.append(Note(46 if k % 2 == 0 else 56, t, t + 0.27, 80, 1, LEFT, finger=5 if k % 2 == 0 else 1))
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns, 4.5), LEFT)
+    xs = []
+    for i in range(4 * 60):
+        t = i / 60
+        pose = a.pose(t, kb)
+        for f in (1, 2, 5):
+            if a._pressing(f, t):
+                n = a.by_finger[f][bisect.bisect_right(a.finger_starts[f], t) - 1]
+                tip = pose["struct"]["chains"][f][-1]
+                lo, hi = a._key_depths(n.pitch)
+                assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w      # square across the key
+                assert lo - 1 <= tip[1] <= hi + 1                                           # and on it
+        if 1.0 < t < 4.0:
+            xs.append(pose["struct"]["chains"][2][-1][0])
+    assert max(xs) - min(xs) < 0.15 * kb.white_w          # no twitching on the repeated key
