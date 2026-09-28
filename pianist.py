@@ -77,11 +77,11 @@ def finger_lead(a):
     (longest head start in s, share of it spent travelling) for the finger
     anticipation setting a (-1..1): from 0 to 1 a finger may set off 0.4 to
     1.4 s ahead and arrive early to hover; below 0 it sets off later and
-    later (0.07 s at -1) and arrives just in time.
+    later (0.05 s at -1) and arrives just in time.
     """
     if a >= 0:
         return 0.4 + a, 0.9 - 0.6 * a
-    return 0.4 + 0.33 * a, 0.9 - 0.1 * a
+    return 0.4 + 0.35 * a, 0.9 - 0.1 * a
 
 
 def _lead(v):

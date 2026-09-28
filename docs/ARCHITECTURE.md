@@ -166,7 +166,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 |---|---|
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
 | antic_hand | `ANTIC_T` / `NEED_T` |
-| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.07 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
+| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
@@ -381,6 +381,14 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     either order) is let go `early_lift` before it, like a crossed held key. Performance MIDI often overlaps leaps
     by a few tens of ms. Dante fragment: pressed-tip frames > 0.3 key off 82 → 29, worst 5.6 → 1.8 keys (the rest
     are the last frames of leaps). Demo song: > 0.1 key 34 → 8, worst 1.86 → 0.28.
+- **White keys among black ones** (2026-09-28; Chopin Op. 25 No. 10, chromatic octaves): white keys were always
+  aimed at their finger's usual depth near the front, so the hand moved in for every black-key octave and back out
+  for every white one (wrist 7.9 in/s in and out). `HandAnimator.white_up` ({id(note): 0..1}) raises a white-key
+  note's target (`key_target(pitch, f, note)`) to `WHITE_UP_IN` 0.2 in past the black keys' front: fully within
+  `WHITE_UP_T` 0.3 s of a chord of this hand with a black key, fading out by 0.6 s. It is a preference - `_key_spot`
+  still slides a finger along the key if its joints need it. The hand-solver items carry their note so the hand is
+  placed for the same spot. Op. 25 No. 10, first 10 s: wrist in/out 7.9 → 2.5 in/s (RH), 8.0 → 2.4 (LH); pressed
+  tips > 0.1 key off (first 30 s) 61 → 54. 0.3 / 0.4 in further up didn't help.
 - **Top travel speed** (2026-09-28; pianist `max_speed`, default 3.0 m/s, 0.5–5): no part of a hand - wrist or
   fingertip - travels faster, and what is heard is what the hands then play.
   - Model (`fingering.travel_time`): moves ease in and out like the animation's smootherstep, whose peak is 1.875× the

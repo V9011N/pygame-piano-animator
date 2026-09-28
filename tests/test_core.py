@@ -288,3 +288,30 @@ def test_finger_anticipation_goes_down_to_just_in_time():
         head[v] = [a.finger_starts[1][i + 1] - a._prep_window(1, i)[0] for i in range(k - 1)]
     assert all(h <= 0.1 for h in head[-1.0])            # just in time
     assert all(h >= 0.2 for h in head[0.0])             # the old lowest setting: two notes ahead
+
+
+def test_chromatic_octaves_play_white_keys_up_among_the_black_ones():
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # right-hand chromatic octaves up and down: white keys are played up by
+    # the black keys, so the hand doesn't move in and out with every octave
+    ps = list(range(54, 66)) + list(range(66, 54, -1))
+    ns = []
+    for i, p in enumerate(ps):
+        t = 0.3 + i * 0.14
+        ns += [Note(p, t, t + 0.12, 80, 0, RIGHT), Note(p + 12, t, t + 0.12, 80, 0, RIGHT)]
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    front = kb.rect.h - kb.black_h
+    ys = []
+    for i in range(int(3.5 * 60)):
+        t = 0.6 + i / 60
+        pose = a.pose(t, kb)
+        ys.append(pose["wrist"][1] / pose["ppi"])
+    for n in ns:
+        if not n.is_black:
+            assert a.white_up[id(n)] == 1.0
+            assert a.key_target(n.pitch, 5, n)[1] > front          # past the black keys' front
+    travel = sum(abs(b - c) for b, c in zip(ys, ys[1:])) / 3.5
+    assert travel < 4.0                                   # in/s in and out (it was ~8 before)
