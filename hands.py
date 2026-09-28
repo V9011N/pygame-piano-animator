@@ -437,7 +437,7 @@ class HandAnimator:
         before the bones are solved, so no finger ever bends out of the hand.
     """
 
-    def __init__(self, song, hand=RIGHT, fingering=None, pianist=None):
+    def __init__(self, song, hand=RIGHT, fingering=None, pianist=None, repair=True):
         import pianist as pianists
         self.pianist = pianist or pianists.active()
         self.geo = HandGeometry(self.pianist.anatomy)
@@ -455,9 +455,12 @@ class HandAnimator:
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
         # fingering editor already knows every finger
+        # a chord the file fingers impossibly (an octave with 4-5) is played
+        # with fingers that reach (unless `repair` is off); those notes:
+        self.repaired = set()
         if fingering is None:
             fingering = plan_fingering(self.groups, self.vp, hand=hand, context=song.notes,
-                                       pianist=self.pianist)
+                                       pianist=self.pianist, repair=repair, repaired=self.repaired)
         self.fingering = {id(n): fingering[id(n)] for _, ns in self.groups for n in ns
                           if fingering.get(id(n))}
         # notes without a finger (a sixth note in one hand's chord) aren't animated
@@ -508,6 +511,9 @@ class HandAnimator:
         # A held key that the next chord's fingers have to cross (5 landing
         # left of a held 2, say - anything but the thumb passing under) is
         # let go early too, so the hand isn't asked to do both at once.
+        # So is one that a new chord is out of reach of (a leap while the
+        # last notes are still down): the hand can't be on both.
+        from fingering import MAX_SPAN
         starts = [g[0] for g in self.groups]
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
@@ -520,7 +526,9 @@ class HandAnimator:
                     if g == f or m.pitch == n.pitch:
                         continue
                     vn, vm = self.vp(n.pitch), self.vp(m.pitch)
-                    if 1 in (f, g):
+                    if abs(key_pos(vm) - key_pos(vn)) > MAX_SPAN[(min(f, g), max(f, g))] + 0.5:
+                        lift = self.early_lift
+                    elif 1 in (f, g):
                         # a wide thumb-under / finger-over: not quite legato
                         if is_crossing(vn, f, vm, g) and abs(key_pos(vm) - key_pos(vn)) > 2.0:
                             lift = CROSS_LIFT_T

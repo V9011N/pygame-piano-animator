@@ -173,3 +173,27 @@ def test_fingers_stay_on_their_keys():
         if 1.0 < t < 4.0:
             xs.append(pose["struct"]["chains"][2][-1][0])
     assert max(xs) - min(xs) < 0.15 * kb.white_w          # no twitching on the repeated key
+
+
+def test_impossible_given_fingering_is_repaired_for_playback():
+    # an octave fingered 4-5 (as in a file): the player plays it 1-5, keeping
+    # the 5; the editor (repair=False) keeps the file's fingers
+    ns = []
+    for k in range(4):
+        t = k * 0.4
+        ns += [Note(81, t, t + 0.3, 80, 0, RIGHT, finger=4), Note(93, t, t + 0.3, 80, 0, RIGHT, finger=5)]
+    s = song_of(ns)
+    a = hands.HandAnimator(s, RIGHT)
+    assert [a.finger_for(n) for n in ns[:2]] == [1, 5]
+    assert len(a.repaired) == 4
+    b = hands.HandAnimator(s, RIGHT, repair=False)
+    assert [b.finger_for(n) for n in ns[:2]] == [4, 5] and not b.repaired
+
+
+def test_held_key_is_let_go_before_a_leap():
+    # the octave is still down when the chord two octaves lower starts
+    ns = [Note(72, 0.0, 0.52, 80, 0, RIGHT, finger=1), Note(84, 0.0, 0.52, 80, 0, RIGHT, finger=5),
+          Note(48, 0.5, 0.8, 80, 0, RIGHT, finger=1), Note(52, 0.5, 0.8, 80, 0, RIGHT, finger=3)]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    ends = {n.pitch: e for s, e, n in a.performance}
+    assert ends[84] <= 0.5 - 0.1

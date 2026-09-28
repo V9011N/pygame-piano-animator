@@ -289,7 +289,8 @@ class FingeringEditor(Transport):
         self.song = song
         self.notes = list(song.notes)
         present = {n.hand for n in self.notes}
-        planned = {h: HandAnimator(song, h) for h in (RIGHT, LEFT) if h in present}
+        # the editor shows the file's fingering as it is, even where it can't be played
+        planned = {h: HandAnimator(song, h, repair=False) for h in (RIGHT, LEFT) if h in present}
         self.finger = [planned[n.hand].finger_for(n) if n.hand in planned else None
                        for n in self.notes]
         self.hands = planned

@@ -362,6 +362,17 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     release (eased in), so a finger that has just let go doesn't drag the hand off the keys still held.
   - Demo song: pressed-tip frames more than 0.1 key off went from 228 to 34 (the rest are one-frame handovers into
     leaps). A pinky–index 6th (G#2–F3 in the LH) is just past the default hand's reach and still compromises.
+- **Impossible given fingerings and leaps with keys still down** (2026-09-28; Liszt, Dante Sonata fragment, 0:52):
+  - The file fingered RH octaves 4–5. Given fingers were always kept, so no hand pose could reach both keys and both
+    fingers ended up between them. `plan_fingering(repair=True)` (the player's `HandAnimator` default) keeps a
+    chord's given fingers unless together they are impossible (a pair beyond `MAX_SPAN`, i.e. an `IMPOSSIBLE` chord
+    cost); then it keeps as many of them as still leave a playable chord and plans the rest. The changed notes are
+    in `HandAnimator.repaired` (3 of 3022 in that file). The editor loads with `repair=False` and shows the file's
+    fingering as it is; `score_fingering` and the editor's re-planning never repair.
+  - A key still held when a new chord starts out of its finger's reach (distance > `MAX_SPAN` + 0.5 white keys, in
+    either order) is let go `early_lift` before it, like a crossed held key. Performance MIDI often overlaps leaps
+    by a few tens of ms. Dante fragment: pressed-tip frames > 0.3 key off 82 → 29, worst 5.6 → 1.8 keys (the rest
+    are the last frames of leaps). Demo song: > 0.1 key 34 → 8, worst 1.86 → 0.28.
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

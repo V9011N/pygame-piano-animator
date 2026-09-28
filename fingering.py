@@ -476,7 +476,7 @@ def _states(given, ps=None):
 
 
 def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figures=True,
-                   pianist=None, fixed=None, costs=None):
+                   pianist=None, fixed=None, costs=None, repair=False, repaired=None):
     """
     Fingering for chord groups (from group_notes). Returns {id(note): finger}.
     Notes that already carry a finger (from the file) keep it. `vpitch` maps
@@ -488,6 +488,11 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
     `fixed` ({id(note): finger}) pins fingers without touching the notes;
     `costs`, a dict, is filled with {id(note): cost of its chord on the
     chosen path} - how hard that moment is (see score_fingering).
+
+    With `repair`, a chord whose given fingers can't be played together (a
+    pair further apart than those fingers reach, say an octave with 4-5)
+    keeps as many of them as still leave a playable chord and plans the
+    rest; the notes whose finger changed go into the set `repaired`.
     """
     if not groups:
         return {}
@@ -512,17 +517,35 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
     for start, ns in groups:
         ps = [vp(n.pitch) for n in ns]
         given = [fixed.get(id(n)) if fixed is not None else getattr(n, "finger", None) for n in ns]
-        states = _states(given, ps)
-        local = []
         sug = [suggest.get(id(n)) for n in ns]
-        for st in states:
-            c = sum(unary_cost(p, f) for p, f in zip(ps, st))
-            for s_, f in zip(sug, st):
-                if s_ and (f not in s_[0] if isinstance(s_[0], frozenset) else s_[0] != f):
-                    c += W["figure"] * s_[1]
-            for (pl, fl), (ph, fh) in zip(zip(ps, st), list(zip(ps, st))[1:]):
-                c += chord_pair_cost(pl, fl, ph, fh)
-            local.append(c)
+
+        def chord_costs(states):
+            local = []
+            for st in states:
+                c = sum(unary_cost(p, f) for p, f in zip(ps, st))
+                for s_, f in zip(sug, st):
+                    if s_ and (f not in s_[0] if isinstance(s_[0], frozenset) else s_[0] != f):
+                        c += W["figure"] * s_[1]
+                for (pl, fl), (ph, fh) in zip(zip(ps, st), list(zip(ps, st))[1:]):
+                    c += chord_pair_cost(pl, fl, ph, fh)
+                local.append(c)
+            return local
+        states = _states(given, ps)
+        local = chord_costs(states)
+        if repair and len(ns) > 1 and any(given) and min(local) >= IMPOSSIBLE:
+            # the given fingers can't play this chord: keep as many as still fit
+            idx = [i for i, g in enumerate(given) if g]
+            for drop in range(1, len(idx) + 1):
+                best = None
+                for out in combinations(idx, drop):
+                    g2 = [None if i in out else g for i, g in enumerate(given)]
+                    st2 = _states(g2, ps)
+                    loc2 = chord_costs(st2)
+                    if min(loc2) < IMPOSSIBLE and (best is None or min(loc2) < best[0]):
+                        best = (min(loc2), st2, loc2)
+                if best:
+                    states, local = best[1], best[2]
+                    break
 
         dt = start - prev_start if prev_start is not None else 1.0
         cand = []
@@ -577,6 +600,10 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
         bi, st, c = history[gi][j]
         for n, f in zip(groups[gi][1], st):
             result[id(n)] = f
+            if repaired is not None:
+                g = fixed.get(id(n)) if fixed is not None else getattr(n, "finger", None)
+                if g and g != f:
+                    repaired.add(id(n))
         if costs is not None:
             prev = history[gi - 1][bi][2] if gi > 0 else 0.0
             for n in groups[gi][1]:
