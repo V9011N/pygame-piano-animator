@@ -40,6 +40,26 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
+- `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
+- `read_midi`: the strict pretty_midi parse; if it fails, `repair_smf` rewrites the file's bytes and it is parsed
+  again. The repair walks each track event by event (running status included): data bytes over 127 are clipped,
+  a truncated or garbled track keeps what came before, meta events are kept only when valid (tempo, time and key
+  signatures, text, end of track), system-exclusive messages go, and dropped events' delta times are carried into
+  the next one. Repairing an undamaged file changes nothing. pretty_midi's "tempo on non-zero tracks" warnings are
+  silenced (harmless).
+- `sanitize_instruments`: tracks without notes and percussion go; when a file has piano parts (GM programs 0-7 with
+  no other instrument's name, or a piano-ish name: piano, solo, klavier, RH/LH...) AND other instruments, only the
+  piano parts stay. Instruments are recognised by program or name, Italian / German score names included
+  (Violini, Fagotti, Corni, Timpani...). A file with nothing recognisably piano keeps everything.
+- `sanitize_notes`: notes with non-finite or reversed times go; times start at 0; velocities 1-127; pitches
+  folded onto the keyboard; the same key struck twice within 5 ms (doubled on two tracks) is one note; a key
+  struck again while still down ends the earlier note there.
+- Chopin Concerto No. 1 (full score, 19 tracks): the 18 orchestra tracks are dropped, 6316 piano notes kept.
+  Ocean (Op. 25 No. 12) failed to load because of a hand_split bug, not the file: the repeated-chord rule and
+  the voice-track memory shared a variable (`prev`), so files with several unlabelled tracks crashed with
+  "unsupported operand type(s) for -: 'float' and 'str'".
+
 ## Fingering stored in MIDI files
 - A text meta event just before each note-on, on the note's own track:
   - `F1`..`F5`: finger only (Hanon);

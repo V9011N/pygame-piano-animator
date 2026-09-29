@@ -117,6 +117,7 @@ class MidiSong:
         self.beat_times = list(beat_times)
         self.path = path
         self.title = os.path.splitext(os.path.basename(path))[0] if path else "Untitled"
+        self.cleanup: List[str] = []           # what load_midi's sanitizing changed
 
         self._starts = [n.start for n in self.notes]
         # Longest note lets us bound how far back an overlapping note can start.
@@ -397,6 +398,245 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
     return marked
 
 
+# --------------------------------------------------------------------------- #
+# Sanitizing: making odd or damaged MIDI files readable
+# --------------------------------------------------------------------------- #
+# General MIDI programs 0-7: acoustic / electric pianos, harpsichord, clavinet
+PIANO_PROGRAMS = range(0, 8)
+_PIANO_WORDS = ("piano", "klavier", "pianoforte", "solo", "keyboard", "clavier", "cembalo",
+                "harpsichord", "right hand", "left hand", "rh", "lh", "pf", "pno")
+_OTHER_WORDS = ("violin", "violini", "viola", "viole", "cello", "violoncell", "contrabass", "double bass",
+                "bass", "flute", "flaut", "oboe", "oboi", "clarinet", "clarinett", "bassoon", "fagott",
+                "horn", "corni", "corno", "trumpet", "tromba", "trombe", "trombone", "tuba", "timpani",
+                "timp", "drum", "percussion", "strings", "string", "choir", "voice", "vocal", "soprano",
+                "alto", "tenor", "guitar", "harp", "organ", "orchestra", "tutti", "ensemble")
+SAME_ONSET_T = 0.005     # s, the same pitch struck within this on two tracks is one note
+
+
+def _words(name):
+    import re
+    return re.findall(r"[a-z]+", (name or "").lower())
+
+
+def is_piano_track(inst) -> bool:
+    """A piano part: a piano program and no other instrument's name, or a piano-ish name."""
+    words = _words(inst.name)
+    text = " ".join(words)
+    named_piano = any(w in words or (" " in w and w in text) for w in _PIANO_WORDS)
+    named_other = any(any(word.startswith(o) for word in words) for o in _OTHER_WORDS if " " not in o) or \
+        any(o in text for o in _OTHER_WORDS if " " in o)
+    if named_piano:
+        return True
+    return inst.program in PIANO_PROGRAMS and not named_other
+
+
+def _vlq_read(data, i):
+    """(value, next index) of a variable-length quantity at data[i] (at most 4 bytes)."""
+    v = 0
+    for k in range(4):
+        if i >= len(data):
+            raise IndexError
+        b = data[i]
+        i += 1
+        v = (v << 7) | (b & 0x7F)
+        if not b & 0x80:
+            return v, i
+    return v, i
+
+
+def _vlq(n):
+    out = [n & 0x7F]
+    n >>= 7
+    while n:
+        out.insert(0, (n & 0x7F) | 0x80)
+        n >>= 7
+    return bytes(out)
+
+
+_DATA_LEN = {0x8: 2, 0x9: 2, 0xA: 2, 0xB: 2, 0xC: 1, 0xD: 1, 0xE: 2}
+
+
+def repair_smf(data: bytes):
+    """
+    A cleaned copy of a Standard MIDI File's bytes, and how many events were
+    dropped or fixed: every track is walked event by event (running status
+    included), data bytes over 127 are clipped, a truncated track keeps what
+    it has, meta events are kept only when valid (tempo, time and key
+    signatures, text, end of track) and system-exclusive messages dropped,
+    their delta times carried into the next event.
+    """
+    import struct
+    if data[:4] != b"MThd":
+        j = data.find(b"MThd")                 # RIFF-wrapped files and the like
+        if j < 0:
+            raise ValueError("not a MIDI file")
+        data = data[j:]
+    hlen = struct.unpack(">I", data[4:8])[0]
+    fmt, _, division = struct.unpack(">HHH", data[8:14])
+    i = 8 + hlen
+    tracks, fixed = [], 0
+    while i + 8 <= len(data):
+        cid, clen = data[i:i + 4], struct.unpack(">I", data[i + 4:i + 8])[0]
+        body = data[i + 8:i + 8 + clen]
+        i += 8 + clen
+        if cid != b"MTrk":
+            continue
+        out, j, carry, status = bytearray(), 0, 0, None
+        while j < len(body):
+            try:
+                delta, j = _vlq_read(body, j)
+                b = body[j]
+                if b == 0xFF:                               # meta
+                    mtype = body[j + 1]
+                    mlen, k = _vlq_read(body, j + 2)
+                    payload = body[k:k + mlen]
+                    j = k + mlen
+                    ok = (mtype in range(0x01, 0x08) or mtype == 0x03
+                          or (mtype == 0x51 and mlen == 3 and int.from_bytes(payload, "big") > 0)
+                          or (mtype == 0x58 and mlen == 4 and payload[0] > 0 and payload[1] <= 6)
+                          or (mtype == 0x59 and mlen == 2 and -7 <= int.from_bytes(payload[:1], "big", signed=True) <= 7
+                              and payload[1] in (0, 1)))
+                    if mtype == 0x2F:
+                        break
+                    if ok and len(payload) == mlen:
+                        out += _vlq(delta + carry) + bytes([0xFF, mtype]) + _vlq(mlen) + payload
+                        carry = 0
+                    else:
+                        carry += delta
+                        fixed += 1
+                    continue
+                if b in (0xF0, 0xF7):                       # system exclusive: not for a piano
+                    slen, k = _vlq_read(body, j + 1)
+                    j = k + slen
+                    carry += delta
+                    fixed += 1
+                    continue
+                if b & 0x80:
+                    status = b
+                    j += 1
+                if status is None or status >= 0xF0:
+                    raise IndexError                         # no status to run on: give up on the track
+                n = _DATA_LEN[status >> 4]
+                if j + n > len(body):
+                    raise IndexError
+                vals = list(body[j:j + n])
+                j += n
+                if any(v > 127 for v in vals):
+                    vals = [min(v, 127) for v in vals]
+                    fixed += 1
+                out += _vlq(delta + carry) + bytes([status] + vals)
+                carry = 0
+            except IndexError:
+                fixed += 1                                   # a truncated or garbled end: keep what came before
+                break
+        out += b"\x00\xff\x2f\x00"
+        tracks.append(bytes(out))
+    if not tracks:
+        raise ValueError("no tracks")
+    head = b"MThd" + struct.pack(">IHHH", 6, 1 if len(tracks) > 1 else fmt, len(tracks), division)
+    return head + b"".join(b"MTrk" + struct.pack(">I", len(t)) + t for t in tracks), fixed
+
+
+def read_midi(path: str):
+    """
+    pretty_midi.PrettyMIDI for `path`, reading damaged files leniently: if
+    the strict parse fails, the file's bytes are repaired (repair_smf) and
+    parsed again. Returns (PrettyMIDI, [what was done]).
+    """
+    import io
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")        # tempo events on other tracks etc: harmless
+        try:
+            return pretty_midi.PrettyMIDI(path), []
+        except Exception as first:
+            with open(path, "rb") as fh:
+                data = fh.read()
+            try:
+                clean, fixed = repair_smf(data)
+                pm = pretty_midi.PrettyMIDI(io.BytesIO(clean))
+            except Exception:
+                raise first
+            return pm, ["repaired the file after: %s (%d event(s) dropped or fixed)" % (first, fixed)]
+
+
+def sanitize_instruments(pm, include_drums: bool = False):
+    """
+    [(index, instrument)] worth playing on the piano, and [what was done]:
+    tracks without notes and percussion go; when there are piano parts AND
+    other instruments (a concerto's full score), only the piano parts stay.
+    A file with nothing recognisably piano keeps every track.
+    """
+    report = []
+    insts = [(i, inst) for i, inst in enumerate(pm.instruments) if inst.notes]
+    if not include_drums:
+        drums = [inst for _, inst in insts if inst.is_drum]
+        if drums:
+            report.append("dropped %d percussion track(s)" % len(drums))
+        insts = [(i, inst) for i, inst in insts if not inst.is_drum]
+    piano = [(i, inst) for i, inst in insts if is_piano_track(inst)]
+    if piano and len(piano) < len(insts):
+        others = [inst.name or "track %d" % i for i, inst in insts if (i, inst) not in piano]
+        report.append("kept the piano part%s (%s), dropped %d other instrument track(s): %s" % (
+            "s" if len(piano) > 1 else "", ", ".join(inst.name or "track %d" % i for i, inst in piano),
+            len(others), ", ".join(others[:8]) + (", ..." if len(others) > 8 else "")))
+        insts = piano
+    return insts, report
+
+
+def sanitize_notes(notes, min_duration: float = 0.05):
+    """
+    Clean note list (Note objects) and [what was done]: notes with
+    impossible times go; times start at 0; velocities are 1..127; pitches
+    are folded onto the piano; a note doubled on another track at the same
+    moment is kept once; and a key struck again while it is still down
+    ends the earlier note there (a piano key can't sound twice).
+    """
+    import math
+    report = []
+    ok = [n for n in notes if math.isfinite(n.start) and math.isfinite(n.end) and n.end >= n.start]
+    if len(ok) < len(notes):
+        report.append("dropped %d note(s) with impossible times" % (len(notes) - len(ok)))
+    t0 = min((n.start for n in ok), default=0.0)
+    if t0 < 0:
+        ok = [replace(n, start=n.start - t0, end=n.end - t0) for n in ok]
+        report.append("shifted everything %.3f s later (the file started before 0)" % -t0)
+    fixed = 0
+    out = []
+    for n in ok:
+        v, p = min(127, max(1, int(n.velocity))), _fit_to_piano(int(n.pitch))
+        end = max(n.end, n.start + min_duration)
+        if (v, p, end) != (n.velocity, n.pitch, n.end):
+            fixed += n.velocity != v or n.pitch != p
+            n = replace(n, velocity=v, pitch=p, end=end)
+        out.append(n)
+    if fixed:
+        report.append("brought %d velocit(ies) / pitch(es) into range" % fixed)
+    # same pitch: doubled notes and re-strikes of a key still down
+    by_pitch = {}
+    for n in sorted(out, key=lambda n: (n.pitch, n.start, -n.end)):
+        by_pitch.setdefault(n.pitch, []).append(n)
+    result, dup, cut = [], 0, 0
+    for p, ns in by_pitch.items():
+        kept = []
+        for n in ns:
+            if kept and abs(n.start - kept[-1].start) <= SAME_ONSET_T:
+                dup += 1                       # the same key struck twice at once: one note
+                if n.end > kept[-1].end:
+                    kept[-1] = replace(kept[-1], end=n.end)
+                continue
+            if kept and n.start < kept[-1].end:
+                kept[-1] = replace(kept[-1], end=max(kept[-1].start + 1e-3, n.start))
+                cut += 1
+            kept.append(n)
+        result += kept
+    if dup:
+        report.append("merged %d doubled note(s)" % dup)
+    if cut:
+        report.append("ended %d note(s) where their key is struck again" % cut)
+    return result, report
+
+
 def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_C,
               min_duration: float = 0.05) -> MidiSong:
     """
@@ -410,10 +650,9 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
     min_duration:  very short notes are stretched to this length (seconds) so
                    they stay visible when drawn.
     """
-    pm = pretty_midi.PrettyMIDI(path)
-
-    instruments = [(i, inst) for i, inst in enumerate(pm.instruments)
-                   if inst.notes and (include_drums or not inst.is_drum)]
+    pm, report = read_midi(path)
+    instruments, r = sanitize_instruments(pm, include_drums)
+    report += r
 
     # Decide which hand each track belongs to.
     #   1. If every track is named like "Right Hand" / "LH", the names win.
@@ -434,18 +673,21 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
 
     # fingering keyed by (start time, pitch) so it lines up with pretty_midi's notes
     # (hand, finger) marks keyed by (start time, pitch) so they line up with pretty_midi's notes
-    marks = {(round(float(pm.tick_to_time(t)), 4), p): hf for (t, p), hf in read_markers(path).items()}
+    try:
+        marks = {(round(float(pm.tick_to_time(t)), 4), p): hf for (t, p), hf in read_markers(path).items()}
+    except Exception:                          # a damaged file: no fingering marks then
+        marks = {}
 
     notes: List[Note] = []
     tracks: List[TrackInfo] = []
     for i, inst in instruments:
         for n in inst.notes:
             mark_hand, finger = marks.get((round(float(n.start), 4), n.pitch), (None, None))
-            pitch = _fit_to_piano(n.pitch)
-            end = max(n.end, n.start + min_duration)
-            notes.append(Note(pitch, float(n.start), float(end), int(n.velocity), i,
+            notes.append(Note(int(n.pitch), float(n.start), float(n.end), int(n.velocity), i,
                               mark_hand or track_hand.get(i), finger))
         tracks.append(TrackInfo(i, inst.name or f"Track {i}", inst.program, len(inst.notes), track_hand.get(i)))
+    notes, r = sanitize_notes(notes, min_duration)
+    report += r
 
     # Notes whose track doesn't say which hand: work it out from the music.
     loose = [n for n in notes if n.hand is None]
@@ -472,7 +714,11 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
                 controls.append((float(cc.time), int(cc.number), int(cc.value)))
 
     duration = max((n.end for n in notes), default=0.0)
-    return MidiSong(notes, tracks, duration, bar_times, beat_times, path, controls)
+    song = MidiSong(notes, tracks, duration, bar_times, beat_times, path, controls)
+    song.cleanup = report                      # what sanitizing changed, for the curious
+    for line in report:
+        print("%s: %s" % (os.path.basename(path), line))
+    return song
 
 
 # --------------------------------------------------------------------------- #
