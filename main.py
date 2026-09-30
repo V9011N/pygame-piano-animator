@@ -38,7 +38,7 @@ import os
 
 import pygame
 
-from common import (BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
+from common import (blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
@@ -46,6 +46,7 @@ from common import (BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LA
 import pianist as pianists
 from hands import HandAnimator, draw_hands, pair_hands
 from midi_loader import LEFT, RIGHT, load_song
+from version import VERSION
 
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
 SEEK_STEP = 5.0
@@ -84,7 +85,7 @@ class Visualizer(Transport):
         self.t = -LEAD_IN
         self.paused = False
         self.sounding = {}
-        pygame.display.set_caption(f"Piano Animator - {song.title}")
+        pygame.display.set_caption(f"Piano Animator {VERSION} - {song.title}")
 
     def layout(self, size):
         w, h = size
@@ -259,13 +260,13 @@ class Visualizer(Transport):
             left = f"{self.song.title}    {fmt_time(self.t)} / {fmt_time(self.song.duration)}"
         else:
             left = "No song loaded"
-        img = self.fonts["normal"].render(left, True, TEXT)
-        s.blit(img, (10, (r.h - img.get_height()) // 2))
+        font = self.fonts["normal"]
+        blit_shadowed(s, font, left, TEXT, (10, (r.h - font.get_height()) // 2))
 
         right = (f"speed {int(round(self.speed * 100))}%   view {self.window_secs:.1f}s   "
                  f"{self.midi.status()}      Space  ←→  ↑↓  +/-  M  O  H  F   Esc menu")
-        img = self.fonts["small"].render(right, True, TEXT_DIM)
-        s.blit(img, (r.w - img.get_width() - 10, (r.h - img.get_height()) // 2))
+        font = self.fonts["small"]
+        blit_shadowed(s, font, right, TEXT_DIM, (r.w - font.size(right)[0] - 10, (r.h - font.get_height()) // 2))
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +286,7 @@ class MainMenu:
             Button("Quit", "quit", font="normal", key_hint="Esc"),
         ]
         self.layout(app.screen.get_size())
-        pygame.display.set_caption("Piano Animator")
+        pygame.display.set_caption(f"Piano Animator {VERSION}")
 
     def layout(self, size):
         w, h = size
@@ -450,8 +451,14 @@ class App:
                     break
             self.mode.update(dt)
             self.mode.render()
+            self.draw_version()
             pygame.display.flip()
         self.close()
+
+    def draw_version(self):
+        """The version in the window's bottom-left corner."""
+        font = self.fonts["small"]
+        blit_shadowed(self.screen, font, VERSION, TEXT_DIM, (6, self.screen.get_height() - font.get_height() - 4))
 
     def close(self):
         self.mode.leave()
@@ -473,7 +480,7 @@ def main():
 
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_SIZE, pygame.RESIZABLE)
-    pygame.display.set_caption("Piano Animator")
+    pygame.display.set_caption(f"Piano Animator {VERSION}")
     app = App(screen, sound=not args.no_sound and not args.screenshot, speed=args.speed)
     if args.midi:
         (app.edit if args.edit else app.play)(args.midi)
@@ -483,6 +490,7 @@ def main():
             app.mode.seek(args.at)
             app.mode.paused = True
         app.mode.render()
+        app.draw_version()
         pygame.image.save(app.screen, args.screenshot)
         print(f"Saved {args.screenshot}")
         app.close()
