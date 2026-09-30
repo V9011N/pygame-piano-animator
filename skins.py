@@ -35,8 +35,8 @@ SKINS = {
                                           ("tip", "Fingertips", (58, 58, 62))]},
 }
 SKIN_ORDER = ["cartoon", "gloves", "robot", "skeleton"]
-OPTIONS = {"finger_width": 1.0, "outline": 1.0, "details": True, "sleeve": True, "shadow": True}
-FINGER_WIDTH_RANGE = (0.7, 1.35)
+OPTIONS = {"finger_width": 0.75, "outline": 1.0, "details": True, "sleeve": True, "shadow": True}
+FINGER_WIDTH_RANGE = (0.5, 1.2)
 OUTLINE_RANGE = (0.0, 2.5)
 
 

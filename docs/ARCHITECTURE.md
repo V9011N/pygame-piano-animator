@@ -40,6 +40,30 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
+- `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
+- `read_midi`: the strict pretty_midi parse; if it fails, `repair_smf` rewrites the file's bytes and it is parsed
+  again. The repair walks each track event by event (running status included): data bytes over 127 are clipped,
+  a truncated or garbled track keeps what came before, meta events are kept only when valid (tempo, time and key
+  signatures, text, end of track), system-exclusive messages go, and dropped events' delta times are carried into
+  the next one. Repairing an undamaged file changes nothing. pretty_midi's "tempo on non-zero tracks" warnings are
+  silenced (harmless).
+- `sanitize_instruments`: tracks without notes and percussion go; when a file has piano parts (GM programs 0-7 with
+  no other instrument's name, or a piano-ish name: piano, solo, klavier, RH/LH...) AND other instruments, only the
+  piano parts stay. Instruments are recognised by program or name, Italian / German score names included
+  (Violini, Fagotti, Corni, Timpani...). A file with nothing recognisably piano keeps everything.
+- `sanitize_notes`: notes with non-finite or reversed times go; times start at 0; velocities 1-127; pitches
+  folded onto the keyboard; the same key struck twice within 5 ms (doubled on two tracks) is one note; a key
+  struck again while still down ends the earlier note there.
+- Chopin Concerto No. 1 (full score, 19 tracks): the 18 orchestra tracks are dropped, 6316 piano notes kept.
+  Ocean (Op. 25 No. 12) failed to load because of a hand_split bug, not the file: the repeated-chord rule and
+  the voice-track memory shared a variable (`prev`), so files with several unlabelled tracks crashed with
+  "unsupported operand type(s) for -: 'float' and 'str'".
+- Export and the fingering markers read the file the way the loader did (`_smf_tracks`): a file that needed
+  `repair_smf` is exported from its repaired bytes, so a damaged, cut-off or RIFF-wrapped source exports to a
+  clean file with every note marked. `save_fingered_midi` counts marked notes, not marker events, so a note
+  doubled on two tracks counts once and the editor's "couldn't be matched" number stays right.
+
 ## Fingering stored in MIDI files
 - A text meta event just before each note-on, on the note's own track:
   - `F1`..`F5`: finger only (Hanon);
@@ -248,7 +272,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
-- **Pianist skin data**: `Pianist.skin` = `{style, colors{style: {slot: rgb}}, finger_width 0.7–1.35, outline 0–2.5, details, sleeve, shadow}`.
+- **Pianist skin data**: `Pianist.skin` = `{style, colors{style: {slot: rgb}}, finger_width 0.5–1.2 (default 0.75; was 0.7–1.35, 1.0), outline 0–2.5, details, sleeve, shadow}`.
   - The Default pianist uses the cartoon skin.
   - Pianists saved before skins existed load as skeleton, keeping their bone colour.
   - `badge_color` is the primary colour of the current skin.
@@ -433,6 +457,23 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     404 of the 430 frames are with a held inner note, where the static poses exist but the hand solver doesn't
     reach them while it moves between octaves (the little finger is now the one off). Fingering changes: bundled
     MIDIs and Winter Wind none, Dante 106 notes (mostly 4 -> 5 at the top of an octave-wide hand with a key held).
+  - Hand solver for these (2026-09-28). Of the frames with a pressed key > 0.1 in out of reach (Op. 25 No. 10,
+    0-30 s: R 224, L 228), about 2/3 were shapes no hand pose reached - the octave pins the thumb and the little
+    finger at their limits, and the middle finger's ±12° splay couldn't take a D5 between A4 and A5 (1-3-5, 0.12 in
+    short) - and 1/3 were reached by `_key_fix` but lost in the ±50 ms smoothing, which mixes in the next chord's
+    pose when chords come every 0.14 s.
+    - `SPLAY_LIMIT_DEG`: middle finger ±18° (was ±12), ring −15..+16 (was −12..+14).
+    - `_smooth_hand_grid` blends ±`LIMIT_SMOOTH_HAND` 3 steps (±50 ms, the hand travelling) with
+      ±`LIMIT_SMOOTH_HAND_ON` 1 step (±17 ms) by how much the keys count (`_key_weight`, max over fingers).
+    - `_key_fix` gives a finger already down on its key its pressing slack (`PRESS_SLACK_DEG`, as `_limit_tip`
+      does) and samples 13 depths along a key (was 7).
+    - Tried and dropped (no measurable gain): a pattern search after Gauss-Newton, warm-starting from the last
+      step, letting chord-to-chord keys go 35 ms early, a shorter release fade.
+    - Frames > 0.1 in out of reach: R 224 -> 61, L 228 -> 84. Pressed tips > 0.1 key off: Op. 25 No. 10 (0-30 s)
+      430 -> 182 (> 0.3 key 69 -> 86: LH black-key octaves on 1-5 with 2 held 3 semitones from the thumb, e.g.
+      A#1-G2-A#2, still 0.34 in beyond any pose), Winter Wind (20-40 s) 29 -> 29 (> 0.3: 14 -> 1), Dante
+      (140-160 s) 33 -> 1, demo 23 -> 25. Winter Wind fingertip jerks 134 -> 275 (the narrower smoothing while
+      keys are down; 846 before any smoothing). ~2.4-2.6 ms per hand per frame.
 - **Fingers aiming where they go** (2026-09-28; Winter Wind, Op. 25 No. 11, 0:26 - RH 1-5-2-4 with the thumb
   passing under): fingers 2 and 4 on their way to a key 7 keys over stretched out fully (reach 0.99) with their
   splay pinned at the limit and their tip far up the key (2.8 in), then snapped back (0.97 in in one frame).

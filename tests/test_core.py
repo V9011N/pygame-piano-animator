@@ -422,3 +422,118 @@ def test_octaves_open_to_1_5_around_a_held_inner_note():
     # no pair of fingers in a chord is asked to reach further than it can,
     # neighbours or not: an octave can't be 1-3 with 2 between them
     assert F.inner_room_cost([(70, 1), (74, 2), (82, 4)]) > 0 == F.inner_room_cost([(70, 1), (74, 2), (82, 5)])
+
+
+def test_the_hand_reaches_an_octave_with_a_held_middle_finger():
+    import math
+    import pygame
+    from common import Keyboard, bottom_layout
+    pygame.init()
+    # A4-D5-A5 held with 1-3-5 (Op. 25 No. 10's middle voice): the hand fit
+    # puts every finger on its key (with the middle finger's old +-12 degree
+    # splay it fell 0.12 in short)
+    ns = [Note(69, 0.2, 1.2, 90, 0, RIGHT, finger=1), Note(74, 0.2, 1.2, 90, 0, RIGHT, finger=3),
+          Note(81, 0.2, 1.2, 90, 0, RIGHT, finger=5)]
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    pose = a.pose(0.7, kb)
+    for n in ns:
+        f = a.fingering[id(n)]
+        tip = pose["struct"]["chains"][f][-1]
+        assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w
+
+
+def _smf(tracks, division=480):
+    import struct
+
+    def vlq(n):
+        out = [n & 0x7F]
+        n >>= 7
+        while n:
+            out.insert(0, (n & 0x7F) | 0x80)
+            n >>= 7
+        return bytes(out)
+    body = b""
+    for events in tracks:
+        data = b"".join(vlq(d) + e for d, e in events) + b"\x00\xff\x2f\x00"
+        body += b"MTrk" + struct.pack(">I", len(data)) + data
+    return b"MThd" + struct.pack(">IHHH", 6, 1, len(tracks), division) + body
+
+
+def test_damaged_midi_files_are_repaired(tmp_path):
+    import pretty_midi
+    # an impossible key signature, a data byte over 127, and a file cut off mid-event
+    files = {
+        "badkey": _smf([[(0, b"\xff\x59\x02\x14\x00"), (0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40")]]),
+        "badbyte": _smf([[(0, b"\x90\x3c\xd0"), (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]]),
+    }
+    good = _smf([[(0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]])
+    files["truncated"] = good[:-9]
+    for name, data in files.items():
+        p = tmp_path / (name + ".mid")
+        p.write_bytes(data)
+        s = midi_loader.load_song(str(p))
+        assert s.notes and s.notes[0].pitch == 60, name
+        assert s.cleanup, name
+    # repairing an undamaged file changes nothing
+    import io
+    clean, fixed = midi_loader.repair_smf(open(midi_path("demo_song.mid"), "rb").read())
+    a = pretty_midi.PrettyMIDI(midi_path("demo_song.mid"))
+    b = pretty_midi.PrettyMIDI(io.BytesIO(clean))
+    key = lambda pm: sorted((round(n.start, 4), n.pitch, n.velocity) for i in pm.instruments for n in i.notes)
+    assert fixed == 0 and key(a) == key(b)
+
+
+def test_repaired_and_sanitized_files_export_their_fingering(tmp_path):
+    import struct
+    good = _smf([[(0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]])
+    riff = b"RIFF" + struct.pack("<I", len(good) + 12) + b"RMIDdata" + struct.pack("<I", len(good)) + good
+    doubled = _smf([[(0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40")], [(0, b"\x91\x3c\x50"), (480, b"\x81\x3c\x40")]])
+    files = {"badbyte": _smf([[(0, b"\x90\x3c\xd0"), (480, b"\x80\x3c\x40"),
+                               (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]]),
+             "truncated": good[:-9], "riff": riff, "doubled": doubled}
+    for name, data in files.items():
+        src, dst = tmp_path / (name + ".mid"), tmp_path / (name + "_fingered.mid")
+        src.write_bytes(data)
+        s = midi_loader.load_song(str(src))
+        fing = {id(n): 3 for n in s.notes}
+        # every note marked, counted once even when it was doubled on two tracks
+        assert midi_loader.save_fingered_midi(str(src), str(dst), s.notes, fing) == len(s.notes), name
+        back = midi_loader.load_song(str(dst))
+        assert [(n.pitch, n.hand, n.finger) for n in back.notes] == [(n.pitch, n.hand, 3) for n in s.notes], name
+
+
+def test_only_the_piano_part_of_a_full_score_is_kept(tmp_path):
+    # a concerto's full score: a piano solo track plus orchestra tracks
+    piano = [(0, b"\xff\x03\x0aPIANO SOLO"), (0, b"\xc0\x00"),
+             (0, b"\x90\x3c\x50"), (0, b"\x90\x3c\x50"),        # the same key struck twice at once
+             (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (960, b"\x80\x40\x40")]
+    piano2 = [(0, b"\xff\x03\x05Piano"), (0, b"\xc1\x00"), (240, b"\x91\x40\x50"),   # E4 again while still down
+              (480, b"\x81\x40\x40")]
+    violin = [(0, b"\xff\x03\x09Violini I"), (0, b"\xc2\x30"), (0, b"\x92\x48\x50"), (480, b"\x82\x48\x40")]
+    timp = [(0, b"\xff\x03\x07Timpani"), (0, b"\xc3\x2f"), (0, b"\x93\x28\x50"), (480, b"\x83\x28\x40")]
+    p = tmp_path / "score.mid"
+    p.write_bytes(_smf([piano, piano2, violin, timp]))
+    s = midi_loader.load_song(str(p))
+    assert sorted(n.pitch for n in s.notes) == [60, 64, 64]         # no violin (72) or timpani (40), C4 once
+    first_e = min((n for n in s.notes if n.pitch == 64), key=lambda n: n.start)
+    assert first_e.end <= 0.75 + 1e-6                               # ended where the key is struck again
+    assert {t.name for t in s.tracks} == {"PIANO SOLO", "Piano"}
+    assert any("dropped 2 other instrument" in line for line in s.cleanup)
+    # a file with nothing recognisably piano keeps all its tracks
+    q = tmp_path / "strings.mid"
+    q.write_bytes(_smf([violin, timp]))
+    assert len(midi_loader.load_song(str(q)).notes) == 2
+
+
+def test_hand_split_with_voice_tracks_and_repeated_chords():
+    import hand_split
+    # two unlabelled tracks (voices) and a chord struck twice: the track
+    # memory and the repeated-chord rule used the same variable (crashed)
+    ns = []
+    for k in range(6):
+        t = k * 0.2
+        ns += [Note(p, t, t + 0.18, 80, 0, None) for p in (72, 76)]
+        ns += [Note(p, t, t + 0.18, 80, 1, None) for p in (48, 55)]
+    split = hand_split.split_hands(ns)
+    assert all(split[id(n)] == (RIGHT if n.pitch > 60 else LEFT) for n in ns)

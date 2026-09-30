@@ -236,11 +236,11 @@ def split_hands(notes, pianist=None):
     multi = len({getattr(n, "track", 0) for _, ns in groups for n in ns}) > 1
     beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, ())]
     history = []
-    prev = None
+    last_group = None
     for t, ns in groups:
-        repeat = prev is not None and t - prev[0] < REPEAT_T and \
-            [n.pitch for n in prev[1]] == [n.pitch for n in ns]
-        prev = (t, ns)
+        repeat = last_group is not None and t - last_group[0] < REPEAT_T and \
+            [n.pitch for n in last_group[1]] == [n.pitch for n in ns]
+        last_group = (t, ns)
         cand = []
         for bi, (cost, rh, lh, _, pk, tr) in enumerate(beam):
             last = dict(tr)

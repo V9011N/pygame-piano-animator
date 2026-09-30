@@ -107,3 +107,12 @@ def test_no_nail_on_the_knuckle_of_a_tightly_curled_finger():
     h.radius[3][-1] = (dip, (550.9, 573.5, 0.0), 9.7)
     skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
     assert pen.pts and min(p[1] for p in pen.pts) < 572.3 - 9.0
+
+
+def test_finger_thickness_range_and_default():
+    import skins
+    assert skins.FINGER_WIDTH_RANGE == (0.5, 1.2)
+    assert skins.default_skin()["finger_width"] == 0.75
+    # older pianists' values outside the new range are brought into it
+    assert skins.normalize({"finger_width": 1.35})["finger_width"] == 1.2
+    assert skins.normalize({"finger_width": 0.3})["finger_width"] == 0.5
