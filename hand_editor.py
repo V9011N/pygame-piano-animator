@@ -27,6 +27,7 @@ from hands import (HOVER, INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeo
                    halo_for, joint_radius, static_skeleton, curl_factor)
 from midi_loader import is_black_key, note_name
 import skins
+from version import VERSION
 
 PANEL_W = 380
 ROW_H = 56
@@ -221,7 +222,7 @@ class PianistStudio:
         self._cells = []
         self._opt_rects = []
         self.sliders = []
-        pygame.display.set_caption("Piano Animator - pianists")
+        pygame.display.set_caption(f"Piano Animator {VERSION} - pianists")
 
     # ----- data ---------------------------------------------------------------
     def _refresh(self, reload=False):

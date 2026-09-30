@@ -502,6 +502,15 @@ class Button:
             surf.blit(k, k.get_rect(topright=(self.rect.right - 10, self.rect.top + 8)))
 
 
+def blit_shadowed(surf, img_font, text, color, pos, shadow=(0, 0, 0)):
+    """Draw text with a dark drop shadow (readable over any background); returns its width."""
+    for d in ((2, 2), (1, 1)):
+        surf.blit(img_font.render(text, True, shadow), (pos[0] + d[0], pos[1] + d[1]))
+    img = img_font.render(text, True, color)
+    surf.blit(img, pos)
+    return img.get_width()
+
+
 def center_text(surf, fonts, rect, text, font="big"):
     img = fonts[font].render(text, True, TEXT)
     box = img.get_rect(center=rect.center).inflate(40, 20)

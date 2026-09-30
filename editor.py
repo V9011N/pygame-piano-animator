@@ -50,7 +50,7 @@ from dataclasses import replace
 
 import pygame
 
-from common import (ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAND_COLORS, HAND_NAMES,
+from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAND_COLORS, HAND_NAMES,
                     LEAD_IN, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button, Dialog,
                     Keyboard, Performance, Transport, bottom_layout, default_export_name,
                     draw_felt, draw_hand_area, draw_pianist_badge, fmt_time, mix, pick_file,
@@ -58,6 +58,7 @@ from common import (ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAND_COLORS, HAND_
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
 from hands import HandAnimator, draw_hands, pair_hands
+from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, load_song, note_name, save_fingered_midi,
                          save_pig)
@@ -310,7 +311,7 @@ class FingeringEditor(Transport):
         self.paused = True
         self.sounding = {}
         self._fit_rows()
-        pygame.display.set_caption(f"Piano Animator - editing {song.title}")
+        pygame.display.set_caption(f"Piano Animator {VERSION} - editing {song.title}")
 
     def _rebuild(self):
         """After an edit: a new song object (hands changed) and fresh hand animators."""
@@ -1236,15 +1237,14 @@ class FingeringEditor(Transport):
         self.top_buttons[0].active = self.follow_pitch
         self.top_buttons[1].active = self.show_difficulty
         title = self.song.title + ("  •" if self.dirty else "")
-        img = self.fonts["normal"].render(title, True, TEXT)
-        s.blit(img, (10, (r.h - img.get_height()) // 2))
-        x = 10 + img.get_width() + 18
+        font = self.fonts["normal"]
+        x = 10 + blit_shadowed(s, font, title, TEXT, (10, (r.h - font.get_height()) // 2)) + 18
         state = "Playing" if not self.paused else "Paused"
         info = (f"{state}   {fmt_time(self.t, True)} / {fmt_time(self.song.duration)}    "
                 f"speed {int(round(self.speed * 100))}%    view {self.view_secs:.1f}s    {self.midi.status()}")
-        img = self.fonts["small"].render(info, True, TEXT_DIM)
-        if x + img.get_width() < self._buttons_left:
-            s.blit(img, (x, (r.h - img.get_height()) // 2))
+        font = self.fonts["small"]
+        if x + font.size(info)[0] < self._buttons_left:
+            blit_shadowed(s, font, info, TEXT_DIM, (x, (r.h - font.get_height()) // 2))
         mouse = pygame.mouse.get_pos()
         for b in self.top_buttons:
             b.draw(s, self.fonts, mouse)
