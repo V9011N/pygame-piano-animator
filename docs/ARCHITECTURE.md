@@ -59,6 +59,10 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   Ocean (Op. 25 No. 12) failed to load because of a hand_split bug, not the file: the repeated-chord rule and
   the voice-track memory shared a variable (`prev`), so files with several unlabelled tracks crashed with
   "unsupported operand type(s) for -: 'float' and 'str'".
+- Export and the fingering markers read the file the way the loader did (`_smf_tracks`): a file that needed
+  `repair_smf` is exported from its repaired bytes, so a damaged, cut-off or RIFF-wrapped source exports to a
+  clean file with every note marked. `save_fingered_midi` counts marked notes, not marker events, so a note
+  doubled on two tracks counts once and the editor's "couldn't be matched" number stays right.
 
 ## Fingering stored in MIDI files
 - A text meta event just before each note-on, on the note's own track:

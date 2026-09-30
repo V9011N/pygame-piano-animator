@@ -286,16 +286,30 @@ def _encode(events):
     return bytes(out)
 
 
+def _smf_tracks(path: str):
+    """
+    (header, chunks, {chunk index: decoded events}) for `path`, read the way
+    load_midi read it: a file only readable after repair_smf (bad bytes,
+    cut off, RIFF-wrapped) gives the repaired file's tracks.
+    """
+    def decode(data):
+        header, chunks = _chunks(data)
+        return header, chunks, {i: _events(td) for i, (typ, td) in enumerate(chunks) if typ == b'MTrk'}
+    data = open(path, 'rb').read()
+    try:
+        return decode(data)
+    except Exception:
+        return decode(repair_smf(data)[0])
+
+
 def read_markers(path: str) -> dict:
     """{(tick, pitch): (hand or None, finger or None)} for every marked note-on."""
     out = {}
     try:
-        _, chunks = _chunks(open(path, 'rb').read())
-        for typ, td in chunks:
-            if typ != b'MTrk':
-                continue
+        _, _, tracks = _smf_tracks(path)
+        for events in tracks.values():
             pending = None
-            for t, kind, p in _events(td):
+            for t, kind, p in events:
                 if kind == 'meta':
                     if p[0] == 0x01:
                         pending = _marker(p[1]) or pending
@@ -314,8 +328,8 @@ def read_fingering(path: str) -> dict:
     return {k: f for k, (h, f) in read_markers(path).items() if f}
 
 
-def _tempo_map(header, chunks):
-    """A function tick -> seconds for this file (the same maths pretty_midi uses)."""
+def _tempo_map(header, tracks):
+    """A function tick -> seconds for a file's header and decoded tracks (the same maths pretty_midi uses)."""
     division = struct.unpack('>h', header[4:6])[0]
     if division < 0:                                    # SMPTE time code
         fps, tpf = -(division >> 8), division & 0xFF
@@ -323,8 +337,8 @@ def _tempo_map(header, chunks):
     # Like pretty_midi: tempo changes come from the first track only, and one
     # at tick 0 replaces the default 120 bpm.
     tempos = [(0, 500000)]
-    tracks = [td for typ, td in chunks if typ == b'MTrk']
-    for t, kind, p in (_events(tracks[0]) if tracks else []):
+    first = tracks[min(tracks)] if tracks else []
+    for t, kind, p in first:
         if kind == 'meta' and p[0] == 0x51:
             us = int.from_bytes(p[1], 'big')
             if t == 0:
@@ -353,8 +367,8 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
     `notes` are the loaded Note objects (with the hand to store) and `fingers`
     maps id(note) -> finger (or None). Returns how many notes were marked.
     """
-    header, chunks = _chunks(open(src_path, 'rb').read())
-    to_sec = _tempo_map(header, chunks)
+    header, chunks, tracks = _smf_tracks(src_path)
+    to_sec = _tempo_map(header, tracks)
     # loaded notes by (pitch, start in ms); the loader shifts out-of-range
     # pitches by octaves, so look them up the same way
     index = {}
@@ -370,14 +384,14 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
                 return got[0]
         return None
 
-    marked = 0
+    marked = set()
     out = bytearray(b'MThd' + struct.pack('>I', len(header)) + header)
-    for typ, td in chunks:
+    for i, (typ, td) in enumerate(chunks):
         if typ != b'MTrk':
             out += typ + struct.pack('>I', len(td)) + td
             continue
         new = []
-        for ev in _events(td):
+        for ev in tracks[i]:
             t, kind, p = ev
             if kind == 'meta' and p[0] == 0x01 and _marker(p[1]):
                 continue                                  # old fingering: replaced below
@@ -387,7 +401,7 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
                     f = fingers.get(id(n))
                     text = (n.hand + (str(f) if f else "")).encode()
                     new.append((t, 'meta', (0x01, text)))
-                    marked += 1
+                    marked.add(id(n))       # a note doubled on two tracks is still one note
             new.append(ev)
         data = _encode(new)
         out += b'MTrk' + struct.pack('>I', len(data)) + data
@@ -395,7 +409,7 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
     with open(tmp, 'wb') as fh:
         fh.write(out)
     os.replace(tmp, dst_path)
-    return marked
+    return len(marked)
 
 
 # --------------------------------------------------------------------------- #
@@ -444,15 +458,6 @@ def _vlq_read(data, i):
     return v, i
 
 
-def _vlq(n):
-    out = [n & 0x7F]
-    n >>= 7
-    while n:
-        out.insert(0, (n & 0x7F) | 0x80)
-        n >>= 7
-    return bytes(out)
-
-
 _DATA_LEN = {0x8: 2, 0x9: 2, 0xA: 2, 0xB: 2, 0xC: 1, 0xD: 1, 0xE: 2}
 
 
@@ -499,7 +504,7 @@ def repair_smf(data: bytes):
                     if mtype == 0x2F:
                         break
                     if ok and len(payload) == mlen:
-                        out += _vlq(delta + carry) + bytes([0xFF, mtype]) + _vlq(mlen) + payload
+                        out += _write_vlq(delta + carry) + bytes([0xFF, mtype]) + _write_vlq(mlen) + payload
                         carry = 0
                     else:
                         carry += delta
@@ -524,7 +529,7 @@ def repair_smf(data: bytes):
                 if any(v > 127 for v in vals):
                     vals = [min(v, 127) for v in vals]
                     fixed += 1
-                out += _vlq(delta + carry) + bytes([status] + vals)
+                out += _write_vlq(delta + carry) + bytes([status] + vals)
                 carry = 0
             except IndexError:
                 fixed += 1                                   # a truncated or garbled end: keep what came before

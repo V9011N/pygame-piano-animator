@@ -484,6 +484,25 @@ def test_damaged_midi_files_are_repaired(tmp_path):
     assert fixed == 0 and key(a) == key(b)
 
 
+def test_repaired_and_sanitized_files_export_their_fingering(tmp_path):
+    import struct
+    good = _smf([[(0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]])
+    riff = b"RIFF" + struct.pack("<I", len(good) + 12) + b"RMIDdata" + struct.pack("<I", len(good)) + good
+    doubled = _smf([[(0, b"\x90\x3c\x50"), (480, b"\x80\x3c\x40")], [(0, b"\x91\x3c\x50"), (480, b"\x81\x3c\x40")]])
+    files = {"badbyte": _smf([[(0, b"\x90\x3c\xd0"), (480, b"\x80\x3c\x40"),
+                               (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40")]]),
+             "truncated": good[:-9], "riff": riff, "doubled": doubled}
+    for name, data in files.items():
+        src, dst = tmp_path / (name + ".mid"), tmp_path / (name + "_fingered.mid")
+        src.write_bytes(data)
+        s = midi_loader.load_song(str(src))
+        fing = {id(n): 3 for n in s.notes}
+        # every note marked, counted once even when it was doubled on two tracks
+        assert midi_loader.save_fingered_midi(str(src), str(dst), s.notes, fing) == len(s.notes), name
+        back = midi_loader.load_song(str(dst))
+        assert [(n.pitch, n.hand, n.finger) for n in back.notes] == [(n.pitch, n.hand, 3) for n in s.notes], name
+
+
 def test_only_the_piano_part_of_a_full_score_is_kept(tmp_path):
     # a concerto's full score: a piano solo track plus orchestra tracks
     piano = [(0, b"\xff\x03\x0aPIANO SOLO"), (0, b"\xc0\x00"),
