@@ -116,3 +116,21 @@ def test_finger_thickness_range_and_default():
     # older pianists' values outside the new range are brought into it
     assert skins.normalize({"finger_width": 1.35})["finger_width"] == 1.2
     assert skins.normalize({"finger_width": 0.3})["finger_width"] == 0.5
+
+
+def test_changelog_button_glows_until_opened(screen):
+    app = app_on(screen)
+    menu = app.mode
+    assert menu.changelog_new                                  # fresh pianists folder: not seen yet
+    menu.render()
+    click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=menu.changelog_button.rect.center)
+    app.handle_event(click)
+    assert menu.changelog is not None and not menu.changelog_new
+    menu.render()
+    app.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-5))
+    assert menu.changelog.scroll > 0
+    key(app, pygame.K_ESCAPE)                                  # closes the changelog, not the app
+    assert menu.changelog is None and app.mode is menu
+    assert not main.MainMenu(app).changelog_new                # remembered
+    entries = main.changelog_entries()
+    assert len(entries) > 10 and all(bullets for _, bullets in entries)
