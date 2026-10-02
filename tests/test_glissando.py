@@ -144,5 +144,7 @@ def test_palm_up_toward_the_little_finger_thumb_method_toward_the_thumb(screen):
         dx, dy = th[-1][0] - th[1][0], th[-1][1] - th[1][1]
         assert abs(dx) < 0.3 * abs(dy)
         assert abs(th[-1][0] - kb.key_rects[n.pitch].centerx) < 1.5 * kb.white_w
-        # the fist's knuckles over the keys (y: up the keys from their front edge)
-        assert all(ch[f][1][1] > 0 for f in range(2, 6))
+        # the fist's knuckles (the middle joints) over the keys (y: up the keys from their front edge)
+        assert all(ch[f][2][1] > 0.25 * a.ppi for f in range(2, 6))
+        front = kb.rect.h - kb.black_h                      # ...but not into the black keys
+        assert max(p[1] for f in range(2, 6) for p in ch[f]) < front - 0.3 * a.ppi

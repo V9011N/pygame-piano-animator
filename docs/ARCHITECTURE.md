@@ -638,7 +638,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     (RH down, LH up) it is the thumb method, after a photo: palm down, fingers 2-5 curled into a fist with the
     middle joints down on the keys (`GLISS_CURL`), the thumb straight along the fist (`GLISS_THUMB_DIR`), the
     hand turned so the thumb lies along the keys, tipped down `GLISS_THUMB_PITCH_DEG` 4°, the thumb's nail on
-    the contact point - `GLISS_THUMB_IN` 2.0 in up a white key, so the fist's knuckles are over the keys. Both are one family
+    the contact point - up to `GLISS_THUMB_IN` 2.0 in up a white key (no further than the black keys' front), so
+    the fist's knuckles are over the keys, but pulled back so the fist's furthest knuckle stays `GLISS_FIST_CLEAR`
+    0.45 in short of the black keys' front (it collided with them otherwise). Both are one family
     (u = smoothed (d+1)/2 of `_gliss_contact`'s direction d), so turning round inside an episode morphs from one
     to the other. Palm up, `struct["palm_up"]` is set and the cartoon skin draws the heart, head and life lines
     (`skins._palm_lines`, quadratic curves in palm coordinates between the index/little knuckles and the wrist

@@ -2,6 +2,10 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0238 - Thumb glissando clear of the black keys
+- The fist in a thumb glissando no longer runs into the black keys: the thumb slides a little
+  lower on the white keys, so the knuckles stay just in front of the black ones.
+
 ## v2026.10.02.0236 - Thumb glissando on the keys
 - In a thumb glissando the hand now sits up on the keys like a real one: a fist with its knuckles
   over the keys, the thumb straight alongside it, its nail sliding further up the keys.

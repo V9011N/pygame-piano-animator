@@ -235,7 +235,8 @@ GLISS_THUMB_DIR = (-0.18, 1.0, -0.3)   # the straightened thumb, along the fist 
 GLISS_THUMB_PITCH_DEG = 4.0            # the hand tipped down this much for it
 GLISS_WHITE_IN = 0.8        # in, the nails slide this far up the white keys (well clear of the black ones)...
 GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
-GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail this far up the white keys, the fist's knuckles over them
+GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
+GLISS_FIST_CLEAR = 0.45     # in, ...but the knuckles' centres this far short of the black keys' front (finger radius + a gap)
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
 FLAT_DROP = 0.6             # ...which lowers its knuckles by this share, so stretched fingers reach further
 TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
@@ -2120,7 +2121,7 @@ class HandAnimator:
                 xs = [self.key_target(n.pitch, 2)[0] for n in r]
                 d = 1.0 if xs[-1] >= xs[0] else -1.0
                 front = self.kb.rect.h - self.kb.black_h
-                white_in = GLISS_WHITE_IN if d > 0 else GLISS_THUMB_IN
+                white_in = GLISS_WHITE_IN if d > 0 else min(GLISS_THUMB_IN, front / self.ppi)
                 for n, x in zip(r, xs):
                     y = front + GLISS_BLACK_IN * self.ppi if is_black_key(n.pitch) else white_in * self.ppi
                     pts.append((n.start, x, y, d))
@@ -2219,6 +2220,11 @@ class HandAnimator:
         # resting on the keys: no part of a finger below them
         low = min((place(p) for c in list(chains.values()) + [thumb] for p in c[1:]), key=lambda p: p[2])
         ap = place(apex)
+        front = self.kb.rect.h - self.kb.black_h
+        if u < 1.0 and cy <= front + 1e-6:
+            # with the thumb on a white key, the fist stays clear of the black keys' fronts
+            reach = max(place(p)[1] for f in range(2, 6) for p in chains[f]) - ap[1]
+            cy = min(cy, max(GLISS_WHITE_IN * self.ppi, front - GLISS_FIST_CLEAR * self.ppi - reach))
         # the point of the fingers on the contact point, nothing below the keys
         ox, oy, oz = cx - ap[0], cy - ap[1], -self.travel * 0.5 - low[2]
 
