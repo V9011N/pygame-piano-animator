@@ -3,6 +3,14 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.5 - Glissandos keep to the top speed
+- Fixed: in Liszt's Hungarian Rhapsody No. 10 at 4:21 the hand jumped across four keys in one
+  frame at the end of a glissando. A glissando key further on than the hand can slide in time is
+  now struck a moment late instead.
+- Fixed: a chord far away straight after a glissando made the hand fly there at up to three times
+  the pianist's top speed; it's now struck a little late, as the hand gets there.
+- Fixed: the hand twitched sideways as it left one glissando with another coming.
+
 ## v26.1.4 - Bug fixes
 - Fixed: a MIDI file without notes did nothing when opened; it now says it has no notes.
 - Fixed: resizing the window while the fingering editor asked about unsaved changes crashed the

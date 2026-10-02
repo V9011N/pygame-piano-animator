@@ -776,8 +776,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     still fading out used to drop the last one: 20 m/s at 270.9 s). HR10 RH, 257-290 s: frames over 3 m/s 102 →
     13 (two at 3.1 / 3.8 m/s between glissandos with a chord in a tight gap; the rest inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
     the contact follows exactly); pressed frames off the finger pose: 0.
+  - Top speed inside and around glissandos (v26.1.5; found by scanning every joint at 60 fps through whole pieces,
+    which the earlier checks skipped while fully in the glissando pose). `_gliss_schedule` times the glissando notes
+    (`gliss_start`): as written, but a step further than the slide can go in its time - at `GLISS_SPEED_SHARE` 0.9
+    of the top speed, `GLISS_EASE_PEAK` 1.5x for the eased steps where `_gliss_contact` turns round or pauses - is
+    struck late, the run's later keys with it (HR10 261.32 s: a loose end 4 keys on in 18 ms, 1.7x -> 0.9x).
+    `_gliss_paths`, `_gliss_end`, `_gliss_starts` and `performance` (`_gliss_performance`) use those times.
+    `_speed_schedule` now reaches the first chord after a glissando from where it ended (`_gliss_exits`: the last
+    key with finger 2 palm up, else the thumb), striking it late by up to `MAX_DELAY_T` (a chord 0.25-0.4 s after
+    a glissando, far away: joints 1.3-3.15x -> 1.03x, the chord 0.08-0.23 s late), but never so late the hand
+    can't let go `GLISS_RAMP_T` before the next glissando. `_gliss_rush` keeps off the neighbouring episode's way
+    in or out (an arriving rush starting during the last one's blend-out snapped the wrist 34 px in a frame).
+    HR10 changed in 58 notes, by at most 21 ms; no other test file changed. All joints over 105% of the top speed,
+    whole pieces: none in Op. 25 No. 6, Dante, Winter Wind, Ocean, Ossia, Concerto, the Hanon; HR10 RH 4 frames
+    at 270.0 s (knuckles 1.16x, the wrist at 0.99x: the hand turns back from the palm-up pose as it travels, and
+    the palm-up wrist sits ~5 keys beyond where the key-range estimate puts it - a known limit).
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
-    finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
+    finger, `finger_for` None, `is_gliss`) and added to `performance` at their scheduled times (`gliss_start`).
   - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
     of the author's hand: the hand flat and turned over, palm up (`GLISS_ROLL_DEG` 180°, turning over as it blends
     in so the point-by-point blend never folds the hand flat), the fingers straight and side by side (knuckles

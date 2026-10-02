@@ -224,6 +224,8 @@ TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this:
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
 GLISS_RAMP_T = 0.15         # s, the hand forms the glissando pose this long before / leaves it after
+GLISS_SPEED_SHARE = 0.9     # a glissando slides at most this share of the top speed (the hand turns too)
+GLISS_EASE_PEAK = 1.5       # an eased step (turning round, after a pause) peaks at this times its mean speed
 GLISS_YAW_DEG = 70.0        # the hand turns so its fingers trail the way it slides...
 GLISS_ARM_SHARE = 0.6       # ...the forearm turning with it this far (the wrist bends the rest)
 GLISS_ROLL_DEG = 180.0      # turned over, palm up: the backs of the fingers (the nails) slide on the keys
@@ -627,11 +629,13 @@ class HandAnimator:
         self._bias = 0.0
         notes = [n for n in song.notes if n.hand == hand]
         # Glissandos are slid, not fingered: their notes stay out of the
-        # fingering and the fingers' timeline, and keep their times exactly.
+        # fingering and the fingers' timeline, and keep their times - but for
+        # a step further than the slide can go in the time (_gliss_schedule).
         import glissando
         self.gliss_runs = glissando.find(notes, self.pianist)
         self.gliss_ids = {id(n) for r in self.gliss_runs for n in r}
         self.gliss_eps = glissando.episodes(self.gliss_runs, notes, float(self.pianist.b("gliss_merge")))
+        self.gliss_start = self._gliss_schedule()
         notes = [n for n in notes if id(n) not in self.gliss_ids]
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
@@ -729,7 +733,7 @@ class HandAnimator:
         # what this hand actually plays: [(press, release, note)]
         self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                             for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
-        self.performance += [(n.start, n.end, n) for r in self.gliss_runs for n in r]
+        self.performance += self._gliss_performance()
         self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
         self.span_starts = [a for a, _ in self.spans]
         self.partner = None                      # the other hand, see pair_hands
@@ -740,7 +744,7 @@ class HandAnimator:
         self._follow_jobs = {}
         self._warm_k = None
         self._strike_list = None
-        self._gliss_starts = [ep[0][0].start for ep in self.gliss_eps]
+        self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
         self.trems = self._find_tremolos()
@@ -1051,7 +1055,7 @@ class HandAnimator:
         if runs:
             self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                                 for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
-            self.performance += [(n.start, n.end, n) for r in self.gliss_runs for n in r]
+            self.performance += self._gliss_performance()
         self._bounce_starts = [r[0][0] for r in self.bounce_runs]
         self._roll_starts = [r[0][0] for r in self.roll_runs]
 
@@ -1462,7 +1466,9 @@ class HandAnimator:
         don't meet), every key it still holds must be let go early enough
         for that. A key is held at least MIN_HOLD_T (or half the time to the
         new chord); if that leaves too little time the chord is struck late,
-        by at most MAX_DELAY_T and never past the hand's next chord.
+        by at most MAX_DELAY_T and never past the hand's next chord. The
+        first chord after a glissando is reached from where the slide ended
+        (_gliss_exits), in time to be there GLISS_ARRIVE_T before it.
         `self.lead` keeps the travel time each note needs, for _prep_window
         and _travel; `self.delayed` counts late chords.
         """
@@ -1480,6 +1486,10 @@ class HandAnimator:
         self.delayed = 0
         prev_range = None
         groups = self.groups
+        exits = self._gliss_exits()
+        exit_ts = [e[0] for e in exits]
+        gl_starts = sorted(self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps)
+        prev_s1 = -math.inf
         for gi, (_, ns) in enumerate(groups):
             s1 = min(so[id(m)] for m in ns)
             nxt = min(so[id(m)] for m in groups[gi + 1][1]) if gi + 1 < len(groups) else math.inf
@@ -1520,13 +1530,23 @@ class HandAnimator:
             for n, lead in cons:
                 floor = so[id(n)] + min(MIN_HOLD_T, 0.5 * max(0.0, s1 - so[id(n)]))
                 delay = max(delay, floor - (s1 - lead))
+            k = bisect.bisect_right(exit_ts, s1) - 1
+            if k >= 0 and exits[k][0] > prev_s1:          # a glissando ended since the last chord
+                t_end, at = exits[k]
+                need = fg.travel_time(fg.range_gap(at, rng), self.max_speed)
+                delay = max(delay, t_end + need + GLISS_ARRIVE_T - s1)
+            prev_s1 = s1
             if delay > 1e-4:
-                delay = min(delay, MAX_DELAY_T, max(0.0, nxt - 0.03 - s1))
+                # (and the hand must be free to form the next glissando: its blend-in starts GLISS_RAMP_T early)
+                k = bisect.bisect_right(gl_starts, s1)
+                free = gl_starts[k] - GLISS_RAMP_T if k < len(gl_starts) else math.inf
+                delay = min(delay, MAX_DELAY_T, max(0.0, nxt - 0.03 - s1), max(0.0, free - MIN_HOLD_T - s1))
                 if delay > 1e-4:
                     self.delayed += 1
                     for m in ns:
                         so[id(m)] += delay
-                        fe[id(m)] += delay
+                        e = fe[id(m)]
+                        fe[id(m)] = min(e + delay, free) if e <= free else e + delay
                     s1 += delay
             for n, lead in cons:
                 floor = so[id(n)] + min(MIN_HOLD_T, 0.5 * max(0.0, s1 - so[id(n)]))
@@ -2515,11 +2535,18 @@ class HandAnimator:
             return None
         out, into, prev, nxt = self._gliss_neighbours(t, kb)
         W = self._pose_wrist
+        paths = self._gliss_paths()
         for i, leaving, path in ((prev, True, out), (nxt, False, into)):
             if i is None or path is not None:
                 continue
             ta, tb = self._gliss_rush_window(i, leaving)
-            t0, t1, _ = self._gliss_paths()[i]
+            t0, t1, _ = paths[i]
+            # never over the other glissando's way in or out: arriving waits until the hand has
+            # left the last one (its blend, and its way back), leaving is done before the next one's
+            if leaving and nxt is not None and nxt != i:
+                tb = min(tb, into[0][0] if into else paths[nxt][0] - GLISS_RAMP_T)
+            elif not leaving and prev is not None and prev != i:
+                ta = max(ta, out[-1][0] if out else paths[prev][1] + GLISS_RAMP_T)
             if (tb <= t1 + GLISS_RAMP_T) if leaving else (ta >= t0 - GLISS_RAMP_T):
                 continue                 # no more time than the blend itself: leave it to the blend
             if not ta <= t <= tb:
@@ -2630,6 +2657,62 @@ class HandAnimator:
         return _shift_pose(fp, hx - fx, hy - fy, self.mirror)
 
     # ----- glissandos ------------------------------------------------------------
+    def _gliss_schedule(self):
+        """
+        {id(note): when it's struck} for the glissando notes: their own times,
+        except that the slide keeps to the top speed. A key further on than
+        the hand can slide in the time it has (a run's loose end skipping
+        keys, in a file that hurries it) is struck late, and the keys after
+        it with it. The step's speed is as _gliss_contact moves: steady
+        within a run, eased (GLISS_EASE_PEAK at its fastest) where it turns
+        round or pauses; GLISS_SPEED_SHARE leaves room for the hand's turn.
+        """
+        import fingering as fg
+        out = {}
+        per_wk = fg.WHITE_KEY_M / (self.max_speed * GLISS_SPEED_SHARE)        # s per white key
+        for ep in self.gliss_eps:
+            prev = None                                  # (note, its time, its run's direction)
+            for r in ep:
+                d = 1 if r[-1].pitch >= r[0].pitch else -1
+                for n in r:
+                    t = n.start
+                    if prev is not None:
+                        pn, pt, pd = prev
+                        need = abs(key_pos(n.pitch) - key_pos(pn.pitch)) * per_wk
+                        if pd != d or t - pt > 0.2:
+                            need *= GLISS_EASE_PEAK
+                        t = max(t, pt + need)
+                    out[id(n)] = t
+                    prev = (n, t, d)
+        return out
+
+    def _gliss_end(self, ep):
+        """When the hand leaves glissando episode ep's last key (its glissando pose holds until then)."""
+        last = ep[-1][-1]
+        ls = self.gliss_start[id(last)]
+        return max(ls, min(last.end + ls - last.start, ls + 0.12))
+
+    def _gliss_exits(self):
+        """[(when the hand leaves a glissando, the hand's range there - as fingering.hand_range)], in time order."""
+        import fingering as fg
+        out = []
+        for ep in self.gliss_eps:
+            first, last = ep[-1][0], ep[-1][-1]
+            # palm up (toward the little finger) the index and middle touch, else the thumb
+            f = 2 if self.vp(last.pitch) >= self.vp(first.pitch) else 1
+            out.append((self._gliss_end(ep), fg.hand_range([self.vp(last.pitch)], [f])))
+        out.sort(key=lambda e: e[0])
+        return out
+
+    def _gliss_performance(self):
+        """[(press, release, note)] for the glissando notes, at their scheduled times."""
+        out = []
+        for r in self.gliss_runs:
+            for n in r:
+                s = self.gliss_start[id(n)]
+                out.append((s, n.end + s - n.start, n))
+        return out
+
     def _gliss_paths(self):
         """
         Per glissando episode, in the working frame: (start, end, [(t, x, y,
@@ -2648,9 +2731,8 @@ class HandAnimator:
                 white_in = GLISS_WHITE_IN if d > 0 else min(GLISS_THUMB_IN, front / self.ppi)
                 for n, x in zip(r, xs):
                     y = front + GLISS_BLACK_IN * self.ppi if is_black_key(n.pitch) else white_in * self.ppi
-                    pts.append((n.start, x, y, d))
-            last = ep[-1][-1]
-            out.append((ep[0][0].start, max(last.start, min(last.end, last.start + 0.12)), pts))
+                    pts.append((self.gliss_start[id(n)], x, y, d))
+            out.append((pts[0][0], self._gliss_end(ep), pts))
         self._gliss_cache = out
         return out
 

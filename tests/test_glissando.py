@@ -193,6 +193,32 @@ def test_to_and_from_a_glissando_the_hand_keeps_to_its_top_speed(screen):
     assert worst < 1.05, worst
 
 
+def test_a_glissando_slides_no_faster_than_the_top_speed(screen):
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ps = WHITE[30:16:-1]                                             # down 14 white keys, 30 ms apart...
+    g = run(ps)
+    loose = Note(WHITE[13], g[-1].start + 0.018, g[-1].start + 0.1, 90, 0, RIGHT)   # ...ending 4 keys on, 18 ms later
+    tail = [Note(60, 2.0, 2.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(g + [loose] + tail), RIGHT)
+    assert a.is_gliss(loose)
+    heard = {id(n): (s, e) for s, e, n in a.performance}
+    assert all(heard[id(n)] == (n.start, n.end) for n in g)          # the slide itself as written...
+    s, e = heard[id(loose)]
+    assert s > loose.start + 0.01 and abs((e - s) - (loose.end - loose.start)) < 1e-9     # ...the far key struck late
+    a._ensure_layout(kb)
+    vmax = a.max_speed / 0.0254 * a.ppi
+    fps, prev, worst = 240, None, 0.0
+    for i in range(int(0.5 * fps), int(2.2 * fps)):                # inside the glissando too
+        p = a.pose(i / fps, kb)
+        pts = [p["wrist"][:2]] + [q[:2] for q, _ in p["joints"]]
+        if prev:
+            worst = max(worst, max(math.hypot(x - u, y - v) for (x, y), (u, v) in zip(pts, prev)) * fps / vmax)
+        prev = pts
+    assert worst < 1.05, worst
+
+
 def test_a_chord_right_after_a_glissando_is_played_in_place(screen):
     # HR10 at 4:27: a glissando up to the top, then a chord far below 0.4 s later
     import math
@@ -203,10 +229,35 @@ def test_a_chord_right_after_a_glissando_is_played_in_place(screen):
     back = run(WHITE[2:14], t0=chord[0].end + 0.15)                  # and a glissando straight after it
     a = hands.HandAnimator(song_of(g + chord + back), RIGHT)
     a._ensure_layout(kb)
-    for t in (chord[0].start + 0.005, chord[0].start + 0.15, chord[0].end - 0.01):
+    heard = {id(n): (s, e) for s, e, n in a.performance}
+    s, e = heard[id(chord[0])]
+    assert s - chord[0].start < 0.1                                    # (struck a little late, if anything)
+    for t in (s + 0.005, s + 0.15, e - 0.01):                          # where the keys go down, it's there
         x, y = a._pose_wrist(a.pose(t, kb))
         fx, fy = a._pose_wrist(a._finger_pose(t, kb))
         assert math.hypot(x - fx, y - fy) < 0.1 * a.ppi, t                # on the finger pose: keys under fingers
+
+
+def test_a_far_chord_soon_after_a_glissando_waits_for_the_hand(screen):
+    # a chord far below, a quarter of a second after a glissando up: struck late rather than rushed to
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    g = run(WHITE[16:30], t0=1.0)
+    chord = [Note(p, g[-1].start + 0.25, g[-1].start + 0.55, 80, 0, RIGHT) for p in (48, 52, 55)]
+    a = hands.HandAnimator(song_of(g + chord), RIGHT)
+    heard = {id(n): (s, e) for s, e, n in a.performance}
+    assert 0.0 < heard[id(chord[0])][0] - chord[0].start <= hands.MAX_DELAY_T + 1e-9
+    a._ensure_layout(kb)
+    vmax = a.max_speed / 0.0254 * a.ppi
+    fps, prev, worst = 240, None, 0.0
+    for i in range(int(1.2 * fps), int(2.4 * fps)):
+        p = a.pose(i / fps, kb)
+        pts = [p["wrist"][:2]] + [q[:2] for q, _ in p["joints"]]
+        if prev:
+            worst = max(worst, max(math.hypot(x - u, y - v) for (x, y), (u, v) in zip(pts, prev)) * fps / vmax)
+        prev = pts
+    assert worst < 1.05, worst
 
 
 def test_working_ahead_changes_nothing_and_is_ready_in_time(screen):
