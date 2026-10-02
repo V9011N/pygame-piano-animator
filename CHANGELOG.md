@@ -2,6 +2,13 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0013 - Equal keys
+- New "Keys" button on the main menu switches between the realistic keyboard and equal keys,
+  after PASHKULI's design: every key's back, black or white, has the same width, so every
+  falling note does too, and the white key fronts share the rest evenly.
+- With equal keys the lanes above white keys are shaded a little lighter, and white-key notes
+  show their finger number in white (black-key notes in black).
+
 ## v2026.10.01.2352 - Changelog
 - New "What's new" button on the main menu shows this changelog. It glows until you open it,
   and again whenever there is a new version.

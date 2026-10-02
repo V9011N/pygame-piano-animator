@@ -412,12 +412,32 @@ def active():
     return _active
 
 
-def set_active(p):
-    global _active
-    _active = p.copy()
+def _settings():
+    try:
+        with open(SETTINGS, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def app_setting(key, default=None):
+    """An app-wide setting kept in pianists/settings.json (e.g. "keys")."""
+    return _settings().get(key, default)
+
+
+def set_app_setting(key, value):
+    d = _settings()
+    d[key] = value
     try:
         os.makedirs(FOLDER, exist_ok=True)
         with open(SETTINGS, "w", encoding="utf-8") as fh:
-            json.dump({"active": p.id}, fh)
+            json.dump(d, fh)
     except Exception as exc:
-        print(f"Couldn't save the active pianist ({exc})")
+        print(f"Couldn't save the setting {key} ({exc})")
+
+
+def set_active(p):
+    global _active
+    _active = p.copy()
+    set_app_setting("active", p.id)

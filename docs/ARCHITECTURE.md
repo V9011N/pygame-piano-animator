@@ -40,6 +40,21 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Equal keys (common.Keyboard, 2026-10-02)
+A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
+menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setting`):
+- 88 lanes of one width L = keyboard width / (87 + 0.5 + 5/3), with a gap of max(1, L/15) px.
+  Every black key and every white key's back (`Keyboard.tails`) fills its lane, so every
+  falling note has the same width. The white fronts share their group's lanes evenly:
+  C-E = 5 lanes / 3, F-B = 7 lanes / 4 (as in DAW piano rolls and the Osmose). A0's and C8's
+  backs reach the keyboard's edges.
+- The average white key keeps the realistic width (`white_w`), so the hands keep their scale;
+  `key_rects` of a white key is its front, and a finger playing up among the black keys
+  (`white_up`) moves over to the key's back (`HandAnimator.key_target`).
+- The lanes above white keys are a shade lighter (`LANE_WHITE`); a white-key note's finger
+  number is white with a dark outline, a black-key note's stays dark.
+- Not done: the "fancy" version's shadows and reflections on the keys.
+
 ## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
 - `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
 - `read_midi`: the strict pretty_midi parse; if it fails, `repair_smf` rewrites the file's bytes and it is parsed

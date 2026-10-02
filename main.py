@@ -39,7 +39,7 @@ import os
 
 import pygame
 
-from common import (ACCENT, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
+from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
@@ -187,6 +187,8 @@ class Visualizer(Transport):
 
         for x in kb.lane_lines:
             pygame.draw.line(s, LANE_LINE, (x, fall.top), (x, fall.bottom))
+        for x, w in kb.lane_shade:                  # equal keys: white-key lanes a shade lighter
+            pygame.draw.rect(s, LANE_WHITE, (x, fall.top, w, fall.h))
 
         active = []
         if self.song:
@@ -220,11 +222,23 @@ class Visualizer(Transport):
                     radius = min(5, w // 3)
                     pygame.draw.rect(s, color, rect, border_radius=radius)
                     pygame.draw.rect(s, mix(color, (0, 0, 0), 0.45), rect, 1, border_radius=radius)
+                    # equal keys: every note is the same width, so a white-key note's
+                    # finger number is white (a black-key note's stays dark)
+                    equal_white = kb.style == "equal" and not black_pass
                     if self.show_fingers and n.hand in self.hands and rect.h >= 14:
                         finger = self.hands[n.hand].finger_for(n)
                         if finger:
-                            img = self.fonts["finger"].render(str(finger), True, (15, 15, 20))
-                            s.blit(img, img.get_rect(midbottom=(rect.centerx, rect.bottom - 1)))
+                            font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
+                            if equal_white:      # white number for a white key, black for a black one
+                                txt = str(finger)
+                                w, h = font.size(txt)
+                                at = (pos[0] - w // 2, pos[1] - h)
+                                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                                    s.blit(font.render(txt, True, (15, 15, 20)), (at[0] + dx, at[1] + dy))
+                                s.blit(font.render(txt, True, (250, 250, 250)), at)
+                            else:
+                                img = font.render(str(finger), True, (15, 15, 20))
+                                s.blit(img, img.get_rect(midbottom=pos))
 
             # Glow rising from the keys that are currently pressed (by the hands).
             gh = max(20, fall.h // 6)
@@ -416,6 +430,7 @@ class MainMenu:
             Button("Quit", "quit", font="normal", key_hint="Esc"),
         ]
         self.changelog_button = Button("What's new", "changelog", font="small")
+        self.keys_button = Button("", "keys", font="small")
         self.changelog_new = not changelog_seen()       # glows until opened
         self.changelog = None
         self.layout(app.screen.get_size())
@@ -432,6 +447,7 @@ class MainMenu:
         self.buttons[3].rect = pygame.Rect((w - 160) // 2, y + 4, 160, 40)
         self._active_y = y + 60
         self.changelog_button.rect = pygame.Rect(w - 16 - 110, 16, 110, 32)
+        self.keys_button.rect = pygame.Rect(w - 16 - 110 - 10 - 150, 16, 150, 32)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -455,7 +471,7 @@ class MainMenu:
             if event.key in (pygame.K_h, pygame.K_3):
                 return self._do("pianists")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            for b in self.buttons + [self.changelog_button]:
+            for b in self.buttons + [self.changelog_button, self.keys_button]:
                 if b.hit(event.pos):
                     return self._do(b.action)
         return True
@@ -469,6 +485,11 @@ class MainMenu:
     def _do(self, action):
         if action == "changelog":
             self.open_changelog()
+            return True
+        if action == "keys":
+            style = KEY_STYLES[(KEY_STYLES.index(key_style()) + 1) % len(KEY_STYLES)]
+            set_key_style(style)
+            pianists.set_app_setting("keys", style)
             return True
         if action == "quit":
             return False
@@ -520,6 +541,8 @@ class MainMenu:
         if self.changelog_new:
             self._draw_glow(s, self.changelog_button.rect)
         self.changelog_button.draw(s, f, mouse)
+        self.keys_button.label = "Keys: equal" if key_style() == "equal" else "Keys: realistic"
+        self.keys_button.draw(s, f, mouse)
         if self.changelog:
             self.changelog.draw(s)
 
@@ -545,6 +568,7 @@ class App:
     def __init__(self, screen, sound=True, speed=1.0):
         self.screen = screen
         self.fonts = load_fonts()
+        set_key_style(pianists.app_setting("keys", "realistic"))
         self.midi = MidiOut(sound)
         self.speed = speed
         self.last_dir = None
