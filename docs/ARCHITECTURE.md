@@ -485,6 +485,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - **Pedals as switches** (2026-09-27): MAESTRO/Disklavier files send continuous CC64 values, and a resting foot sits around 44–62. Half-pedalling synths then kept the dampers partly lifted while the indicator (threshold 64) read "up".
   - `MidiSong.controls` is now `pedal_switches(raw)`: 0/127, emitted only on change at the 64 threshold. The file's values are kept in `raw_controls`, which the editor passes on when it rebuilds.
   - Waldstein MAESTRO take 1 goes from 9318 events to 814; the sustain pedal first goes down at 21.2 s.
+  - Leaving a performance (player or editor: back to the menu, another file, sequential mode, mute, quitting) calls
+    `MidiOut.silence()`: pedals up, all notes off (CC123), all sound off (CC120). "All notes off" alone left the
+    synth's sustained notes ringing when the sustain pedal was down (2026-10-02).
 - **Sequential fingering mode** (editor, 2026-09-27): right-click a single note → "Sequential fingering from here".
   - Steps through only that note's hand: onset groups within `CHORD_TOL`, each chord from its highest note to its lowest.
   - Keys:

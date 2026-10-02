@@ -288,7 +288,7 @@ class FingeringEditor(Transport):
 
     # ----- song and fingering state ----------------------------------------
     def load_song(self, song):
-        self.midi.all_off()
+        self.midi.silence()
         self.song = song
         self.notes = list(song.notes)
         present = {n.hand for n in self.notes}
@@ -495,7 +495,7 @@ class FingeringEditor(Transport):
         k = next(k for k, st in enumerate(steps) if i in st)
         self.seq = {"steps": steps, "k": k, "j": steps[k].index(i), "hand": hand}
         self.paused = True
-        self.midi.all_off()
+        self.midi.silence()
         self._seq_show()
         self.say(f"Sequential fingering, {HAND_NAMES[hand].lower()}: 1-5 · right hand M K O ; ' · "
                  "left hand V D W A LShift · Backspace back · Tab skip · Esc done")
@@ -643,7 +643,7 @@ class FingeringEditor(Transport):
         self.message, self.message_age = text, 0.0
 
     def leave(self):
-        self.midi.all_off()
+        self.midi.silence()                     # (with the pedal down, notes would ring on)
         self.app.speed = self.speed
 
     # ----- geometry ---------------------------------------------------------
@@ -849,7 +849,7 @@ class FingeringEditor(Transport):
         elif k == pygame.K_m:
             self.midi.muted = not self.midi.muted
             if self.midi.muted:
-                self.midi.all_off()
+                self.midi.silence()
         elif k == pygame.K_h:
             self.show_hands = not self.show_hands
         elif k == pygame.K_d:

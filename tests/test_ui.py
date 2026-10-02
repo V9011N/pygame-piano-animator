@@ -164,3 +164,55 @@ def test_equal_keys_toggle_and_layout(screen):
         app.mode.render()
     finally:
         common.set_key_style("realistic")
+
+
+class _FakePort:
+    """A MIDI output that records what is sent to it."""
+
+    def __init__(self):
+        self.sent = []
+
+    def write_short(self, status, a=0, b=0):
+        self.sent.append((status, a, b))
+
+    def note_on(self, pitch, vel, ch=0):
+        self.sent.append(("on", pitch, ch))
+
+    def note_off(self, pitch, vel=0, ch=0):
+        self.sent.append(("off", pitch, ch))
+
+    def set_instrument(self, *a):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_leaving_with_the_pedal_down_silences_the_synth(screen):
+    import main
+    from common import MidiOut
+    from midi_loader import LEFT, RIGHT, MidiSong, Note, TrackInfo
+    notes = [Note(60 + i, 0.2 * i, 0.2 * i + 0.15, 80, 0, RIGHT) for i in range(10)]
+    tracks = [TrackInfo(0, "Right", 0, 1, RIGHT), TrackInfo(1, "Left", 0, 1, LEFT)]
+    song = MidiSong(notes, tracks, 5.0, [], [], controls=[(0.0, 64, 127)])   # sustain pedal down throughout
+    for mode in ("player", "editor"):
+        app = main.App(screen, sound=False)
+        app.midi = MidiOut(False)
+        app.midi.port = port = _FakePort()
+        if mode == "player":
+            app.play(song)
+        else:
+            app.edit(song)
+        v = app.mode
+        v.seek(0.5)
+        if v.paused:
+            v.toggle_pause()
+        for _ in range(10):
+            v.update(0.05)
+        assert any(m[:3] == (0xB0, 64, 127) for m in port.sent if isinstance(m[0], int))   # the pedal went down
+        port.sent.clear()
+        app.menu()                                                      # leave mid-performance
+        for ch in (0, 1):
+            assert (0xB0 | ch, 64, 0) in port.sent                      # pedal up...
+            assert (0xB0 | ch, 123, 0) in port.sent                     # ...all notes off...
+            assert (0xB0 | ch, 120, 0) in port.sent                     # ...and all sound off

@@ -78,7 +78,7 @@ class Visualizer(Transport):
         self._synth_muted = self.midi.muted
         if audio:
             self.midi.muted = True
-            self.midi.all_off()
+            self.midi.silence()
         self.audio_muted = False
         self._audio_pending = False      # waiting for the recording's start (the song's lead-in)
         self._anchor = None              # (song time, wall time) the clock runs from while playing
@@ -97,7 +97,7 @@ class Visualizer(Transport):
 
     # ----- setup -------------------------------------------------------------
     def set_song(self, song):
-        self.midi.all_off()
+        self.midi.silence()
         self.song = song
         self.hands = {h: HandAnimator(song, h) for h in (RIGHT, LEFT)
                       if any(n.hand == h for n in song.notes)}
@@ -160,7 +160,7 @@ class Visualizer(Transport):
                 else:
                     self.midi.muted = not self.midi.muted
                     if self.midi.muted:
-                        self.midi.all_off()
+                        self.midi.silence()
             elif k in (pygame.K_COMMA, pygame.K_PERIOD) and self.audio:
                 # nudge the recording: 10 ms, or 100 ms with Shift
                 step = 0.1 if event.mod & pygame.KMOD_SHIFT else 0.01
@@ -269,7 +269,7 @@ class Visualizer(Transport):
             print(f"Could not load {path}: {exc}")
 
     def leave(self):
-        self.midi.all_off()
+        self.midi.silence()                     # (with the pedal down, notes would ring on)
         if self.audio:
             self.audio.stop()
             self.midi.muted = self._synth_muted
