@@ -53,7 +53,7 @@ From The Cuphead Show with White Gloves
 ## Requirements
 
 - Python 3.10+ (developed with 3.12)
-- `pygame` and `pretty_midi` (see `requirements.txt`)
+- `pygame-ce` (or plain `pygame`) and `pretty_midi` (see `requirements.txt`)
 - For sound: any MIDI output (Windows' built-in Microsoft GS Wavetable Synth works; a
   soundfont synth such as VirtualMIDISynth sounds much better)
 
@@ -67,6 +67,9 @@ python main.py                   # main menu
 python main.py song.mid          # play a file straight away
 python main.py song.mid --edit   # open it in the fingering editor
 ```
+
+Switching an existing install from `pygame` to `pygame-ce` (both install as `import pygame`, so
+remove the old one first): `pip uninstall -y pygame` then `pip install -r requirements.txt`.
 
 Other options: `--no-sound`, `--speed 0.5`, `--screenshot frame.png --at 12.5`, and
 `--audio recording.wav --audio-speed 0.75 --audio-offset 1.5` to play a synced recording straight away.

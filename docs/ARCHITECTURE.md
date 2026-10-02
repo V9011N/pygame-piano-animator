@@ -77,6 +77,11 @@ proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames
   and plans its hands in one job (`App._load`), so the playback setup and the editor get them ready-made
   (`Visualizer(hands=)`, `FingeringEditor(app, song, hands)`); the synced recording decodes in one too.
   Costs 3-5% of the load time (Concerto 5.1 -> 5.25 s), for a window that keeps responding.
+- pygame-ce (v26.1.3, `requirements.txt`; plain pygame still works and the tests pass on both): frames
+  ~5% faster (mean HR10 8.2 -> 7.7 ms, Concerto 7.9 -> 7.6, Op. 25 No. 6 8.7 -> 8.0); a frame differs only
+  in text anti-aliasing and rounded-corner edge pixels (newer SDL_ttf), the hands and notes identical.
+  `pygame.midi` is there too. Cython/Numba were not used: the hot spot (`_solve_hand`) is many small
+  Python-level steps over dicts of poses, so it would need rewriting, not compiling.
 
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
