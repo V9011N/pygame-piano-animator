@@ -410,9 +410,21 @@ class MidiOut:
         for c in (64, 66, 67):
             self.control_change(c, 0)
 
+    def silence(self):
+        """
+        Stop every sound now: the pedals up (a held sustain pedal would keep
+        notes ringing through "all notes off"), all notes off, and "all
+        sound off" for whatever still rings. For leaving a performance.
+        """
+        if self.port:
+            self.pedals_up()
+            self.all_off()
+            for ch in (0, 1):
+                self.port.write_short(0xB0 | ch, 120, 0)   # "all sound off"
+
     def close(self):
         if self.port:
-            self.all_off()
+            self.silence()
             self.port.close()
             self.port = None
             import pygame.midi

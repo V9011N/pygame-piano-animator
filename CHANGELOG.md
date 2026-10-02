@@ -2,6 +2,11 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.1613 - Sound stops when you leave
+- Fixed: leaving the player or the fingering editor while the sustain pedal was down left the
+  notes ringing on. The pedals are now lifted and all sound stopped when you leave, open another
+  file, mute, or quit.
+
 ## v2026.10.02.1605 - Fine-tune fingering (advanced)
 - New "Fine Tune Fingering Behavior (ADVANCED)" button at the bottom left of a pianist's behaviour
   page: every weight of the fingering planner as a slider - stretches, crossings, repeated
