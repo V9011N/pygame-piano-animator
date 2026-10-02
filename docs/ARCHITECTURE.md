@@ -609,6 +609,30 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     turn rate 101 -> 121 deg/s); scale runs keep their glide (C major RH 3 octaves: 2 reversals, no crowded tips).
   - The thumb plays on its side: its nail is drawn narrow and along its outer edge, its knuckle creases on that side
     only (`skins.THUMB_SIDE`, `_thumb_out`).
+- **Glissandos** (2026-10-02; glissando.py; Liszt, Hungarian Rhapsody No. 10, 259-289 s):
+  - Behaviours (group "Glissandos"): `glissando` on/off (default on), `gliss_gap` 25-100 ms (50), `gliss_min` 3-16
+    notes (6), `gliss_merge` 0.25-3 s (1.0).
+  - Detection (`glissando.detect`): one hand's notes in playing order, all one colour, each the next key of that
+    colour (`colour_index`), one direction, each at most `gliss_gap` after the one before, `gliss_min` or more.
+    Performance MIDI is untidy in a real glissando, so a run may skip one key of its colour per step
+    (`MAX_SKIP`), notes struck within `SAME_T` 12 ms are ordered the way the run goes, and loose ends (a slower
+    note leading in, the last keys flicked past up to `TAIL_SKIP` 3 skipped ones, within `TAIL_GAP` 2x the gap)
+    join the run. HR10: 27 glissandos, 479 notes; no other test MIDI has any.
+  - Marked glissandos: `Note.gliss`, written as "Rg" / "Lg" markers by the editor's export; always slid, even with
+    detection off (`glissando.find`).
+  - Episodes (`glissando.episodes`): glissandos less than `gliss_merge` apart with no other note of the hand
+    starting in between - the hand stays in the glissando pose through the break (HR10: 15 episodes).
+  - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
+    finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
+  - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s): the knuckles
+    drawn together (`GLISS_SQUEEZE`), every finger straight toward one point (`GLISS_APEX`, `GLISS_REACH`) and the
+    thumb with them; rolled `GLISS_ROLL_DEG` 78° about the forearm so the back of the hand faces the way it slides
+    (+x in the working frame: toward the little finger), tipped down `GLISS_PITCH_DEG` 32° so the nails rest on the
+    keys at the contact point - `GLISS_WHITE_IN` 0.8 in up a white key, `GLISS_BLACK_IN` 0.5 in into a black one -
+    which follows the notes (`_gliss_contact`; through a break it travels and turns round, eased). The bones are
+    in the same order as `_finger_pose`'s, so the two blend point by point.
+  - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
+    `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

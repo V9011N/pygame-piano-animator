@@ -2,6 +2,17 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0159 - Glissandos
+- The hands now play glissandos: a quick string of white keys (or black keys) going one way is
+  slid with the fingers pinched together and straight, the back of the hand facing the way it
+  goes, the nails gliding along the keys.
+- New pianist settings (Glissandos): whether to spot and slide them, the longest gap between
+  notes (50 ms), the fewest notes (6), and how long a break between glissandos the hand keeps
+  its glissando pose through (1 s).
+- Glissando notes show "g" in the player and the fingering editor. In the editor, select a string
+  of notes and choose Glissando from the right-click menu (or press G) to mark one yourself; it is
+  saved with the exported file.
+
 ## v2026.10.02.0137 - A real hand's spread, thumb on its side
 - The hand's span is now measured with the thumb and little finger stretched out the way a real
   hand spreads over the keys, so hands are drawn at a realistic size for their span (about 20%

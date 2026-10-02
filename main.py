@@ -227,6 +227,8 @@ class Visualizer(Transport):
                     equal_white = kb.style == "equal" and not black_pass
                     if self.show_fingers and n.hand in self.hands and rect.h >= 14:
                         finger = self.hands[n.hand].finger_for(n)
+                        if self.hands[n.hand].is_gliss(n):
+                            finger = "g"                 # slid in a glissando
                         if finger:
                             font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
                             if equal_white:      # white number for a white key, black for a black one

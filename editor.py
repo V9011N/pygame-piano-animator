@@ -34,11 +34,13 @@ plays each note and with which finger. Every note shows its finger number.
     Home / End                   start / end
     M, H, V                      mute, show/hide hands, follow pitch on/off
     D                            difficulty colouring on/off (green easy .. red hard)
+    G                            the selected notes are a glissando (again: they're not); "g" marks
+                                 glissando notes, the pianist's own and the ones you mark
     Ctrl+O, Ctrl+S (or Ctrl+E)   open another file, export
     Esc with nothing selected    back to the main menu
 
 Exported files are copies of the original with each note's hand and finger
-stored as a text event ("R3", "L1", ...) right before the note; everything
+stored as a text event ("R3", "L1", ... "Rg" for a glissando note) right before the note; everything
 else in the file is kept as it was. Loading such a file restores the hands
 and fingers exactly.
 """
@@ -362,12 +364,13 @@ class FingeringEditor(Transport):
         return self.difficulty
 
     def _snapshot(self, idxs):
-        return [(i, self.notes[i].hand, self.finger[i], i in self.user_set) for i in idxs]
+        return [(i, self.notes[i].hand, self.finger[i], i in self.user_set, self.notes[i].gliss) for i in idxs]
 
     def _restore(self, snap):
-        for i, hand, finger, user in snap:
-            if self.notes[i].hand != hand:
-                self.notes[i] = replace(self.notes[i], hand=hand)
+        for i, hand, finger, user, gliss in snap:
+            if self.notes[i].hand != hand or self.notes[i].gliss != gliss:
+                self.notes[i] = replace(self.notes[i], hand=hand, gliss=gliss)
+                self.index[id(self.notes[i])] = i
             self.finger[i] = finger
             (self.user_set.add if user else self.user_set.discard)(i)
 
@@ -391,11 +394,11 @@ class FingeringEditor(Transport):
         """One note: this hand, this finger (kept exactly as given). With
         rebuild=False the hands are redone a moment later (sequential mode)."""
         n = self.notes[i]
-        if n.hand == hand and self.finger[i] == finger:
+        if n.hand == hand and self.finger[i] == finger and not n.gliss:
             self.user_set.add(i)
             return
         self._push_undo([i], f"{note_name(n.pitch)} → {HAND_NAMES[hand].lower()}, finger {finger}")
-        self.notes[i] = replace(n, hand=hand)
+        self.notes[i] = replace(n, hand=hand, gliss=False)      # a finger of its own: not slid
         self.index[id(self.notes[i])] = i      # (self.notes is the song's own list)
         self.finger[i] = finger
         self.user_set.add(i)
@@ -406,6 +409,38 @@ class FingeringEditor(Transport):
             self._rebuild_due = SEQ_REBUILD_T
         self.say(f"{note_name(n.pitch)} at {fmt_time(n.start, True)}: "
                  f"{HAND_NAMES[hand].lower()}, finger {finger} ({FINGER_NAMES[finger].lower()})")
+
+    def is_gliss(self, i):
+        """Is note i slid in a glissando (marked in the file, or found by the pianist)?"""
+        n = self.notes[i]
+        return n.gliss or (n.hand in self.hands and self.hands[n.hand].is_gliss(n))
+
+    def gliss_candidates(self, idxs):
+        """The notes idxs in playing order if they can be marked as one glissando, else None."""
+        import glissando
+        ns = sorted((self.notes[i] for i in idxs), key=lambda n: (n.start, n.pitch))
+        if len({n.hand for n in ns}) != 1:
+            return None
+        order = glissando._ordered(ns)
+        return order if glissando.is_string(order) else None
+
+    def set_gliss(self, idxs, on):
+        """Mark the notes idxs as one glissando (or unmark them)."""
+        idxs = sorted(idxs)
+        self._push_undo(idxs, f"{len(idxs)} notes → {'glissando' if on else 'not a glissando'}")
+        for i in idxs:
+            self.notes[i] = replace(self.notes[i], gliss=on)
+            self.index[id(self.notes[i])] = i
+            if on:
+                self.user_set.add(i)
+            else:
+                self.user_set.discard(i)
+                self.finger[i] = None
+        if not on:
+            self._resolve(idxs, self.notes[idxs[0]].hand)
+        self._rebuild()
+        self.say(f"{len(idxs)} notes marked as a glissando" if on else
+                 f"{len(idxs)} notes are no longer a glissando; fingering worked out for them")
 
     def set_hand(self, idxs, hand):
         """Several notes: move them to one hand and let the planner finger them."""
@@ -563,7 +598,7 @@ class FingeringEditor(Transport):
         if not path:
             return False
         try:
-            fing = {id(n): f for n, f in zip(self.notes, self.finger)}
+            fing = {id(n): ("g" if n.gliss else f) for n, f in zip(self.notes, self.finger)}
             if src_pig or is_pig(path):
                 # PIG text: the notes as they are, with each note's hand and finger
                 count = save_pig(path if is_pig(path) else os.path.splitext(path)[0] + ".txt",
@@ -823,6 +858,15 @@ class FingeringEditor(Transport):
             self.follow_pitch = not self.follow_pitch
         elif k in (pygame.K_r, pygame.K_l) and self.selection:
             self.set_hand(self.selection, RIGHT if k == pygame.K_r else LEFT)
+        elif k == pygame.K_g and self.selection:
+            sel = sorted(self.selection)
+            if all(self.notes[j].gliss for j in sel):
+                self.set_gliss(sel, False)
+            elif len(sel) > 1 and self.gliss_candidates(sel):
+                self.set_gliss(sel, True)
+            else:
+                self.say("A glissando is a string of next-door white keys (or black keys) going one way, "
+                         "in one hand - at least 3 notes")
         elif k in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5):
             if len(self.selection) == 1:
                 i = next(iter(self.selection))
@@ -970,8 +1014,17 @@ class FingeringEditor(Transport):
             title = f"{len(sel)} notes selected"
             items = [MenuItem(HAND_NAMES[h], h, checked=hands == {h}, hint=k)
                      for h, k in ((RIGHT, "R"), (LEFT, "L"))]
-            self.menu = ContextMenu(pos, title, items, lambda h, _f: self.set_hand(sel, h),
-                                    self.fonts, bounds)
+            if all(self.notes[j].gliss for j in sel):
+                items.append(MenuItem("Not a glissando", "nogliss", hint="g"))
+            elif self.gliss_candidates(sel):
+                items.append(MenuItem("Glissando", "gliss", hint="g"))
+
+            def pick_many(h, _f):
+                if h in ("gliss", "nogliss"):
+                    self.set_gliss(sel, h == "gliss")
+                else:
+                    self.set_hand(sel, h)
+            self.menu = ContextMenu(pos, title, items, pick_many, self.fonts, bounds)
             return
         n = self.notes[i]
         cur_f = self.finger[i]
@@ -981,10 +1034,18 @@ class FingeringEditor(Transport):
                                 hint=str(f)) for f in range(1, 6)]
             items.append(MenuItem(HAND_NAMES[h], h, children=fingers, checked=(h == n.hand), hint=k))
         items.append(MenuItem("Sequential fingering from here", "seq", hint="↵"))
+        if n.gliss:
+            items.append(MenuItem("Not a glissando (the whole glissando)", "nogliss", hint="g"))
         title = f"{note_name(n.pitch)} at {fmt_time(n.start, True)}"
 
         def pick(h, f):
-            if h == "seq":
+            if h == "nogliss":
+                import glissando
+                same = [j for j, m in enumerate(self.notes) if m.hand == n.hand]
+                run = next((r for r in glissando.explicit([self.notes[j] for j in same])
+                            if any(m is n for m in r)), [n])
+                self.set_gliss([self.index[id(m)] for m in run], False)
+            elif h == "seq":
                 self.start_sequential(i)
             elif f:
                 self.set_note(i, h, f)
@@ -1148,6 +1209,8 @@ class FingeringEditor(Transport):
         f = self.finger[i]
         user = i in self.user_set
         text = str(f) if f else "?"
+        if self.is_gliss(i):
+            text, user = "g", self.notes[i].gliss          # slid in a glissando (white: marked by you)
         dark = (15, 15, 20)
         if user:
             img = self._label(text, font, (255, 255, 255))
@@ -1268,8 +1331,9 @@ class FingeringEditor(Transport):
         elif self.hover is not None:
             n = self.notes[self.hover]
             f = self.finger[self.hover]
-            text = (f"{note_name(n.pitch)}   {HAND_NAMES[n.hand].lower()}, "
-                    f"finger {f if f else '?'}{' (' + FINGER_NAMES[f].lower() + ')' if f else ''}"
+            how = ("glissando" + (" (marked)" if n.gliss else "")) if self.is_gliss(self.hover) else \
+                f"finger {f if f else '?'}{' (' + FINGER_NAMES[f].lower() + ')' if f else ''}"
+            text = (f"{note_name(n.pitch)}   {HAND_NAMES[n.hand].lower()}, {how}"
                     f"   at {fmt_time(n.start, True)}   length {n.end - n.start:.2f}s   velocity {n.velocity}"
                     + ("   · set by you" if self.hover in self.user_set else "")
                     + (f"   · {difficulty_word(self.difficulty[self.hover])}" if self.difficulty else ""))

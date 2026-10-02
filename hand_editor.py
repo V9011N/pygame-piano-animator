@@ -508,7 +508,8 @@ class PianistStudio:
                 self.work.behavior[k] = v
                 self.dirty = True
             self.b_slider = Slider(spec["label"], spec["min"], spec["max"], self.work.b(spec["id"]), set_,
-                                   fmt=spec["fmt"], lo_label=spec.get("lo"), hi_label=spec.get("hi"))
+                                   fmt=spec["fmt"], lo_label=spec.get("lo"), hi_label=spec.get("hi"),
+                                   step=spec.get("step"))
 
     # ----- layout helpers -------------------------------------------------------------
     def _geom(self):

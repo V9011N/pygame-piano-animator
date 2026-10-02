@@ -219,6 +219,15 @@ RUN_GAP_T = 0.3             # s, ...none further apart than this
 RUN_RAMP_T = 0.15           # s, the run's hold on the hand eases in and out over this
 RUN_GLIDE_T = 0.25          # s, in a run the wrist is averaged over +-this (the crossings' steps even out)
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
+# Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
+GLISS_RAMP_T = 0.15         # s, the hand forms the glissando pose this long before / leaves it after
+GLISS_ROLL_DEG = 78.0       # the hand rolls this far about the forearm: its back faces where it's going
+GLISS_PITCH_DEG = 32.0      # ...and tips down so the fingertips (nails) touch the keys
+GLISS_SQUEEZE = 0.72        # the knuckles drawn together (the fingers pinched to a point)
+GLISS_REACH = 0.97          # each finger straight, at this share of its length, toward the point
+GLISS_APEX = (-0.08, 0.92, -0.38)
+GLISS_WHITE_IN = 0.8        # in, the nails slide this far up the white keys (well clear of the black ones)...
+GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front   # direction from the middle knuckle to where the fingertips meet
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
 FLAT_DROP = 0.6             # ...which lowers its knuckles by this share, so stretched fingers reach further
 TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
@@ -293,6 +302,20 @@ def pair_hands(animators):
         a._idle_cache, a._clear_cache, a._path_cache = {}, {}, {}
         a._limit_cache, a._tip_limit_cache = {}, {}
         a._smooth_hand_cache, a._smooth_tip_cache = {}, {}
+
+
+def _blend_pose(a, b, w):
+    """Pose a moved toward pose b by w (0..1): every point of the skeleton, the wrist and the hand's structure."""
+    L = lambda p, q: tuple(x + (y - x) * w for x, y in zip(p, q))
+    out = dict(a)
+    out["bones"] = [(L(p, p2), L(q, q2), k) for (p, q, k), (p2, q2, _) in zip(a["bones"], b["bones"])]
+    out["joints"] = [(L(p, p2), k) for (p, k), (p2, _) in zip(a["joints"], b["joints"])]
+    out["wrist"] = L(a["wrist"], b["wrist"])
+    sa, sb = a["struct"], b["struct"]
+    out["struct"] = {"chains": {f: [L(p, q) for p, q in zip(sa["chains"][f], sb["chains"][f])] for f in sa["chains"]},
+                     "wrist": tuple(L(p, q) for p, q in zip(sa["wrist"], sb["wrist"])),
+                     "arm_end": L(sa["arm_end"], sb["arm_end"]), "mirror": sa["mirror"]}
+    return out
 
 
 def _ease_out(x):
@@ -506,6 +529,13 @@ class HandAnimator:
         self.vp = mirror_pitch if self.mirror else (lambda p: p)
         self._bias = 0.0
         notes = [n for n in song.notes if n.hand == hand]
+        # Glissandos are slid, not fingered: their notes stay out of the
+        # fingering and the fingers' timeline, and keep their times exactly.
+        import glissando
+        self.gliss_runs = glissando.find(notes, self.pianist)
+        self.gliss_ids = {id(n) for r in self.gliss_runs for n in r}
+        self.gliss_eps = glissando.episodes(self.gliss_runs, notes, float(self.pianist.b("gliss_merge")))
+        notes = [n for n in notes if id(n) not in self.gliss_ids]
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
         # fingering editor already knows every finger
@@ -602,11 +632,14 @@ class HandAnimator:
         # what this hand actually plays: [(press, release, note)]
         self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                             for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+        self.performance += [(n.start, n.end, n) for r in self.gliss_runs for n in r]
         self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
         self.span_starts = [a for a, _ in self.spans]
         self.partner = None                      # the other hand, see pair_hands
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
+        self._gliss_cache = None
+        self._gliss_starts = [ep[0][0].start for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
         self._layout_sig = None
@@ -822,6 +855,7 @@ class HandAnimator:
         if runs:
             self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
                                 for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+            self.performance += [(n.start, n.end, n) for r in self.gliss_runs for n in r]
         self._bounce_starts = [r[0][0] for r in self.bounce_runs]
         self._roll_starts = [r[0][0] for r in self.roll_runs]
 
@@ -1347,8 +1381,12 @@ class HandAnimator:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
 
     def finger_for(self, note):
-        """Planned finger for a note (None if it isn't played by this hand)."""
+        """Planned finger for a note (None if it isn't played by this hand, or is slid in a glissando)."""
         return self.fingering.get(id(note))
+
+    def is_gliss(self, note):
+        """Is this note slid in a glissando by this hand?"""
+        return id(note) in self.gliss_ids
 
     # ----- geometry that depends on the drawn keyboard ----------------------
     def _ensure_layout(self, kb):
@@ -1387,6 +1425,7 @@ class HandAnimator:
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._limit_cache, self._tip_limit_cache = {}, {}
         self._smooth_hand_cache, self._smooth_tip_cache = {}, {}
+        self._gliss_cache = None
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
         self.axis_x = kb.key_rects[62].centerx if 62 in kb.key_rects else kb.rect.centerx
@@ -2040,6 +2079,168 @@ class HandAnimator:
 
     # ----- full pose ------------------------------------------------------------
     def pose(self, t, kb):
+        """
+        Skeleton at time t (see _finger_pose), blended into the glissando
+        pose (_gliss_pose) around this hand's glissandos.
+        """
+        self._ensure_layout(kb)
+        g, ep = self._gliss_w(t)
+        if g <= 0.0:
+            return self._finger_pose(t, kb)
+        gp = self._gliss_pose(t, ep, kb)
+        if g >= 1.0:
+            return gp
+        return _blend_pose(self._finger_pose(t, kb), gp, g)
+
+    # ----- glissandos ------------------------------------------------------------
+    def _gliss_paths(self):
+        """
+        Per glissando episode, in the working frame: (start, end, [(t, x, y,
+        direction)] - where the backs of the fingers touch the keys at each
+        note, and which way the run goes (+1: toward the little finger).
+        """
+        if self._gliss_cache is not None:
+            return self._gliss_cache
+        out = []
+        for ep in self.gliss_eps:
+            pts = []
+            for r in ep:
+                xs = [self.key_target(n.pitch, 2)[0] for n in r]
+                d = 1.0 if xs[-1] >= xs[0] else -1.0
+                front = self.kb.rect.h - self.kb.black_h
+                for n, x in zip(r, xs):
+                    y = front + GLISS_BLACK_IN * self.ppi if is_black_key(n.pitch) else GLISS_WHITE_IN * self.ppi
+                    pts.append((n.start, x, y, d))
+            last = ep[-1][-1]
+            out.append((ep[0][0].start, max(last.start, min(last.end, last.start + 0.12)), pts))
+        self._gliss_cache = out
+        return out
+
+    def _gliss_w(self, t):
+        """(0..1 how much the hand is in its glissando pose at t, that episode's index or None)."""
+        if not self.gliss_eps:
+            return 0.0, None
+        paths = self._gliss_paths()
+        i = bisect.bisect_right(self._gliss_starts, t + GLISS_RAMP_T) - 1
+        if i < 0:
+            return 0.0, None
+        t0, t1, _ = paths[i]
+        if t < t0:
+            return _smooth(1.0 - (t0 - t) / GLISS_RAMP_T), i
+        if t <= t1:
+            return 1.0, i
+        if t < t1 + GLISS_RAMP_T:
+            return _smooth(1.0 - (t - t1) / GLISS_RAMP_T), i
+        return 0.0, None
+
+    def _gliss_contact(self, t, i):
+        """(x, y, roll direction -1..1) where the fingertips are on the keys at t in episode i."""
+        pts = self._gliss_paths()[i][2]
+        if t <= pts[0][0]:
+            return pts[0][1], pts[0][2], pts[0][3]
+        if t >= pts[-1][0]:
+            return pts[-1][1], pts[-1][2], pts[-1][3]
+        k = bisect.bisect_right([p[0] for p in pts], t) - 1
+        (ta, xa, ya, da), (tb, xb, yb, db) = pts[k], pts[k + 1]
+        u = (t - ta) / max(1e-6, tb - ta)
+        if da != db or tb - ta > 0.2:
+            u = _smooth(u)                    # a break between glissandos: travel there and turn round
+        return _lerp(xa, xb, u), _lerp(ya, yb, u), _lerp(da, db, u)
+
+    def _gliss_pose(self, t, i, kb):
+        """
+        The glissando pose: every finger straight and the thumb with them,
+        pinched to a point; the hand rolled about the forearm so that its
+        back faces the way it is sliding, and tipped down so the fingertips -
+        the nails - rest on the keys at the contact point.
+        """
+        S, geo, rot = self.S, self.geo, self._rot
+        cx, cy, d = self._gliss_contact(t, i)
+        m3 = geo.mcp[3]
+        sq = lambda p: (m3[0] + (p[0] - m3[0]) * GLISS_SQUEEZE, p[1], p[2])
+        mcps = {f: sq(geo.mcp[f]) for f in range(2, 6)}
+        bases = {f: (geo.mc_base[f][0] * (0.5 + 0.5 * GLISS_SQUEEZE),) + tuple(geo.mc_base[f][1:]) for f in range(2, 6)}
+        cmc = geo.thumb_cmc
+        dx, dy, dz = GLISS_APEX
+        n_ = math.sqrt(dx * dx + dy * dy + dz * dz)
+        L3 = sum(geo.bones[3])
+        apex = (m3[0] + dx / n_ * L3, m3[1] + dy / n_ * L3, m3[2] + dz / n_ * L3)
+
+        def toward(base, L):
+            v = _sub(apex, base)
+            return _add(base, _mul(v, GLISS_REACH * L / max(1e-6, _norm(v))))
+        chains = {}
+        for f in range(2, 6):
+            tip = toward(mcps[f], sum(geo.bones[f]))
+            chains[f] = solve_chain(mcps[f], tip, list(geo.bones[f]), (0.0, 0.0, 1.0),
+                                    FINGER_COUPLING, FINGER_BEND_MAX)
+        ttip = toward(cmc, sum(geo.bones[1]))
+        thumb = solve_chain(cmc, ttip, list(geo.bones[1]), (-0.85, 0.0, 0.5), THUMB_COUPLING, THUMB_BEND_MAX)
+
+        # roll about the forearm (its back toward the slide), tip down, turn with the forearm
+        zc = WRIST_Z
+        ro, ph = math.radians(GLISS_ROLL_DEG) * d, math.radians(GLISS_PITCH_DEG)
+        cr, sr, cp, sp = math.cos(ro), math.sin(ro), math.cos(ph), math.sin(ph)
+        psi = self._yaw(cx)
+
+        def place(p, roll=True):
+            x, y, z = p
+            if roll:
+                x, z = x * cr + (z - zc) * sr, zc - x * sr + (z - zc) * cr
+            y, z = y * cp + (z - zc) * sp, zc - y * sp + (z - zc) * cp
+            x, y = rot(x * S, y * S, psi)
+            return (x, y, z * S)
+        tips = [place(c[-1]) for c in chains.values()] + [place(thumb[-1])]
+        low = min(tips, key=lambda p: p[2])
+        ap = place(apex)
+        # the point of the fingers on the contact point, nothing below the keys
+        ox, oy, oz = cx - ap[0], cy - ap[1], -self.travel * 0.5 - low[2]
+
+        def world(p, roll=True):
+            x, y, z = place(p, roll)
+            return (ox + x, oy + y, oz + z)
+        wr, wu = world(geo.wrist_sides[0], False), world(geo.wrist_sides[1], False)
+        wcmc = world(cmc)
+        wb = {f: world(bases[f]) for f in range(2, 6)}
+        bones, joints = [], []
+        back = rot(0.0, -1.0, -0.45 * math.atan2(cx - self.shoulder_x, self.forearm_len))
+        fl = 12 * self.ppi
+        for p in (wr, wu):
+            bones.append((p, (p[0] + back[0] * fl, p[1] + back[1] * fl, p[2] + 0.5 * S), "forearm"))
+        ring = [wr, wcmc, wb[2], wb[3], wb[4], wb[5], wu]
+        for a, b in zip(ring, ring[1:]):
+            bones.append((a, b, "carpal"))
+        bones.append((wr, wu, "carpal"))
+        out_chains = {}
+        for f in range(2, 6):
+            pts = [world(p) for p in chains[f]]
+            bones.append((wb[f], pts[0], "metacarpal"))
+            out_chains[f] = [wb[f]] + pts
+            for (a, b), kind in zip(zip(pts, pts[1:]), ("proximal", "middle", "distal")):
+                bones.append((a, b, kind))
+            joints += [(p, "knuckle") for p in pts[:3]] + [(pts[3], "tip")]
+        pts = [world(p) for p in thumb]
+        out_chains[1] = pts
+        for (a, b), kind in zip(zip(pts, pts[1:]), ("metacarpal", "proximal", "distal")):
+            bones.append((a, b, kind))
+        joints += [(p, "knuckle") for p in pts[:3]] + [(pts[3], "tip")]
+        joints += [(p, "wrist") for p in (wr, wu)]
+        arm_end = ((wr[0] + wu[0]) / 2 + back[0] * fl, (wr[1] + wu[1]) / 2 + back[1] * fl,
+                   (wr[2] + wu[2]) / 2 + 0.5 * S)
+        wx = (wr[0] + wu[0]) / 2
+        wy = (wr[1] + wu[1]) / 2
+        struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror}
+        if self.mirror:
+            fx = lambda p: (2 * self.axis_x - p[0], p[1], p[2])
+            bones = [(fx(a), fx(b), k) for a, b, k in bones]
+            joints = [(fx(p), k) for p, k in joints]
+            struct = {"chains": {f: [fx(p) for p in c] for f, c in out_chains.items()},
+                      "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True}
+        return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi,
+                "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
+                "struct": struct, "skin": self.skin, "t": t, "song": self.song}
+
+    def _finger_pose(self, t, kb):
         """
         Skeleton at time t as a dict:
             'bones':  [(p, q, kind)]  3D world points, kind in
