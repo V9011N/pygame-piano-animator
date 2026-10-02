@@ -230,11 +230,12 @@ GLISS_FINGER_DIR = (0.0, 1.0, -0.12)   # the fingers straight and parallel, a li
 GLISS_THUMB_TIP = (-1.6, 2.6, -0.4)    # the thumb tucked in beside the index finger (from its knuckle, model units)
 # Sliding toward the thumb (RH down, LH up) the thumb does it instead: the hand palm down, fingers 2-5
 # curled right in, the thumb straight out along the keys, its nail on them
-GLISS_CURL = (0.0, -1.8, -2.4)         # a curled fingertip, from its knuckle (model units): tucked into the palm
-GLISS_THUMB_DIR = (-0.55, 1.0, -0.15)  # the straightened thumb, out beside the fist (the hand turns to lay it along the keys)
-GLISS_THUMB_PITCH_DEG = 12.0           # the hand tipped down this much for it
+GLISS_CURL = (0.0, 1.4, -3.6)          # a curled fingertip, from its knuckle (model units): a fist, the middle joints down on the keys
+GLISS_THUMB_DIR = (-0.18, 1.0, -0.3)   # the straightened thumb, along the fist (the hand turns to lay it along the keys)
+GLISS_THUMB_PITCH_DEG = 4.0            # the hand tipped down this much for it
 GLISS_WHITE_IN = 0.8        # in, the nails slide this far up the white keys (well clear of the black ones)...
 GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
+GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail this far up the white keys, the fist's knuckles over them
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
 FLAT_DROP = 0.6             # ...which lowers its knuckles by this share, so stretched fingers reach further
 TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
@@ -2119,8 +2120,9 @@ class HandAnimator:
                 xs = [self.key_target(n.pitch, 2)[0] for n in r]
                 d = 1.0 if xs[-1] >= xs[0] else -1.0
                 front = self.kb.rect.h - self.kb.black_h
+                white_in = GLISS_WHITE_IN if d > 0 else GLISS_THUMB_IN
                 for n, x in zip(r, xs):
-                    y = front + GLISS_BLACK_IN * self.ppi if is_black_key(n.pitch) else GLISS_WHITE_IN * self.ppi
+                    y = front + GLISS_BLACK_IN * self.ppi if is_black_key(n.pitch) else white_in * self.ppi
                     pts.append((n.start, x, y, d))
             last = ep[-1][-1]
             out.append((ep[0][0].start, max(last.start, min(last.end, last.start + 0.12)), pts))
