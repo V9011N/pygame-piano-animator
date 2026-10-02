@@ -520,7 +520,7 @@ class ChangelogView:
             self._width = self.view.w
             f, rows = self.fonts, []
             for heading, bullets in self.entries:
-                rows.append((f["button"], ACCENT if heading.startswith(VERSION) else TEXT, heading, 0, 8))
+                rows.append((f["button"], ACCENT if heading.split(" ")[0] == VERSION else TEXT, heading, 0, 8))
                 indent = f["normal"].size("•  ")[0]
                 for b in bullets:
                     for i, part in enumerate(wrap_text(f["normal"], b, self.view.w - indent - 4)):

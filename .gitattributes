@@ -6,4 +6,3 @@
 *.mid binary
 *.midi binary
 *.png binary
-version.py export-subst

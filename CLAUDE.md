@@ -49,7 +49,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
 | `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
 | `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
-| `version.py` | `VERSION`: the latest commit's UTC time as `v20YY.MM.DD.HHMM` (from git, or filled in by `git archive`); shown in the window title and bottom-left corner |
+| `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 
 ## Conventions and gotchas
@@ -75,9 +75,10 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the
   current numbers.
-- Every commit adds an entry at the top of `CHANGELOG.md` (shown by the main menu's "What's new"
-  button), headed `## vYYYY.MM.DD.HHMM - title` with user-facing bullets. Commit with
-  `GIT_COMMITTER_DATE` (and `GIT_AUTHOR_DATE`) set to that UTC minute so `VERSION` matches it.
+- Versions are `vYY.MAJOR.MINOR` (from `v26.1.0`; older entries are `vYYYY.MM.DD.HHMM` commit times).
+  Every commit bumps the minor number in `version.py` and adds an entry at the top of `CHANGELOG.md`
+  (shown by the main menu's "What's new" button), headed `## vYY.MAJOR.MINOR - title` with user-facing
+  bullets (a test checks the two match). Stay on the current major version unless told otherwise.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

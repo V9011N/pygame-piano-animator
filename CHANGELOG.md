@@ -1,6 +1,11 @@
 # Changelog
 
-Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
+Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
+v20YY.MM.DD.HHMM). Newest first.
+
+## v26.1.0 - New version numbers
+- Versions are now numbered year.major.minor, starting at v26.1.0; each update raises the last
+  number.
 
 ## v2026.10.02.1613 - Sound stops when you leave
 - Fixed: leaving the player or the fingering editor while the sustain pedal was down left the
