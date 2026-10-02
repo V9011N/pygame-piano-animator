@@ -3,6 +3,17 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.9 - Recordings stay in sync
+- Fixed: a synced recording slowly ran ahead of the notes. A recording at another sample rate than
+  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time - by
+  the end of Chopin's Ballade No. 1 the final chord was heard 0.58 s early. Recordings are now
+  played at their own sample rate.
+- Fixed: on every play or seek the notes started a moment (up to a third of a second) ahead of the
+  recording. They now start together.
+- Scrubbing the progress bar while a recording plays is smooth: the recording picks up again when
+  you let go.
+- Recordings load faster (the Ballade: 3.6 s to 1.3 s).
+
 ## v26.1.8 - Tidying
 - Internal tidying (one text-wrapping helper instead of three); nothing looks or works
   differently.

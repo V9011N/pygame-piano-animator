@@ -188,6 +188,9 @@ class Visualizer(Transport):
         elif event.type == pygame.MOUSEMOTION and self.dragging_wave is not None:
             self._drag_wave(event.pos[0])
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.dragging_bar and self.audio and not self.paused:
+                self.dragging_bar = False
+                self._start_audio()
             self.dragging_bar = False
             if self.dragging_wave is not None:
                 self.dragging_wave = None
@@ -217,19 +220,23 @@ class Visualizer(Transport):
 
     def _start_audio(self):
         """(Re)start the recording at the song's place, and the clock with it."""
-        self._anchor = (self.t, time.perf_counter())
         self.audio.stop()
         pos = self.audio_pos()
         self._audio_pending = pos < 0           # the song's lead-in comes before the recording
         if not self._audio_pending:
-            self.audio.play_from(pos)
+            self.audio.play_from(pos)           # (copying the rest of the recording takes a moment...)
             if self.audio.channel is not None and self.audio_muted:
                 self.audio.channel.set_volume(0.0)
+        self._anchor = (self.t, time.perf_counter())     # (...so the clock starts once it plays)
 
     def seek(self, t):
         Transport.seek(self, t)
         if self.audio and not self.paused:
-            self._start_audio()
+            if self.dragging_bar:               # scrubbing: the recording restarts once, on release
+                self.audio.stop()
+                self._anchor = (self.t, time.perf_counter())
+            else:
+                self._start_audio()
 
     def toggle_pause(self):
         Transport.toggle_pause(self)
@@ -241,13 +248,14 @@ class Visualizer(Transport):
                 self._start_audio()
 
     def update(self, dt):
-        if self.audio and self.song and not self.paused and self.dragging_wave is None:
+        held = self.dragging_wave is not None or self.dragging_bar
+        if self.audio and self.song and not self.paused and not held:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
             target = t_a + (time.perf_counter() - wall) * self.speed
             dt = max(0.0, (target - self.t) / self.speed)
-        elif self.audio and self.dragging_wave is not None:
-            dt = 0.0                                # held while the recording is moved
+        elif self.audio and held:
+            dt = 0.0                                # held while the recording is moved, or the song scrubbed
         Transport.update(self, dt)
         if self.audio:
             if self.paused:

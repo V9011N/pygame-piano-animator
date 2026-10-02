@@ -46,16 +46,79 @@ def pick_audio_file(title="Choose the audio file to sync", initialdir=None):
         _after_dialog()
 
 
-def ensure_mixer():
-    if not pygame.mixer.get_init():
+def native_rate(path):
+    """
+    The sample rate a recording was made at, from its header (WAV, MP3,
+    FLAC, Ogg Vorbis / Opus); None if it can't be told.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(1 << 16)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        i = 12
+        while i + 8 <= len(head):
+            cid, size = head[i:i + 4], int.from_bytes(head[i + 4:i + 8], "little")
+            if cid == b"fmt ":
+                return int.from_bytes(head[i + 12:i + 16], "little") or None
+            i += 8 + size + (size & 1)
+        return None
+    if head[:4] == b"fLaC":
+        b = head[18:21]                                   # STREAMINFO: 20 bits after the block sizes
+        return ((b[0] << 12) | (b[1] << 4) | (b[2] >> 4)) or None
+    if head[:4] == b"OggS":
+        i = head.find(b"\x01vorbis")
+        if i >= 0:
+            return int.from_bytes(head[i + 12:i + 16], "little") or None
+        return 48000 if head.find(b"OpusHead") >= 0 else None      # Opus always decodes at 48 kHz
+    # MP3: past any ID3v2 tag, the first frame header (two in a row, so it isn't a stray sync word)
+    i = 0
+    if head[:3] == b"ID3":
+        i = 10 + ((head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9])
+        with open(path, "rb") as fh:
+            fh.seek(i)
+            head, i = fh.read(1 << 16), 0
+    rates = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}   # MPEG 1, 2, 2.5
+    while i + 4 <= len(head):
+        if head[i] == 0xFF and head[i + 1] & 0xE0 == 0xE0:
+            ver, layer = (head[i + 1] >> 3) & 3, (head[i + 1] >> 1) & 3
+            bri, sri = head[i + 2] >> 4, (head[i + 2] >> 2) & 3
+            if ver != 1 and layer and bri not in (0, 15) and sri != 3:
+                rate = rates[ver][sri]
+                j = head.find(b"\xff", i + 4)
+                if j > 0 and head[j + 1] & 0xE0 == 0xE0 and rates.get((head[j + 1] >> 3) & 3, (0,) * 3)[
+                        (head[j + 2] >> 2) & 3 if (head[j + 2] >> 2) & 3 != 3 else 0] == rate:
+                    return rate
+        i += 1
+    return None
+
+
+def ensure_mixer(rate=None):
+    """
+    The mixer running, at `rate` if given. A recording is decoded to the
+    mixer's rate, and SDL's conversion from another rate is off by about
+    0.1% (a 48 kHz MP3 decoded at 44.1 kHz came out 0.68 s short in 522 s,
+    so the recording ran steadily ahead of the notes): so the mixer runs at
+    the recording's own rate, the device converting as it plays, which
+    keeps time.
+    """
+    cur = pygame.mixer.get_init()
+    if cur and (rate is None or cur[0] == rate):
+        return
+    if cur:
+        pygame.mixer.quit()
+    if rate is None:
         pygame.mixer.init()
+    else:
+        pygame.mixer.init(frequency=rate, allowedchanges=0)
 
 
 class SyncAudio:
     """A decoded recording: its waveform, and playback from any point."""
 
     def __init__(self, path):
-        ensure_mixer()
+        ensure_mixer(native_rate(path))
         self.path = path
         self.name = os.path.basename(path)
         self.sound = pygame.mixer.Sound(path)        # decoded to the mixer's format
@@ -73,13 +136,16 @@ class SyncAudio:
         """The loudest sample (0..1) in each PEAK_T slice, all channels together."""
         dtype = {1: np.uint8, 2: np.int16, 4: np.float32 if self.sample_bytes == 4 else np.int32}[self.sample_bytes]
         a = np.frombuffer(self.raw, dtype=dtype)
-        if dtype == np.uint8:
-            a = a.astype(np.int16) - 128
-        frames = len(a) // self.channels
-        a = np.abs(a[:frames * self.channels].reshape(frames, self.channels).astype(np.float32)).max(axis=1)
-        n = max(1, int(PEAK_T * self.freq))
+        n = max(1, int(PEAK_T * self.freq)) * self.channels        # samples per slice, all channels
         k = len(a) // n
-        p = a[:k * n].reshape(k, n).max(axis=1) if k else np.zeros(1, np.float32)
+        if not k:
+            return np.zeros(1, np.float32)
+        # each slice's highest and lowest sample, straight from the raw samples (no float copy of them all)
+        b = a[:k * n].reshape(k, n)
+        hi, lo = b.max(axis=1).astype(np.float32), b.min(axis=1).astype(np.float32)
+        if dtype == np.uint8:
+            hi, lo = hi - 128, lo - 128
+        p = np.maximum(hi, -lo)
         top = float(p.max()) or 1.0
         return p / top
 
@@ -218,6 +284,7 @@ class PlaybackSetup:
 
     def open_audio(self, path):
         """Load and check a recording; play with it if it's long enough. True if it was."""
+        ensure_mixer(native_rate(path))         # (here, not in the worker thread)
         try:
             audio = run_busy(self.app.screen, self.app.fonts, f"Loading {os.path.basename(path)}…",
                              lambda: SyncAudio(path))

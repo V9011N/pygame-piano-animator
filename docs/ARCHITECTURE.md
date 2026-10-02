@@ -118,11 +118,26 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `SyncAudio` decodes the whole file with `pygame.mixer.Sound` (WAV / OGG / MP3 / FLAC, to the mixer's
   format) and keeps `peaks`: the loudest sample in each `PEAK_T` 5 ms slice (numpy, which pretty_midi
   already needs). `play_from(pos)` plays a `Sound` made over a memoryview of the raw samples from that
-  point (no seeking API needed, any format; ~2 ms per start).
+  point (no seeking API needed, any format). That copies the rest of the samples: 3.5 ms near the end of a
+  9-minute 48 kHz recording, 70 ms from its start (380 ms the first time).
+- Decoded at its own rate (v26.1.9). `pygame.mixer.Sound` converts to the mixer's rate, and SDL's conversion
+  loses time: a 48 kHz MP3 (Chopin's Ballade No. 1, 522.46 s per its LAME header) decoded at the default
+  44.1 kHz came out 521.79 s, 0.13% short, so the recording ran steadily ahead of the notes - its final chord
+  0.58 s early (pygame 2.6.1 / SDL 2.28 and pygame-ce 2.5.8 / SDL 2.32 alike). `native_rate(path)` reads the
+  rate from the header (WAV fmt chunk, MP3 frame headers past any ID3 tag, FLAC STREAMINFO, Ogg Vorbis; Opus
+  48 kHz) and `ensure_mixer(rate)` reopens the mixer at it (`allowedchanges=0`: the device converts as it
+  plays, in step), on the main thread before the decoding job. Nothing else uses the mixer. `_peaks` takes
+  each slice's max and min straight from the samples (identical result; the Ballade loads in 1.3 s, was 3.6).
 - Timing: song time t runs at `speed`; the audio heard at t is at `offset + t / speed`. While playing,
-  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`), not from the
-  capped frame clock, so the two never drift; the audio restarts on play, seek, a nudge and the end of a
-  drag. A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
+  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`, taken once
+  `play_from` has returned - before v26.1.9 it was taken first, so the notes ran ahead of the recording by
+  the copy's time at every start), not from the capped frame clock, so the two never drift; the audio
+  restarts on play, seek, a nudge and the end of a drag. Scrubbing the top bar while playing holds the song
+  and restarts the recording once, on release (not a copy per mouse move).
+- Left in the files themselves: rendered from the same MIDI, the Ballade's recording (native rate) is 0 ms off
+  at the start, ~30 ms at 3 min, ~145 ms at 5:30, ~255 ms at 6:40-8:00 and ~90 ms at the final chord
+  (onsets of loud isolated chords). Not a steady rate, so not a clock: the renderer's playback of the tempo
+  changes differs from the exported tempo map (which the loader reads exactly - checked against mido). A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
   synth is muted while a recording plays (restored on leaving); M mutes the recording instead; the speed
   keys do nothing.
 - The waveform strip (`WAVE_H` 56 px, under the top bar, the falling notes below it) is on the same
