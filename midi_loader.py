@@ -58,6 +58,7 @@ class Note:
     track: int        # index of the instrument/track it came from
     hand: str         # LEFT or RIGHT (from track names/registers, else hand_split.py)
     finger: Optional[int] = None   # 1..5 when the file carries fingering (see below)
+    gliss: bool = False            # part of a glissando marked in the file ("Rg" / "Lg")
 
     @property
     def duration(self) -> float:
@@ -194,6 +195,7 @@ def _fit_to_piano(pitch: int) -> int:
 #   "F1".."F5"               finger only (the Hanon set)
 #   "R1".."R5", "L1".."L5"   hand and finger (written by the fingering editor)
 #   "R", "L"                 hand only
+#   "Rg", "Lg"               hand, and the note is part of a glissando (fingering editor)
 
 def _vlq(d, i):
     n = 0
@@ -217,6 +219,8 @@ def _marker(data):
     if len(data) == 2 and data[:1] in (b'F', b'R', b'L') and data[1:2] in b'12345':
         h = data[:1].decode()
         return (None if h == 'F' else h, int(data[1:2]))
+    if data in (b'Rg', b'Lg'):                     # a glissando note (the finger is 'g')
+        return (data[:1].decode(), 'g')
     if data in (b'R', b'L'):
         return (data.decode(), None)
     return None
@@ -325,7 +329,7 @@ def read_markers(path: str) -> dict:
 
 def read_fingering(path: str) -> dict:
     """{(tick, pitch): finger} for every note-on preceded by a fingering text event."""
-    return {k: f for k, (h, f) in read_markers(path).items() if f}
+    return {k: f for k, (h, f) in read_markers(path).items() if isinstance(f, int)}
 
 
 def _tempo_map(header, tracks):
@@ -685,24 +689,34 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
 
     notes: List[Note] = []
     tracks: List[TrackInfo] = []
+    marked = set()                             # (start, pitch) of notes whose hand a marker gives
     for i, inst in instruments:
         for n in inst.notes:
             mark_hand, finger = marks.get((round(float(n.start), 4), n.pitch), (None, None))
+            if mark_hand:
+                marked.add((float(n.start), _fit_to_piano(int(n.pitch))))
+            gl = finger == 'g'
             notes.append(Note(int(n.pitch), float(n.start), float(n.end), int(n.velocity), i,
-                              mark_hand or track_hand.get(i), finger))
+                              mark_hand or track_hand.get(i), None if gl else finger, gl))
         tracks.append(TrackInfo(i, inst.name or f"Track {i}", inst.program, len(inst.notes), track_hand.get(i)))
     notes, r = sanitize_notes(notes, min_duration)
     report += r
 
-    # Notes whose track doesn't say which hand: work it out from the music.
-    loose = [n for n in notes if n.hand is None]
+    # Work out each note's hand from the music. A hand the track says (by
+    # its name or register) is followed unless that hand couldn't keep up
+    # (one track holding both hands' notes in a passage); only the hands
+    # stored with the notes (fingering markers) are taken as they are.
+    loose = [n for n in notes if (n.start, n.pitch) not in marked]
     if loose:
         try:
             from hand_split import split_hands
-            hands = split_hands(loose)
+            hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
         except ImportError:
-            hands = {id(n): (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
-        notes = [n if n.hand else replace(n, hand=hands[id(n)]) for n in notes]
+            hands = {id(n): n.hand or (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
+        moved = sum(1 for n in loose if n.hand and hands[id(n)] != n.hand)
+        if moved:
+            report.append("gave %d note(s) to the other hand than their track's, which couldn't keep up" % moved)
+        notes = [replace(n, hand=hands[id(n)]) if id(n) in hands else n for n in notes]
 
     try:
         bar_times = [float(t) for t in pm.get_downbeats()]
@@ -793,7 +807,7 @@ def save_pig(path: str, notes, fingers) -> int:
         for i, n in enumerate(rows):
             left = n.hand == LEFT
             f = fingers.get(id(n))
-            fs = "_" if not f else str(-f if left else f)
+            fs = "_" if not isinstance(f, int) or not f else str(-f if left else f)
             fh.write(f"{i}\t{n.start:.6f}\t{n.end:.6f}\t{pig_name(n.pitch)}\t{n.velocity}\t80\t"
                      f"{1 if left else 0}\t{fs}\n")
     os.replace(tmp, path)

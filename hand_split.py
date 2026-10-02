@@ -28,12 +28,17 @@ pianist's hands can actually do:
   * range  - a mild preference for the right hand high and the left hand low;
   * voices - in files split into several (unlabelled) tracks, a track's
              notes tend to stay in one hand;
-  * repeats - a chord struck again straight away is split the way it was.
+  * repeats - a chord struck again straight away is split the way it was;
+  * tracks  - when the file's tracks say which hand (by name, or two tracks in
+             different registers), that split is followed (exactly, crossings
+             included) unless a hand couldn't keep up with it: then the
+             notes go to the other hand, at TRACK_PRIOR per note.
 
 Only the hand labels are decided here; fingering comes later.
 """
 from __future__ import annotations
 
+import bisect
 import math
 
 from fingering import key_pos, travel_time, MOVE_SHARE
@@ -63,6 +68,10 @@ CROWD_GAP = 5            # semitones the hands want between them ...
 CROWD = 1.5              # ... per semitone short of that
 REPEAT_T = 0.5           # a chord repeated within this ...
 REPEAT_SPLIT = 4.0       # ... and split differently from the last time costs this
+TRACK_PRIOR = 200.0      # per note played by the other hand than its track says ...
+TRACK_PRIOR_SOFT = 1.0   # ... near where that hand couldn't keep up with its track:
+TRACK_FREE_T = 0.5       # within this of a move needing more than
+TOO_FAST_TRACK = 0.5     # 50% over the top speed
 CROWD_T = 0.25           # a hand's last notes count this long for crowding          # a note ending within this after the onset counts as released
 
 
@@ -146,17 +155,11 @@ def _hand_cost(hand, t, notes, side, other):
         shift = abs(m - hand.center)
         fade = math.exp(-dt / 1.5)                    # old positions matter less
         c += fade * MOVE_COST * shift
-        # the least the hand must travel (white keys): from where it could
-        # play its last notes to where it can play these
-        was = (key_pos(hand.last_hi) - HAND_WK, key_pos(hand.last_lo))
-        now = (key_pos(hi) - HAND_WK, key_pos(lo))
-        gap = max(0.0, now[0] - was[1], was[0] - now[1])
-        if gap > 0:
-            # beyond the top speed it quickly becomes impossible: a
-            # two-octave leap in a sixteenth is not just twice as hard as one
-            r = travel_time(gap, MAX_SPEED) / max(1e-3, MOVE_SHARE * dt) - 1.0
-            if r > 0:
-                c += TOO_FAST * (r + r * r)
+        # beyond the top speed it quickly becomes impossible: a two-octave
+        # leap in a sixteenth is not just twice as hard as one
+        r = _too_fast(hand, t, lo, hi)
+        if r > 0:
+            c += TOO_FAST * (r + r * r)
         # how fast the hand must travel to get there: of two hands that could
         # take a note, the one that needn't hurry should
         c += SPEED_COST * d / max(dt, 0.05) / 40.0
@@ -172,6 +175,51 @@ def _hand_cost(hand, t, notes, side, other):
     else:
         c += 0.02 * sum(max(0, p - 67) for p in ps)
     return c
+
+
+def _too_fast(hand, t, lo, hi):
+    """
+    How much faster than the top speed (0 = not) `hand` must travel to play
+    lo..hi at t: from where it could play its last notes to where it can
+    play these, the least distance in white keys.
+    """
+    if hand.last_lo is None:
+        return 0.0
+    dt = max(1e-3, t - hand.last_t)
+    was = (key_pos(hand.last_hi) - HAND_WK, key_pos(hand.last_lo))
+    now = (key_pos(hi) - HAND_WK, key_pos(lo))
+    gap = max(0.0, now[0] - was[1], was[0] - now[1])
+    if gap <= 0:
+        return 0.0
+    return max(0.0, travel_time(gap, MAX_SPEED) / max(1e-3, MOVE_SHARE * dt) - 1.0)
+
+
+def _track_weights(groups, prefer):
+    """
+    {id(note): cost per note of playing it with the other hand than `prefer`
+    says}: TRACK_PRIOR (in effect fixed) everywhere except within
+    TRACK_FREE_T of a moment where a hand following the tracks would have to
+    travel faster than its top speed - there TRACK_PRIOR_SOFT, so the
+    notes can go to the other hand.
+    """
+    hands = {RIGHT: _Hand(67.0), LEFT: _Hand(48.0)}
+    bad = []
+    for t, ns in groups:
+        for side in (RIGHT, LEFT):
+            mine = [n for n in ns if prefer.get(id(n)) == side]
+            if not mine:
+                continue
+            ps = [n.pitch for n in mine]
+            if _too_fast(hands[side], t, min(ps), max(ps)) > TOO_FAST_TRACK:
+                bad.append(t)
+            hands[side] = hands[side].after(t, mine)
+    out = {}
+    for t, ns in groups:
+        i = bisect.bisect_left(bad, t - TRACK_FREE_T)
+        near = i < len(bad) and bad[i] <= t + TRACK_FREE_T
+        for n in ns:
+            out[id(n)] = TRACK_PRIOR_SOFT if near else TRACK_PRIOR
+    return out
 
 
 def _crowding(rh, lh, t, rn, ln):
@@ -205,12 +253,15 @@ def _fit_spans(pianist):
 MAX_SPEED = 3.0          # m/s, from the pianist (split_hands)
 
 
-def split_hands(notes, pianist=None):
+def split_hands(notes, pianist=None, prefer=None):
     """
     {id(note): 'L' or 'R'} for every note. Works on any note objects with
     .pitch, .start and .end. `pianist` (default: the active one) sets how
-    wide a hand can reach.
+    wide a hand can reach and how fast it travels. `prefer` ({id(note):
+    hand}, from the file's tracks) is followed unless a hand couldn't keep
+    up with it.
     """
+    prefer = prefer or {}
     if pianist is None:
         try:
             import pianist as pianists
@@ -223,6 +274,7 @@ def split_hands(notes, pianist=None):
     groups = _groups(notes)
     if not groups:
         return {}
+    weight = _track_weights(groups, prefer) if prefer else {}
     # beam entries: (cost, right_hand, left_hand, back_pointer, split)
     # start each hand where the opening music sits (upper / lower quartile)
     first = sorted(n.pitch for _, ns in groups[:40] for n in ns)
@@ -233,7 +285,7 @@ def split_hands(notes, pianist=None):
     # When the file has several tracks (not labelled by hand, so probably
     # voices), a voice tends to stay in one hand: switching a track's notes to
     # the other hand soon after costs.
-    multi = len({getattr(n, "track", 0) for _, ns in groups for n in ns}) > 1
+    multi = len({getattr(n, "track", 0) for _, ns in groups for n in ns if id(n) not in prefer}) > 1
     beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, ())]
     history = []
     last_group = None
@@ -241,31 +293,42 @@ def split_hands(notes, pianist=None):
         repeat = last_group is not None and t - last_group[0] < REPEAT_T and \
             [n.pitch for n in last_group[1]] == [n.pitch for n in ns]
         last_group = (t, ns)
+        # the splits tried: the lowest k notes to the left hand, and (when the
+        # tracks say, and differently) exactly the tracks' split, k = -1
+        splits = [(k, ns[:k], ns[k:]) for k in range(len(ns) + 1)]
+        if all(id(n) in prefer for n in ns):
+            ln = [n for n in ns if prefer[id(n)] == LEFT]
+            if ln != ns[:len(ln)]:
+                splits.append((-1, ln, [n for n in ns if prefer[id(n)] != LEFT]))
         cand = []
         for bi, (cost, rh, lh, _, pk, tr) in enumerate(beam):
             last = dict(tr)
-            for k in range(len(ns) + 1):              # lowest k notes -> left hand
-                ln, rn = ns[:k], ns[k:]
+            for k, ln, rn in splits:
                 c = cost + _hand_cost(rh, t, rn, RIGHT, lh) + _hand_cost(lh, t, ln, LEFT, rh)
                 if repeat and k != pk:
                     c += REPEAT_SPLIT
                 c += _crowding(rh, lh, t, rn, ln)
+                if prefer:
+                    c += sum(weight[id(n)] for n in ln if prefer.get(id(n), LEFT) != LEFT) + \
+                        sum(weight[id(n)] for n in rn if prefer.get(id(n), RIGHT) != RIGHT)
                 if multi:
                     for n, h in [(n, LEFT) for n in ln] + [(n, RIGHT) for n in rn]:
+                        if id(n) in prefer:
+                            continue
                         prev = last.get(getattr(n, "track", 0))
                         if prev and prev[0] != h and t - prev[1] < TRACK_T:
                             c += TRACK_SWITCH
-                cand.append((c, bi, k))
+                cand.append((c, bi, k, ln, rn))
         cand.sort(key=lambda x: x[0])
         new, seen = [], set()
-        for c, bi, k in cand:
+        for c, bi, k, ln, rn in cand:
             _, rh, lh, _, _, tr = beam[bi]
-            nr, nl = rh.after(t, ns[k:]), lh.after(t, ns[:k])
+            nr, nl = rh.after(t, rn), lh.after(t, ln)
             if multi:
                 d = dict(tr)
-                for n in ns[:k]:
+                for n in ln:
                     d[getattr(n, "track", 0)] = (LEFT, t)
-                for n in ns[k:]:
+                for n in rn:
                     d[getattr(n, "track", 0)] = (RIGHT, t)
                 tr = tuple(sorted(d.items()))
                 hands_key = tuple((trk, h) for trk, (h, _) in tr)
@@ -288,9 +351,10 @@ def split_hands(notes, pianist=None):
     for gi in range(len(groups) - 1, -1, -1):
         bi, k = history[gi][j]
         _, ns = groups[gi]
-        for n in ns[:k]:
-            out[id(n)] = LEFT
-        for n in ns[k:]:
-            out[id(n)] = RIGHT
+        for i, n in enumerate(ns):
+            if k == -1:
+                out[id(n)] = LEFT if prefer[id(n)] == LEFT else RIGHT
+            else:
+                out[id(n)] = LEFT if i < k else RIGHT
         j = bi
     return out

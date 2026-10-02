@@ -537,3 +537,166 @@ def test_hand_split_with_voice_tracks_and_repeated_chords():
         ns += [Note(p, t, t + 0.18, 80, 1, None) for p in (48, 55)]
     split = hand_split.split_hands(ns)
     assert all(split[id(n)] == (RIGHT if n.pitch > 60 else LEFT) for n in ns)
+
+
+def test_track_hands_give_way_only_where_a_hand_cant_keep_up():
+    import hand_split
+    # the ossia cadenza of Rachmaninoff 3 (0:57): one track holds both hands'
+    # notes - a chord low and an octave high, alternating every 0.08 s
+    ns, prefer = [], {}
+    for k in range(16):
+        t = k * 0.082
+        ps = (48, 52, 55) if k % 2 == 0 else (84, 96)
+        for p in ps:
+            n = Note(p - (k // 2) % 3, t, t + 0.07, 80, 1, LEFT)
+            ns.append(n)
+            prefer[id(n)] = LEFT
+    split = hand_split.split_hands(ns, prefer=prefer)
+    high = [n for n in ns if n.pitch > 70]
+    assert sum(split[id(n)] == RIGHT for n in high) >= len(high) - 2      # the free hand takes them
+    # where the tracks are playable they are followed exactly - crossings included
+    ns, prefer = [], {}
+    for k in range(8):
+        t = k * 0.25
+        r = Note(60 + k % 3, t, t + 0.2, 80, 0, RIGHT)
+        lft = Note(64 + k % 3, t + 0.12, t + 0.2, 80, 1, LEFT)          # the left hand crossed above
+        ns += [r, lft]
+        prefer[id(r)], prefer[id(lft)] = RIGHT, LEFT
+    split = hand_split.split_hands(ns, prefer=prefer)
+    assert all(split[id(n)] == prefer[id(n)] for n in ns)
+
+
+def test_wrist_glides_through_scale_runs_and_arpeggios_are_left_alone():
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    major = [0, 2, 4, 5, 7, 9, 11]
+    up = [60 + 12 * o + x for o in range(3) for x in major] + [96]
+    scale = notes_at(up + up[-2::-1], step=0.08, dur=0.084)
+    a = hands.HandAnimator(song_of(scale), RIGHT)
+    a._ensure_layout(kb)
+    assert len(a.runs) == 1
+    xs, close = [], 0
+    t = scale[0].start
+    while t < scale[-1].end:
+        wx, wy, psi = a._limited_at(t)
+        xs.append(wx)
+        a.pose(t, kb)
+        c = a._run_w(t)
+        tips = a._separate({f: a._limit_tip(f, p, wx, wy, psi, c) for f, p in a._limited_tips(t).items()},
+                           wx, wy, psi, t, c)
+        loc = {f: hands.HandAnimator._rot(x - wx, y - wy, -psi)[0] for f, (x, y, _) in tips.items()}
+        close += any(loc[f + 1] - loc[f] < 0.5 * kb.white_w for f in (2, 3, 4))
+        t += 1 / 60
+    v = [b - x for x, b in zip(xs, xs[1:])]
+    signs = [1 if d > 0.3 else -1 for d in v if abs(d) > 0.3]
+    reversals = sum(1 for p, q in zip(signs, signs[1:]) if p != q)
+    assert reversals <= 4, reversals          # up and back down: one turn (was 18)
+    assert close == 0                          # fingers compress, but never overlap
+    # arpeggios (thirds and wider) are not runs: their motion is untouched
+    arp = [60, 64, 67, 72, 76, 79, 84, 88, 91, 96]
+    b = hands.HandAnimator(song_of(notes_at(arp + arp[-2::-1], step=0.09)), RIGHT)
+    assert b.runs == []
+
+
+def test_hand_flattens_for_an_octave_and_spreads_like_a_real_hand():
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    # the span pose (thumb 72 deg out, little finger 45 deg) is the pianist's span
+    geo = hands.HandGeometry()
+    assert abs(geo.span_units() * hands.INCHES_PER_UNIT - hands.HAND_SPAN_IN) < 0.01
+    octave = [Note(60, 1.0, 2.0, 80, 0, RIGHT, 1), Note(72, 1.0, 2.0, 80, 0, RIGHT, 5)]
+    third = [Note(60, 1.0, 2.0, 80, 0, RIGHT, 1), Note(64, 1.0, 2.0, 80, 0, RIGHT, 3)]
+    a = hands.HandAnimator(song_of(octave), RIGHT)
+    b = hands.HandAnimator(song_of(third), RIGHT)
+    for x in (a, b):
+        x._ensure_layout(kb)
+    assert abs(a._low(1.5) - (1 - hands.FLAT_DROP)) < 1e-6     # an octave: the hand drops and flattens
+    assert b._low(1.5) == 1.0                                  # a third: its usual height
+    # both keys of the octave under their fingers while held
+    wx, wy, psi = a._limited_at(1.5)
+    tips = a._limited_tips(1.5)
+    for f, n in ((1, octave[0]), (5, octave[1])):
+        kx, _ = a.key_target(n.pitch, f, n)
+        tip = a._limit_tip(f, tips[f], wx, wy, psi, 0.0, a._key_weight(f, 1.5)[0], a._low(1.5))
+        assert abs(tip[0] - kx) < 0.1 * kb.white_w
+    # in the air the little finger keeps a comfortable spread, not its full stretch
+    lo, hi = a._splay_at(5, 0.0, stretch=0.0)
+    assert abs(math.degrees(hi) - hands.SPLAY_COMFORT_DEG[5][1]) < 1e-9
+
+
+def test_a_short_thumb_still_rests_in_a_curve():
+    import math
+    import pianist
+    from hands import HandGeometry, static_skeleton, NATURAL_THUMB_REACH
+    for change in ({}, {"mc1": 3.6, "pp1": 2.5, "dp1": 2.1}):
+        anatomy = dict(pianist.active().anatomy)
+        anatomy.update(change)
+        geo = HandGeometry(anatomy)
+        th = static_skeleton(geo, "natural")["struct"]["chains"][1]
+        assert math.dist(th[0], th[-1]) <= NATURAL_THUMB_REACH * sum(geo.bones[1]) + 1e-6, change
+
+
+def test_a_tremolo_is_played_from_one_place(screen):
+    # Dante Sonata's opening tremolo: Eb-A-Eb (5-3-1) over and over, the left hand
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ps = [27, 33, 39] * 10
+    notes = [Note(p, 1.0 + 0.08 * i, 1.0 + 0.08 * i + 0.07, 80, 1, LEFT) for i, p in enumerate(ps)]
+    tracks = [TrackInfo(0, "Right", 0, 1, RIGHT), TrackInfo(1, "Left", 0, 1, LEFT)]
+    a = hands.HandAnimator(MidiSong(notes, tracks, 5.0, [], []), LEFT)
+    assert len(a.trems) == 1 and a.trems[0][0] == notes[0].start
+    a._ensure_layout(kb)
+    xs = [a._pose_wrist(a.pose(1.4 + 0.01 * i, kb))[0] for i in range(150)]
+    assert (max(xs) - min(xs)) / a.ppi < 0.25, (max(xs) - min(xs)) / a.ppi      # the wrist holds still
+    # and the figures that aren't tremolos aren't: a scale, an arpeggio, a repeated note
+    for ps in (list(range(48, 72)), [48, 52, 55, 60, 64, 67, 72, 67, 64, 60, 55, 52, 48], [60] * 12):
+        ns = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate(ps)]
+        b = hands.HandAnimator(MidiSong(ns, tracks, 5.0, [], []), RIGHT)
+        assert b.trems == [], ps
+
+
+def test_hands_start_uncrossed(screen):
+    # Dante Sonata: the left hand starts alone, above where the right hand will come in much later
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, t, t + 0.5, 80, 1, LEFT) for t in (1.0, 2.0, 3.0) for p in (57, 69)]
+    ns += [Note(p, 6.0, 6.5, 80, 0, RIGHT) for p in (45, 48, 54)]
+    s = song_of(ns, 7.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    for t in (0.0, 0.5, 1.0, 2.5):
+        x = {h: an[h]._pose_wrist(an[h].pose(t, kb))[0] for h in an}
+        assert x[RIGHT] > x[LEFT], t
+
+
+def test_the_idle_pull_stops_at_the_next_notes(screen):
+    # Op. 25 No. 6: the right hand rests far from the left one; drawn toward it,
+    # it never passes the chord it plays next (and so never jerks back)
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, 0.3 * i, 0.3 * i + 0.25, 70, 1, LEFT) for i in range(30) for p in (44, 51)]
+    ns += [Note(p, 1.0, 1.4, 80, 0, RIGHT) for p in (91, 94)] + [Note(p, 4.0, 4.4, 80, 0, RIGHT) for p in (76, 80)]
+    s = song_of(ns, 9.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    r = an[RIGHT]
+    r._ensure_layout(kb)
+    xn = r._hand_at(4.0)[0]
+    xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
+    assert min(xs) > xn - 0.3 * kb.white_w, (min(xs), xn)
+
+
+def test_a_hand_resting_where_it_plays_next_stays_put(screen):
+    # Op. 25 No. 6 at 0:25: the right hand rests high up between two passages
+    # there, while the left plays far below; it isn't drawn down and back
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, 0.3 * i, 0.3 * i + 0.25, 70, 1, LEFT) for i in range(30) for p in (44, 51)]
+    ns += [Note(p, 1.0, 1.4, 80, 0, RIGHT) for p in (94, 97)] + [Note(p, 4.0, 4.4, 80, 0, RIGHT) for p in (95, 98)]
+    s = song_of(ns, 9.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    r = an[RIGHT]
+    r._ensure_layout(kb)
+    xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
+    assert min(xs) > r._limited_at(1.45)[0] - 0.3 * kb.white_w, (min(xs), max(xs))   # never drawn down

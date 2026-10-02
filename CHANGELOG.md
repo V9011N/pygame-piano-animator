@@ -2,6 +2,121 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0551 - Resting hands stay by their next notes
+- A resting hand is no longer drawn toward the other hand when it plays next where it is (Chopin's
+  Op. 25 No. 6 at 0:25: the right hand stays up high between its passages).
+- A resting hand moved to the notes it plays next stays there until it plays them, instead of
+  sliding back across them (and, in Op. 25 No. 6 near the end, across the other hand).
+
+## v2026.10.02.0534 - Hands start uncrossed, no overshoot when resting
+- The hands no longer start a piece crossed: a hand that comes in later waits on its own side of
+  the one that plays first (the beginning of the Dante Sonata).
+- A resting hand drawn toward the playing one no longer goes past the notes it plays next and
+  jerks back (Chopin's Op. 25 No. 6 after the rising chromatic thirds).
+
+## v2026.10.02.0518 - Steady tremolos
+- Tremolos and trills are now recognised as a figure: the hand plays them from one place, the
+  wrist still and each finger staying over its key, instead of swinging toward every note (the
+  left hand's twitching fingers at the start of the Dante Sonata, Hanon 60).
+- When a tremolo moves to a new position the hand moves with it.
+
+## v2026.10.02.0455 - Knuckle lines, short thumbs curve
+- The cartoon hand shows the knuckles where the fingers meet the hand: a short line across each
+  finger and the thumb.
+- Fixed: in the Pianists & hands studio, a short thumb was drawn straight in the natural resting
+  curve; it now curves like any other.
+
+## v2026.10.02.0446 - Chords between glissandos
+- Fixed: chords played between glissandos were missed, the hand still travelling from the
+  glissando (Liszt's Hungarian Rhapsody No. 10 at 4:27 and through the glissando section). The
+  hand is now always back in place for the next chord, and leaves for a glissando only once its
+  last keys are let go; when time is short it sets off as soon as the glissando ends.
+
+## v2026.10.02.0316 - Thumb glissando arm lean
+- In a thumb glissando the forearm leans toward the way the hand slides, elbow trailing, as if
+  pushing the thumb along the keys.
+
+## v2026.10.02.0309 - Glissando travel at top speed, thumb nail sliver
+- Fixed: going to or from a glissando the hand could jump across the keyboard (up to 2.5 times
+  its top speed, e.g. Liszt's Hungarian Rhapsody No. 10 at 4:23). It now travels there at no more
+  than its top speed, easing in and out; between two glissandos close together it glides straight
+  from one to the next.
+- Fixed: a glissando starting while the last one was still fading out made the hand snap away.
+- Palm-up glissandos show a sliver of the thumb's nail along its edge toward the fingers.
+
+## v2026.10.02.0250 - Glissando hands refined
+- Thumb glissandos: the thumb's nail is drawn flush with the thumb's outer edge, on the keys.
+- Palm-up glissandos: the fingers lie flush against each other (each finger's outline still
+  shows), and the thumb is tucked across the palm.
+- Glissandos close together no longer keep the hand in its glissando pose when the next one
+  starts more than 5 keys away from where the last ended: the hand may go back to rest between
+  them.
+
+## v2026.10.02.0238 - Thumb glissando clear of the black keys
+- The fist in a thumb glissando no longer runs into the black keys: the thumb slides a little
+  lower on the white keys, so the knuckles stay just in front of the black ones.
+
+## v2026.10.02.0236 - Thumb glissando on the keys
+- In a thumb glissando the hand now sits up on the keys like a real one: a fist with its knuckles
+  over the keys, the thumb straight alongside it, its nail sliding further up the keys.
+
+## v2026.10.02.0231 - Palm lines, thumb glissandos
+- When the hand is turned palm up for a glissando, the palm's lines (heart, head and life lines)
+  are drawn, so it's clear it is the palm you see.
+- Glissandos toward the thumb (right hand going down, left hand going up) are now played with the
+  thumb: fingers 2-5 curled right in, the thumb straight out and lying along the keys, its nail
+  sliding on them. Turning round between glissandos goes smoothly from one pose to the other.
+
+## v2026.10.02.0218 - Simpler glissando pose
+- The glissando hand is now flat and turned palm up, the fingers straight and together, the thumb
+  tucked in beside them, sliding the backs of the fingers along the keys with the fingers trailing.
+- It turns over smoothly as it goes into and out of a glissando; only the thumb's nail shows.
+
+## v2026.10.02.0211 - Glissando pose, like a real hand
+- The glissando hand now looks like a real one: the back of the hand stays up and leads the way
+  it slides, the hand turned so the fingers trail, all the fingertips and the thumb gathered
+  together at one point on the keys.
+- Only the thumb's nail shows in the glissando pose (the fingers are curled under).
+
+## v2026.10.02.0159 - Glissandos
+- The hands now play glissandos: a quick string of white keys (or black keys) going one way is
+  slid with the fingers pinched together and straight, the back of the hand facing the way it
+  goes, the nails gliding along the keys.
+- New pianist settings (Glissandos): whether to spot and slide them, the longest gap between
+  notes (50 ms), the fewest notes (6), and how long a break between glissandos the hand keeps
+  its glissando pose through (1 s).
+- Glissando notes show "g" in the player and the fingering editor. In the editor, select a string
+  of notes and choose Glissando from the right-click menu (or press G) to mark one yourself; it is
+  saved with the exported file.
+
+## v2026.10.02.0137 - A real hand's spread, thumb on its side
+- The hand's span is now measured with the thumb and little finger stretched out the way a real
+  hand spreads over the keys, so hands are drawn at a realistic size for their span (about 20%
+  smaller than before) and look properly stretched in the hand span view.
+- For wide chords like octaves the hand flattens and drops a little, so the thumb and little
+  finger reach the full span; fingers in the air keep a relaxed spread.
+- The thumb is drawn on its side, as it lies when playing: a narrow nail along its outer edge.
+
+## v2026.10.02.0110 - Steady wrist in scales
+- In scale runs (diatonic and chromatic) the wrist now glides steadily along the keyboard
+  while the fingers do the crossing, instead of jerking at every thumb crossing.
+- The fingers may draw together to let the wrist glide, but never overlap.
+- Arpeggios move exactly as before.
+
+## v2026.10.02.0049 - Free hand takes over, textbook scales and arpeggios
+- When a file's tracks give one hand more than it can reach at its top speed, while the other
+  hand is free, the free hand now takes those notes (the alternating passage at 0:57 of the
+  Rachmaninoff 3 ossia cadenza, written all in one track). Everywhere else the tracks' hands are
+  kept exactly, hand crossings included.
+- Long scales and arpeggios keep their standard fingering: a two-octave scale no longer drifts
+  into 3-2-1 crossings (the left hand of Chopin's Concerto No. 1 ending), and arpeggios no longer
+  swap patterns on the way down.
+- Fixed: B major and B minor scales put the left thumb on F#; the standard 4-3-2-1 (thumb on E
+  and B) is used now.
+- Harmonic minor scales are recognised across their augmented second, very fast and uneven
+  runs are no longer mistaken for chords, and a run that starts from a chord in the same hand
+  carries on from it.
+
 ## v2026.10.02.0013 - Equal keys
 - New "Keys" button on the main menu switches between the realistic keyboard and equal keys,
   after PASHKULI's design: every key's back, black or white, has the same width, so every

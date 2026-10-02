@@ -53,10 +53,10 @@ MIN_NAME = {0: 'C', 1: 'C#', 2: 'D', 3: 'Eb', 4: 'E', 5: 'F', 6: 'F#', 7: 'G', 8
 # Scale thumb notes per key: (right hand, left hand) - standard fingerings, as in Hanon 39
 THUMBS = {
     ('C', 'maj'): ('C F', 'C G'), ('G', 'maj'): ('G C', 'G D'), ('D', 'maj'): ('D G', 'D A'),
-    ('A', 'maj'): ('A D', 'A E'), ('E', 'maj'): ('E A', 'E B'), ('B', 'maj'): ('B E', 'B F#'),
+    ('A', 'maj'): ('A D', 'A E'), ('E', 'maj'): ('E A', 'E B'), ('B', 'maj'): ('B E', 'E B'),
     ('F#', 'maj'): ('B F', 'B F'), ('Db', 'maj'): ('F C', 'F C'), ('Ab', 'maj'): ('C F', 'C G'),
     ('Eb', 'maj'): ('F C', 'G D'), ('Bb', 'maj'): ('C F', 'D A'), ('F', 'maj'): ('F C', 'C F'),
-    ('A', 'min'): ('A D', 'A E'), ('E', 'min'): ('E A', 'E B'), ('B', 'min'): ('B E', 'B F#'),
+    ('A', 'min'): ('A D', 'A E'), ('E', 'min'): ('E A', 'E B'), ('B', 'min'): ('B E', 'E B'),
     ('F#', 'min'): ('A D', 'B F'), ('C#', 'min'): ('E A', 'E C'), ('G#', 'min'): ('B E', 'B G'),
     ('Eb', 'min'): ('F B', 'F B'), ('Bb', 'min'): ('C F', 'C F'), ('F', 'min'): ('F C', 'C F'),
     ('C', 'min'): ('C F', 'C G'), ('G', 'min'): ('G C', 'G D'), ('D', 'min'): ('D G', 'D A'),
@@ -64,7 +64,7 @@ THUMBS = {
 # melodic minors whose raised 6th/7th move the thumb going up (and back coming down)
 MEL_UP = {('Eb', 'min'): ('F C', 'F C'), ('G#', 'min'): ('B F', 'B G'), ('F#', 'min'): ('A D#', 'B F'),
           ('C#', 'min'): ('E A#', 'E C')}
-MEL_DOWN = {('Eb', 'min'): ('F B', 'F B'), ('G#', 'min'): ('E B', 'B F#'), ('F#', 'min'): ('A D', 'B E'),
+MEL_DOWN = {('Eb', 'min'): ('F B', 'F B'), ('G#', 'min'): ('E B', 'B E'), ('F#', 'min'): ('A D', 'B E'),
             ('C#', 'min'): ('E A', 'E B')}
 
 # Krumhansl-Kessler key profiles
@@ -400,7 +400,9 @@ def octave_pair(lo, hi, hand):
 # ----------------------------------------------------------------- detection
 # (scales are suggested lightly: pianists finger short scale runs in real music more freely
 #  than Hanon does - measured on the PIG dataset, see learn_weights.py)
-W_SCALE, W_CHROM, W_ARP, W_OCT, W_THIRDS, W_SIXTHS, W_REP, W_TRILL = 0.75, 3.0, 2.5, 4.0, 3.0, 2.0, 1.5, 2.0
+W_SCALE, W_CHROM, W_ARP, W_OCT, W_THIRDS, W_SIXTHS, W_REP, W_TRILL = 0.75, 3.0, 5.0, 4.0, 3.0, 2.0, 1.5, 2.0
+W_SCALE_LONG = 3.0          # ... a run of SCALE_LONG notes or more one way is a real scale
+SCALE_LONG = 9
 # a quick repeated pair before an outward leap (2-1 then 5)
 W_REP_LEAP = 25.0
 W_REP_RUN = 6.0             # runs of 3+ quick repeats (Hanon 44-47)
@@ -448,8 +450,13 @@ def detect(groups, hand, context=None, vpitch=None):
         notes = [groups[g][1][0] for g in run]
         ps = [n.pitch for n in notes]
         ts = [n.start for n in notes]
+        # a run that carries on a step from a chord just before it (the
+        # thumb on an octave's top, say) isn't starting afresh
+        g0 = run[0]
+        carries_on = g0 > 0 and ts[0] - groups[g0 - 1][0] <= GAP and \
+            any(1 <= abs(n.pitch - ps[0]) <= 2 for n in groups[g0 - 1][1])
         _repeated_and_trills(notes, ps, ts, hand, put)
-        _stepwise(notes, ps, ts, hand, context, put)
+        _stepwise(notes, ps, ts, hand, context, put, carries_on)
         _arpeggios(notes, ps, hand, vp, put)
         _broken_octaves(notes, ps, hand, put)
 
@@ -594,16 +601,35 @@ def _repeated_and_trills(notes, ps, ts, hand, put):
         i += 1
 
 
-def _stepwise(notes, ps, ts, hand, context, put):
-    """Scales and chromatic runs."""
+def _is_step(ps, k):
+    """
+    Is ps[k] -> ps[k + 1] a scale step: a semitone or tone, or a harmonic
+    minor's augmented second (three semitones) between steps going the same
+    way - but not a run of minor thirds (a diminished seventh arpeggio).
+    """
+    d = abs(ps[k + 1] - ps[k])
+    if 1 <= d <= 2:
+        return True
+    if d != 3:
+        return False
+    up = ps[k + 1] > ps[k]
+
+    def step(j):
+        return 0 <= j < len(ps) - 1 and 1 <= abs(ps[j + 1] - ps[j]) <= 2 and (ps[j + 1] > ps[j]) == up
+    before, after = step(k - 1), step(k + 1)
+    return (before or k == 0) and (after or k == len(ps) - 2) and (before or after)
+
+
+def _stepwise(notes, ps, ts, hand, context, put, carries_on=False):
+    """Scales and chromatic runs (`carries_on`: the run continues from a chord before it)."""
     n = len(ps)
     i = 0
     while i < n - 1:
-        if not (1 <= abs(ps[i + 1] - ps[i]) <= 2):
+        if not _is_step(ps, i):
             i += 1
             continue
         j = i + 1
-        while j + 1 < n and 1 <= abs(ps[j + 1] - ps[j]) <= 2:
+        while j + 1 < n and _is_step(ps, j):
             j += 1
         seg = list(range(i, j + 1))
         i = j
@@ -660,7 +686,10 @@ def _stepwise(notes, ps, ts, hand, context, put):
                 continue
             key, mel = k
             tu, td = thumb_sets(key, hand, mel)
-            opening = b[0] == 0 or abs(sp[b[0]] - (ps[seg[b[0]] - 1] if seg[b[0]] > 0 else 999)) > 2
+            if seg[b[0]] == 0:
+                opening = not carries_on                  # the run's own first note
+            else:                                         # after a leap, or the start of the stepwise part
+                opening = b[0] == 0 or abs(sp[b[0]] - ps[seg[b[0]] - 1]) > 2
             fs = scale_fingering(bp, tu, hand, td, key_scale(key, mel), opening=opening)
             # a run that stops at its top (RH) / bottom (LH) and leaps away
             # ends on the next finger, not on a thumb out on its own
@@ -669,8 +698,11 @@ def _stepwise(notes, ps, ts, hand, context, put):
             if ends_open and len(fs) > 1 and fs[-1] == 1 and fs[-2] in (3, 4):
                 if (hand == RIGHT and bp[-1] > bp[-2]) or (hand == LEFT and bp[-1] < bp[-2]):
                     fs[-1] = fs[-2] + 1
+            # a real scale - more than an octave one way - is played the
+            # standard way; a short run is left freer (the PIG pianists)
+            w = W_SCALE_LONG if best >= SCALE_LONG else W_SCALE
             for q, f in zip(b, fs):
-                put(notes[seg[q]], f, W_SCALE)
+                put(notes[seg[q]], f, w)
 
 
 def _arpeggios(notes, ps, hand, vp, put):

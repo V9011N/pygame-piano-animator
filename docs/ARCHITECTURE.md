@@ -116,6 +116,20 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
+  - **Track hands** (2026-10-02): every note goes through the split now, not only notes whose track doesn't say.
+    A hand the track gives (by name, or two tracks in different registers) is a preference (`prefer`): leaving it
+    costs `TRACK_PRIOR` 200 per note - in effect fixed - except within `TRACK_FREE_T` 0.5 s of a move that hand
+    would need to make more than `TOO_FAST_TRACK` 50% over the top speed (`_too_fast`, `_track_weights`); there it
+    costs only `TRACK_PRIOR_SOFT` 1, so the free hand takes the notes. Each group also tries the tracks' split
+    exactly (k = -1), so crossings written into the tracks survive. Only hands from fingering markers are fixed.
+    - Why: the ossia cadenza of Rachmaninoff 3 puts both hands' notes of the alternating passage at 57.5-62.6 s in
+      the LH track (chord low, octave two octaves up, every 0.08 s). Moves > 25% over the top speed: 47 -> 8 (the
+      rest are 30-50% over and were there before); notes struck > 40 ms late in the passage 98 -> 5, in the piece
+      146 -> 53. Nothing else in it changes. Op. 25 No. 10 changes one note (44.67 s, where both hands leap at once);
+      Winter Wind, Dante, Ocean, Concerto No. 1: unchanged.
+    - A lower prior (6, 15, 40 per note) also moved notes where long held basses (pedal notes baked into the MIDI)
+      trip the span/load costs - not the free hand's business; a 25% threshold opened windows around mild excesses
+      where the soft split made things worse (109.5 s: 0.2 s late).
 - Merged-Hanon accuracy: 99.8% (the main error is Exercise 40).
 - Op. 10 No. 4: excursions toward the other hand dropped from 13 to 4. The remaining 4 follow the score (broken-octave drops).
 - Diagnostics:
@@ -128,16 +142,29 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `detect(groups, hand, context, vpitch)` returns {id(note): (finger | frozenset of acceptable fingers, weight)}.
 - The planner pays `W["figure"]·weight` for leaving a suggestion, so physical limits and context still win when necessary.
 - Figures:
-  - **Scales** (single-note stepwise runs whose longest one-way stretch is ≥ 6 notes, so 5-finger patterns are left alone):
+  - **Scales** (single-note stepwise runs whose longest one-way stretch is ≥ 6 notes, so 5-finger patterns are left alone;
+    a harmonic minor's augmented second counts as a step between steps going the same way, `_is_step` - not a run
+    of minor thirds):
     - The key comes from `find_key`: keys whose scale contains the run, scored by Krumhansl-Kessler correlation with the notes ±2 s around, plus a tonic bonus at the start/end. Melodic minor is an option.
     - Standard thumb notes per key and hand (`THUMBS`, `MEL_UP/DOWN`), fingered with `scale_fingering`: count scale steps to the thumb; the RH opening counts 2-3-4.
     - A run that stops at its top (RH) or bottom (LH) and leaps ends on the next finger, not the thumb.
+    - A run that carries on a step from a chord just before it in the same hand isn't an opening (no 2-3-4 / LH
+      5 start): the thumb on an octave's top note leads straight into it.
+    - Weight `W_SCALE` 0.75 for short runs (the PIG pianists finger them freely), `W_SCALE_LONG` 3.0 for a run of
+      `SCALE_LONG` 9+ notes one way: a real scale. The learned weights price 4 over the thumb at 9.6 (3 over: 6.4),
+      so at 0.75 a fast two-octave scale drifted into 3-2-1 crossings (Concerto No. 1's closing E major, LH).
+    - `THUMBS` corrected (2026-10-02): B major and B minor LH 4-3-2-1 with the thumb on E and B (was B and F#, a
+      black key); G# melodic minor descending LH thumbs B and E (was F#).
   - **Chromatic**: ≥ 4 semitone steps in one direction. RH 1/3 with 2 on C,F; LH 2 on E,B; RH top C gets 5.
   - **Arpeggios**: close-position runs (thirds/fourths, plus the step 7th→root) over more than 13 semitones, whose pitch classes form a triad or seventh.
     - Root-position triads use Hanon's ARP table (24 keys).
     - Sevenths starting on the root: 1-2-3-4 (LH 1-4-3-2). Dim7/aug take the starting note as root.
     - Otherwise the best cyclic map (`arpeggio_map`: thumb on a white key, widest gap across the crossing).
     - RH top / LH bottom gets 5.
+    - Weight `W_ARP` 5.0 (was 2.5: the planner took 3 over the thumb instead of the book's 4, or turned the pattern
+      round on the way down).
+    - Not detected: open-position arpeggios (fifths, sixths, an octave+ per hand position - Op. 10 No. 1, Op. 25
+      No. 12); they're left to the planner.
   - **Repeated notes**: 3-2-1 (4-3-2-1 for groups of 4).
   - **Trills** (≥ 6 alternations of neighbouring notes): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
   - **Octaves**: in octave passages, 1-5 with 4 on black keys (LH mirrored). A lone octave allows 4 or 5. Broken octaves are handled too.
@@ -148,8 +175,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - **Trills in sixths/fourths**: (1,4)/(2,5).
   - **Other sixths**: 1-5 (4 on black).
 
+- **Textbook benchmark** (2026-10-02; tests/test_figures.py, and a fuller script in the session scratchpad): scales
+  in all 24 keys, both hands, 2-4 octaves, up and down, from the 2nd degree, with timing jitter, against fingerings
+  written out independently (ABRSM / Hanon); root-position arpeggios against the book's table.
+  - Scales: suggestions 88.4% -> 100%, planned 86.5% -> 99.4% (the rest: a run's opening 2-3-4, its turns and ends,
+    where books differ).
+  - Fast (24 notes/s) uneven, after a chord or over a held bass: suggestions 59.7% -> 93.5%, planned 89.3% -> 99.6%.
+  - Arpeggios: planned 85.7% -> 93.6% (the rest: LH 3 or 4 over the thumb; the RH ending on its starting finger).
+  - Melodic minors and dominant / diminished sevenths: covered by suggestions, no same finger on neighbours.
+  - Real pieces: Winter Wind and the demo unchanged; Dante 24 notes, Ocean 36, Concerto No. 1 208 (its scales).
+
 ## Fingering planner (fingering.py)
 - Right-hand frame (LH mirrored about D4). A beam search (32 candidates) over chords, keeping full history.
+- `group_notes`: onsets within `CHORD_TOL` 30 ms form a chord - except a note a step (1-2 semitones) from a lone
+  note struck `RUN_SPLIT_T` 8+ ms before it, which is the next note of a fast run (24 notes/s played unevenly put
+  neighbours closer than 30 ms, and the "chord" broke the scale). The animator's groups come from here too.
+- Not re-measured on PIG / Hanon for the 2026-10-02 figure changes (the data isn't in the cloud sessions): run
+  `pig_eval.py` locally. The textbook benchmark above covers Hanon 39 and 41's figures.
 - Costs (`W`):
   - Stretch/cramp.
   - `chord_stretch_adj` 1.2: neighbouring long fingers held more than 1.2 keys apart (thirds want 1-3/2-4/3-5).
@@ -274,6 +316,8 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - A shadow pass is drawn on a cached SRCALPHA surface, offset by each part's height.
 - **The four styles**:
   - `cartoon`: skin with a warm outline, nails, creases, and a white cuff with a button above a coloured sleeve.
+    The MCP knuckles (metacarpal to first phalanx) get a short line across the finger, bowed toward the tip
+    (`_knuckle`, `KNUCKLE_ARC`; not when the palm is up, nor when the phalanx is seen end-on).
     Nails (`_nail`) follow the distal phalanx's true pitch (its screen length against the height drop): flat, the nail
     sits short of the tip; as the tip curls down it is foreshortened along the finger (to no less than 0.7 r) and its
     free edge slides out to the end of the finger's outline, so the skin in front of it disappears and the squashed
@@ -303,7 +347,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `hands.curl_factor(p) = 1 + 1.1·(0.636 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the fingertips sit. The range runs from 1.7 (flat) to 0.6 (curved).
   - The hand's height offset is `z_off = 0.9·(c − 0.636)` in. It is applied in `world()` and in `base_local`.
   - Flatter settings may extend up to 0.09 more of the finger length than `REACH_COMFORT` allows.
-  - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view.
+  - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view. Its resting targets
+    are pulled in to `REACH_COMFORT` (fingers) and `NATURAL_THUMB_REACH` 0.93 (thumb, the default thumb's own
+    curve) of each chain's length: a short thumb couldn't reach its resting spot and was drawn straight.
   - Measured mean PIP+DIP bend on Prelude 24: 81° at 0 %, 107° at 50 %, 114° at 100 % (the bend limit).
   - Fingertip accuracy on keys is unchanged or better.
 - **Thumb web** (2026-09-27): `skins._Hand._make_web()` builds the first web space (thenar web) as a polygon from the thumb CMC and MCP to the index metacarpal.
@@ -333,6 +379,20 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     1.5 spans from the other hand's average place over the last 1.2 s, so it loosely follows. It isn't pushed past
     1.5 in inside the keyboard's end. The other hand is sampled every 0.1 s; shifts are solved at 30 Hz and averaged
     over ±0.25 s. The hand's turn follows the forearm's natural yaw at the new place.
+  - Before a hand's first note, when the other hand plays first, the other hand counts as playing from t = 0
+    (`_first_t`): the waiting hand is kept on its own side from the start (Dante Sonata's RH used to sit at its first
+    notes, below the LH's, crossed until the LH began and then jump aside).
+  - Never across the notes it plays next (`_idle_shift_parts`, `_short_of_next`): the pull toward the other hand (the
+    1.5-span follow) may only bring the hand toward where it plays next - a hand resting where it plays next stays
+    put (Op. 25 No. 6 at 0:25 the RH, resting high up, was drawn ~8 in down and back) - and never past it (16.0-16.8 s
+    it overshot its next chord by ~1.5 in and jerked back). Moved as far as its next notes, either way, the hand
+    stays there until it plays them: that part is a share of the way there (smoothed as a share in `_placed_at`, so
+    the average of shifts taken from different places can't wobble it), weighted by how far into its rest the hand
+    is (`_idle_rise`) - not by the other hand's rests, nor faded ahead of the notes. Beyond its next notes it may
+    only be pushed out of the other hand's way (that part fades as usual). Before, when both hands rested at once,
+    the push faded and the hand fell back past its next chord - crossing the other hand at Op. 25 No. 6 164.9 s.
+    Idle-hand reversals (> 3 in/s, idle > 0.1) Op. 25 No. 6 R 15 → 3, L 2 → 2; Dante R 4 → 3, L 2 → 0; crossed
+    samples Op. 25 No. 6 1 → 0, Dante 5 → 0.
   - `crossing_episodes` treats a hand with idle weight above 0.5 as out of the way, so a leap by the playing hand past
     the idle one is no longer an episode; a hand playing on the other side still is.
   - Cost: a cold seek into a long idle stretch ~60 ms (memory capped at 8 s, the time to drift across the keyboard);
@@ -390,7 +450,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 
 ## hands.py design (animation)
 - The LH is a mirrored RH (axis_x/_mx). Shoulders at E3 (LH) and C5 (RH).
-- Joint limits (hand frame, + toward the pinky): thumb −64/+34, index −24/+10, middle ±12, ring −12/+14, pinky −8/+24. Press slack 6° (pinky 3°). Wrist deviation 26° CW / 8° CCW.
+- Joint limits (hand frame, + toward the pinky; see "A real hand's spread" below): full stretch for keys held or struck thumb −85/+34, index −36/+14, middle ±26, ring −22/+24, pinky −12/+55; in the air thumb −64, index −24/+10, middle ±18, ring −15/+16, pinky +24. Press slack 6° (pinky 3°). Wrist deviation 26° CW / 8° CCW.
 - Crossing turn: 14° toward the pinky for thumb-under, the other way for finger-over, decided by which note starts later.
 - Pose per moment:
   - `_items_at` → (pitch, finger, pull, need, note_start, released).
@@ -532,6 +592,131 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     1522 chords struck late (median 15 ms, max 84 ms). Pressed-tip frames > 0.3 key off 101 → 80, worst 1.80 → 0.78.
     156 notes changed hands and 337 fingers; the bundled MIDIs are unchanged. Loading: split 0.8 → 1.2 s (beam 32),
     plan unchanged; ~1.4 ms per hand per frame (demo), cold seek ~60-100 ms.
+- **Scale runs: the wrist glides** (2026-10-02): at every thumb crossing the solved hand stepped to the next
+  position and the crossing turn swung in and out, so in a scale the wrist went back and forth (C major RH, 3
+  octaves up and down: 18-21 lateral reversals; chromatic: 25-26).
+  - `_find_runs`: `RUN_MIN_NOTES` 7+ single notes in a row, each a step (1-2 semitones, or 3 right after a step - a
+    harmonic minor's augmented second), at most `RUN_GAP_T` 0.3 s apart. Arpeggios (thirds and wider) never qualify,
+    so their motion is untouched. `_run_w(t)` eases in and out over `RUN_RAMP_T` 0.15 s.
+  - `_hand_at`: in a run the solved hand (position and turn) is averaged over +-`RUN_GLIDE_T` 0.25 s, from poses
+    within the run only (`_hand_avg`), blended in by `_run_w`: a steady glide, the turn evened out.
+  - Fingers compress to let it: the splay limits widen toward the hand's middle by `RUN_COMPRESS_DEG` (2: +10° toward
+    3, 3: ±6°, 4 and 5: 8° / 10° toward the thumb) in the solver, the key fit and the tip clamps (`_splay_at`), and
+    `_separate` keeps fingertips 2-5 at least `TIP_GAP_WK` 0.6 white keys apart across the hand (a finger on its key
+    stays put; fully applied from a third of the ease-in): compressed, never overlapping.
+  - Results (wrist reversals / RMS jerk / RMS turn rate / frames with fingertips 2-5 < 0.3 key apart):
+    C major RH 0.065 s 21 → 4 / 126 → 53 / 109 → 51 deg/s / 139 → 0; E major LH 29 → 2 / 134 → 49 / 114 → 44 / 174 → 0;
+    chromatic RH 26 → 2 / 96 → 9 / 81 → 23 / 228 → 0. Concerto No. 1, 690-713 s: reversals R 85 → 49, L 96 → 38;
+    pressed tips > 0.1 key off R 86 → 69, L 55 → 52. Arpeggios, Winter Wind (20-30 s) and Ocean: identical.
+    Frame cost unchanged (5.7 → 5.8 ms for both hands).
+- **Tremolos: the hand holds still** (2026-10-02; Dante Sonata's opening LH tremolo Eb-A-Eb, 5-3-1, 11.4-16.9 s;
+  Hanon 60): the solved hand followed each strike - the wrist swung ~1.4 in toward every note, 6 times a second, and
+  the idle fingers, keeping their places, flicked ~1 in against it (LH wrist path 24.6 in in 5.3 s, each finger
+  ~28 in more relative to the wrist).
+  - `_find_tremolos` (tremolos and trills, by strike groups): `TREM_MIN_NOTES` 6+ strikes at most `TREM_GAP_T` 0.3 s
+    apart, repeating with one period p of 2-`TREM_PERIOD` 4 strikes - every key or chord is struck again p strikes
+    later or was p before (so a note that moves on, the middle note going up a semitone, keeps it going), at least
+    two different ones. A plain repeated note (p = 1), a scale, an arpeggio, Winter Wind's alternating line and
+    Ocean's figures don't qualify. Pieces split by a stray chord (two notes landing together) within a period are
+    joined; a tremolo whose lowest or highest key jumps by more than `TREM_JUMP` 4 semitones (Hanon 60 moving to a new
+    position) starts again there, so the hold never straddles a move.
+  - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
+    inside it (`_trem_w`, so the hand is free by the next figure).
+  - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's
+    last / next `TREM_PERIOD` strikes, the nearer when they differ) counts as on its key throughout, so the fit
+    doesn't pull the hand toward whichever finger is down at the moment.
+  - Results: Dante LH 11.5-16.8 s wrist path 24.6 → 7.5 in, fingers' lateral path relative to the wrist ~28 → ~11 in;
+    pressed tips > 0.3 key off in the tremolos of Dante, Hanon 60 and Winter Wind: 0 → 0 (max 0.3). Scales,
+    arpeggios, Concerto No. 1, Winter Wind 20-30 s and Ocean: identical.
+- **A real hand's spread** (2026-10-02; from a photo of the author's hand stretched over the keys):
+  - The span (`HandGeometry.span_units`, which sets `INCHES_PER_UNIT`) was measured with the thumb 50° and the
+    little finger 22° out, so the hand was 27% bigger than its span says and never looked stretched. Now thumb 72°,
+    little finger 45° (`_THUMB_MAX_ABD`, `_PINKY_MAX_ABD`), and the span view's index −22°, ring +8° - the middle
+    three close together, as in the photo. The default hand's middle finger is 3.1 in (was 3.9).
+  - Playing: `SPLAY_LIMIT_DEG` is the full stretch, for keys a finger holds or is about to strike; a finger in the air
+    keeps `SPLAY_COMFORT_DEG` (the old limits), blended by `_key_weight` (`_splay_at(f, comp, stretch)`) - otherwise
+    a little finger heading for a far key stuck straight out sideways.
+  - Flattening (`_low(t)`): the smaller hand couldn't reach octaves from its usual height (knuckles above the keys,
+    so a finger reaches ~3/4 of its length across). Held / struck keys spread `FLAT_SPAN_WK` 4.5-6.5 white keys
+    (outermost) or more lower the knuckles by up to `FLAT_DROP` 0.6, as a pianist flattens the hand for an octave:
+    in the reach ranges (solver, key fit, tip clamps) and in the drawn pose.
+  - Pressed tips > 0.1 key off (old -> new): Op. 25 No. 10 0-20 s R 131 -> 127, L 160 -> 170; Dante 140-155 s
+    R 28 -> 24, L 58 -> 53; Winter Wind 20-35 s 25 -> 23; demo R 1 -> 1, L 47 -> 37. Without flattening and the
+    wider stretch: Op. 25 No. 10 R 942, Dante R 819. Arpeggios: the smaller hand turns a little more (C major RH
+    turn rate 101 -> 121 deg/s); scale runs keep their glide (C major RH 3 octaves: 2 reversals, no crowded tips).
+  - The thumb plays on its side: its nail is drawn narrow and along its outer edge, its knuckle creases on that side
+    only (`skins.THUMB_SIDE`, `_thumb_out`).
+- **Glissandos** (2026-10-02; glissando.py; Liszt, Hungarian Rhapsody No. 10, 259-289 s):
+  - Behaviours (group "Glissandos"): `glissando` on/off (default on), `gliss_gap` 25-100 ms (50), `gliss_min` 3-16
+    notes (6), `gliss_merge` 0.25-3 s (1.0).
+  - Detection (`glissando.detect`): one hand's notes in playing order, all one colour, each the next key of that
+    colour (`colour_index`), one direction, each at most `gliss_gap` after the one before, `gliss_min` or more.
+    Performance MIDI is untidy in a real glissando, so a run may skip one key of its colour per step
+    (`MAX_SKIP`), notes struck within `SAME_T` 12 ms are ordered the way the run goes, and loose ends (a slower
+    note leading in, the last keys flicked past up to `TAIL_SKIP` 3 skipped ones, within `TAIL_GAP` 2x the gap)
+    join the run. HR10: 27 glissandos, 479 notes; no other test MIDI has any.
+  - Marked glissandos: `Note.gliss`, written as "Rg" / "Lg" markers by the editor's export; always slid, even with
+    detection off (`glissando.find`).
+  - Episodes (`glissando.episodes`): glissandos less than `gliss_merge` apart with no other note of the hand
+    starting in between - the hand stays in the glissando pose through the break - unless the next one starts more
+    than `MERGE_MAX_KEYS` 5 keys of its colour from where the last ended (`keys_between`), when the hand may go
+    back to its rest position on the way (HR10: 17 episodes).
+  - Travel to and from an episode keeps to the top speed. The finger pose takes no notice of glissandos, so it
+    may be far from where one ends or begins; blending straight into it moved the hand up to 7.7 m/s (HR10 at
+    263.8 s). Now `_gliss_travel` shifts the finger pose onto a follower path (`_gliss_follow`, cached per
+    episode end): leaving, from where the glissando pose left the hand once its blend is done, chasing the finger
+    pose at no more than `max_speed` with `GLISS_TRAVEL_ACC` 40 m/s² acceleration until back on it; arriving,
+    the same worked backwards from where the next episode's blend begins. When the way back from one episode
+    ends after the way into the next begins, `_gliss_across` moves the whole (blended) pose straight from one to
+    the other over the gap (smootherstep, or a speed-capped trapezoid when that would be too fast).
+    The chase has deadlines: back on the finger pose `KEY_FIX_T` before the hand's next fingered strike, and
+    leaving it only once its last key before the glissando is let go (`_next_strike`, `_last_release`). When
+    the chase can't make it (the follower lagged 2.5-6.7 in off the chords at HR10 267.25-271.5 s, "the hand
+    misses its chords"), `_gliss_rush` moves the whole blended pose instead over all the time there is
+    (`_gliss_rush_window`: from the glissando's end to `GLISS_ARRIVE_T` 0.03 s before the strike, or from the
+    last release to the glissando's start), speed-capped where possible (`_travel_u`); when even that window is
+    shorter than the blend, the plain blend is left alone. Straight across (`_gliss_across`) is only for gaps
+    with nothing to play.
+    `_gliss_w` also takes the stronger of two overlapping blends (a glissando starting while the last one is
+    still fading out used to drop the last one: 20 m/s at 270.9 s). HR10 RH, 257-290 s: frames over 3 m/s 102 →
+    13 (two at 3.1 / 3.8 m/s between glissandos with a chord in a tight gap; the rest inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
+    the contact follows exactly); pressed frames off the finger pose: 0.
+  - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
+    finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
+  - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
+    of the author's hand: the hand flat and turned over, palm up (`GLISS_ROLL_DEG` 180°, turning over as it blends
+    in so the point-by-point blend never folds the hand flat), the fingers straight and side by side (knuckles
+    drawn in by `GLISS_SQUEEZE`, `GLISS_FINGER_DIR`), the thumb tucked in along the index (`GLISS_THUMB_TIP`);
+    tipped down `GLISS_PITCH_DEG` 8° and turned `GLISS_YAW_DEG` 70° so the fingers trail the way it slides (the
+    forearm turns `GLISS_ARM_SHARE` 0.6 of that). The backs of the index and middle fingertips - the nails - rest
+    on the keys at the contact point (no part of a finger below them) - `GLISS_WHITE_IN` 0.8 in up a white key,
+    `GLISS_BLACK_IN` 0.5 in into a black one - which follows the notes (`_gliss_contact`; through a break it travels
+    and turns round, eased). Only the thumb's nail is drawn (`struct["nail_hide"]` = fingers 2-5, kept once a blend
+    is a third of the way in; `skins._draw_cartoon`). The bones are in the same order as `_finger_pose`'s, so the
+    two blend point by point. That is for sliding toward the little finger (RH up, LH down). Toward the thumb
+    (RH down, LH up) it is the thumb method, after a photo: palm down, fingers 2-5 curled into a fist with the
+    middle joints down on the keys (`GLISS_CURL`), the thumb straight along the fist (`GLISS_THUMB_DIR`), the
+    hand turned so the thumb lies along the keys, tipped down `GLISS_THUMB_PITCH_DEG` 4°, the thumb's nail on
+    the contact point - up to `GLISS_THUMB_IN` 2.0 in up a white key (no further than the black keys' front), so
+    the fist's knuckles are over the keys, but pulled back so the fist's furthest knuckle stays `GLISS_FIST_CLEAR`
+    0.45 in short of the black keys' front (it collided with them otherwise). The thumb's nail is drawn flush with the thumb's
+    outer edge (`struct["thumb_edge"]`, `skins.THUMB_EDGE`) to show it on the keys. The forearm
+    leans `GLISS_THUMB_ARM_DEG` 18° from straight up the keys toward the way the hand slides (the elbow trailing,
+    as if pushing the thumb along; replacing the shoulder's natural lean, which put the right arm the other way
+    at the low end).
+    Palm up, the skin packs fingers 2-5 flush side by side, joint by joint, one outline width apart
+    (`struct["flush"]`, `skins._flush`, using the skin's finger widths), and the thumb is tucked across the palm
+    below the knuckles (`GLISS_THUMB_TIP`, bending on the palm's side), drawn with its own outline over the palm;
+    its nail, underneath, shows as a sliver along its edge toward the fingers (`skins._thumb_sliver`,
+    `THUMB_SLIVER`). Both are one family
+    (u = smoothed (d+1)/2 of `_gliss_contact`'s direction d), so turning round inside an episode morphs from one
+    to the other. Palm up, `struct["palm_up"]` is set and the cartoon skin draws the heart, head and life lines
+    (`skins._palm_lines`, quadratic curves in palm coordinates between the index/little knuckles and the wrist
+    sides - the wrist sides swapped when the hand is turned over, as the forearm isn't) instead of the back's web
+    crease. (Tried first: the hand rolled 78° onto its side with straight fingers; then the fingertips and thumb
+    pinched to one point - the thumb's occlusion couldn't be drawn well.)
+  - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
+    `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

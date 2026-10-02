@@ -431,12 +431,27 @@ def shape_cost(pairs):
 # --------------------------------------------------------------------------- #
 # Search
 # --------------------------------------------------------------------------- #
+RUN_SPLIT_T = 0.008            # a step struck this much after the note before it is the next note of a run
+
+
+def _next_in_run(group, n):
+    """
+    Is n, struck just after a lone note a step (1-2 semitones) away, the
+    next note of a fast run rather than part of a chord? Runs at 20+ notes a
+    second, played unevenly, put neighbours closer than CHORD_TOL.
+    """
+    if len(group) != 1:
+        return False
+    prev = group[0]
+    return n.start - prev.start >= RUN_SPLIT_T and 1 <= abs(n.pitch - prev.pitch) <= 2
+
+
 def group_notes(notes, vpitch=None, tolerance=CHORD_TOL):
     """Chords: [(start, [notes])], each ordered by vpitch (finger numbers rise along it)."""
     vp = vpitch or (lambda p: p)
     groups = []
     for n in sorted(notes, key=lambda n: (n.start, n.pitch)):
-        if groups and n.start - groups[-1][0] <= tolerance:
+        if groups and n.start - groups[-1][0] <= tolerance and not _next_in_run(groups[-1][1], n):
             groups[-1][1].append(n)
         else:
             groups.append((n.start, [n]))

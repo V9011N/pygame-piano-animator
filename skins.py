@@ -210,9 +210,14 @@ class _Hand:
         self.col = {k: tuple(v) for k, v in skin["colors"][self.style].items()}
         P = project
         self.chains = {f: [P(p) for p in c] for f, c in struct["chains"].items()}
+        self.nail_hide = set(struct.get("nail_hide", ()))     # nails turned away (fingers curled under)
+        self.palm_up = bool(struct.get("palm_up", False))       # turned over: we see the palm
+        self.thumb_edge = float(struct.get("thumb_edge", 0.0))  # the thumb's nail out on its outer edge (thumb glissando)
         self.wr, self.wu = (P(p) for p in struct["wrist"])
         self.arm_end = P(struct["arm_end"])
         fw = skin["finger_width"]
+        if struct.get("flush", 0.0) > 0.0:
+            _flush(self.chains, fw, skin["outline"] * 0.035 * ppi, ppi, struct["flush"])
         # segment radii per finger: (thumb: metacarpal, proximal, distal; others: prox, mid, dist)
         self.radius = {}
         for f, c in self.chains.items():
@@ -378,12 +383,88 @@ def _draw_cartoon(pen, h):
         if kind == "palm":
             h.fill_palm(pen, c["skin"])
             if skin["details"]:
-                _web_crease(pen, h, _mix(line, c["skin"], 0.35))
+                if h.palm_up:
+                    _palm_lines(pen, h, _mix(line, c["skin"], 0.3))
+                else:
+                    _web_crease(pen, h, _mix(line, c["skin"], 0.35))
         elif kind == "finger":
+            if f == 1 and h.palm_up:
+                h.fill_finger(pen, f, line, lw)      # tucked across the palm: its own outline over it
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
-                _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
+                if not h.palm_up:
+                    _knuckle(pen, h, f, _mix(line, c["skin"], 0.35))
+                if f == 1 and h.palm_up:
+                    _thumb_sliver(pen, h, c["nail"], _mix(line, c["nail"], 0.3))
+                elif f not in h.nail_hide:
+                    _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
+
+
+def _palm_at(h, s, t):
+    """
+    A point on the palm: s across it from the thumb side (0, index knuckle
+    and wrist's thumb side) to the little finger's (1), t down it from the
+    knuckles (0) to the wrist (1).
+    """
+    k2, k5, wr, wu = h.chains[2][1], h.chains[5][1], h.wr, h.wu
+    # the forearm doesn't turn over with the hand: take each wrist side with the edge it's on
+    if math.hypot(k2[0] - wr[0], k2[1] - wr[1]) + math.hypot(k5[0] - wu[0], k5[1] - wu[1]) > \
+            math.hypot(k2[0] - wu[0], k2[1] - wu[1]) + math.hypot(k5[0] - wr[0], k5[1] - wr[1]):
+        wr, wu = wu, wr
+    top = (k2[0] + (k5[0] - k2[0]) * s, k2[1] + (k5[1] - k2[1]) * s)
+    bot = (wr[0] + (wu[0] - wr[0]) * s, wr[1] + (wu[1] - wr[1]) * s)
+    return (top[0] + (bot[0] - top[0]) * t, top[1] + (bot[1] - top[1]) * t)
+
+
+PALM_LINES = (                  # (start, control, end) as (across, down) palm coordinates
+    ((1.02, 0.24), (0.55, 0.36), (0.12, 0.13)),     # heart line: from the little finger's edge, curving up between index and middle
+    ((-0.04, 0.30), (0.35, 0.40), (0.78, 0.48)),    # head line: from the thumb side, across and a little down
+    ((-0.02, 0.33), (0.42, 0.62), (0.18, 0.98)),    # life line: round the ball of the thumb to the wrist
+)
+
+
+def _palm_lines(pen, h, color):
+    """The heart, head and life lines, shown when the hand is turned palm up."""
+    w = max(2, 0.05 * h.ppi)
+    for a, m, b in PALM_LINES:
+        pts = []
+        for i in range(11):
+            t = i / 10
+            s = (1 - t) ** 2 * a[0] + 2 * (1 - t) * t * m[0] + t * t * b[0]
+            d = (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * m[1] + t * t * b[1]
+            pts.append(_palm_at(h, s, d))
+        for p, q in zip(pts, pts[1:]):
+            pen.line(p, q, color, w)
+
+
+KNUCKLE_ARC = (0.6, 0.22)   # the knuckle line: half-width / bow toward the fingertip (x the finger's radius)
+
+
+def _knuckle(pen, h, f, color):
+    """
+    The knuckle where the metacarpal meets the first phalanx (the MCP joint),
+    on the back of the hand: a short line across the finger there, bowed
+    round the knuckle toward the fingertip.
+    """
+    c = h.chains[f]
+    k, q = (c[1], c[2])
+    segs = h.radius[f]
+    r = segs[1][2] if f == 1 else segs[0][2]
+    dx, dy = q[0] - k[0], q[1] - k[1]
+    if math.hypot(dx, dy) < 0.6 * r:
+        return                              # the phalanx seen end-on: no line to see
+    ux, uy = _unit(dx, dy)
+    nx, ny = -uy, ux
+    hw, bow = KNUCKLE_ARC
+    pts = []
+    for i in range(9):
+        s = -1 + 2 * i / 8
+        along = r * (0.08 + bow * (1 - s * s))
+        pts.append((k[0] + nx * s * hw * r + ux * along, k[1] + ny * s * hw * r + uy * along))
+    w = max(1, 0.03 * h.ppi)
+    for p, p2 in zip(pts, pts[1:]):
+        pen.line(p, p2, color, w)
 
 
 def _web_crease(pen, h, color):
@@ -399,16 +480,91 @@ def _web_crease(pen, h, color):
     pen.line(a, b, color, max(1, 0.03 * h.ppi))
 
 
+def _thumb_out(h, p, nx, ny):
+    """(nx, ny) turned to point away from the index finger: the side of the thumb we see."""
+    ix = h.chains[2][1]
+    return (nx, ny) if (p[0] - ix[0]) * nx + (p[1] - ix[1]) * ny > 0 else (-nx, -ny)
+
+
+THUMB_SIDE = (0.28, 0.32)   # the thumb lies on its side: nail half-width / shift outward (x its radius)
+THUMB_EDGE = (0.26, 0.7)    # ...in a thumb glissando, flush with its outer edge: the nail on the keys
+THUMB_SLIVER = 0.4          # ...palm up, the nail is underneath: a sliver this wide (x its radius) shows along
+                            # the thumb's edge toward the fingers
+
+
+def _thumb_sliver(pen, h, fill, edge):
+    """Palm up: the thumb's nail, underneath it, peeking out as a sliver along its edge toward the fingers."""
+    a, b, r = h.radius[1][-1]
+    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    if L < 2:
+        return
+    nx, ny = -uy, ux
+    ks = [h.chains[f][-1] for f in range(2, 6)]
+    kx, ky = sum(k[0] for k in ks) / 4, sum(k[1] for k in ks) / 4
+    if (kx - b[0]) * nx + (ky - b[1]) * ny < 0:
+        nx, ny = -nx, -ny
+    outer, inner = [], []
+    for i in range(13):
+        s = i / 12
+        x = 0.25 * L + s * (0.75 * L + 0.55 * r)         # from partway along the last joint round toward the tip
+        bulge = math.sin(math.pi * s)
+        ro = r * 0.97
+        ri = r * (0.97 - THUMB_SLIVER * bulge)
+        # past the tip the edge curves round the end of the thumb
+        over = max(0.0, x - L)
+        k = math.sqrt(max(0.0, 1 - (over / r) ** 2))
+        cx, cy = a[0] + ux * min(x, L + r), a[1] + uy * min(x, L + r)
+        outer.append((cx + nx * ro * k, cy + ny * ro * k))
+        inner.append((cx + nx * ri * k, cy + ny * ri * k))
+    pts = outer + inner[::-1]
+    pen.poly(pts, edge)
+    pen.poly([(p[0] + (q[0] - p[0]) * 0.18, p[1] + (q[1] - p[1]) * 0.18) for p, q in zip(pts, pts[::-1])], fill)
+
+
+def _flush(chains, fw, gap, ppi, w):
+    """
+    Fingers 2-5 moved sideways (by share w) so each lies flush against the
+    next, joint by joint: their outlines touch, just the outline's width
+    apart, with no gap between them (the flat hand of a glissando).
+    """
+    fs = [f for f in (2, 3, 4, 5) if f in chains]
+    if len(fs) < 2:
+        return
+    ux = sum(chains[f][-1][0] - chains[f][1][0] for f in fs)
+    uy = sum(chains[f][-1][1] - chains[f][1][1] for f in fs)
+    ux, uy = _unit(ux, uy)
+    nx, ny = -uy, ux
+    for k in range(1, len(chains[fs[0]])):
+        rad = {f: FINGER_W_IN[f] * fw * ppi / 2 * SEG_TAPER[max(0, min(k - 2, 2))] * _depth(chains[f][k][2], ppi)
+               for f in fs}
+        s = {f: chains[f][k][0] * nx + chains[f][k][1] * ny for f in fs}
+        sign = 1.0 if s[fs[-1]] >= s[fs[0]] else -1.0
+        want = {fs[0]: 0.0}
+        for a, b in zip(fs, fs[1:]):
+            want[b] = want[a] + sign * (rad[a] + rad[b] + gap)
+        off = sum(s.values()) / len(fs) - sum(want.values()) / len(fs)
+        for f in fs:
+            d = (want[f] + off - s[f]) * w
+            p = chains[f][k]
+            chains[f][k] = (p[0] + nx * d, p[1] + ny * d, p[2])
+
+
 def _creases(pen, h, f, color):
     segs = h.radius[f]
     joints = [(segs[i][1], segs[i][2], segs[i][0]) for i in range(len(segs) - 1)]
     for p, r, prev in joints[-2:]:
         ux, uy = _unit(p[0] - prev[0], p[1] - prev[1])
         nx, ny = -uy, ux
+        # the thumb, on its side, shows its creases only on the side we see
+        lo, hi = (-0.45, 0.45)
+        if f == 1:
+            nx, ny = _thumb_out(h, p, nx, ny)
+            lo, hi = (0.05, 0.7)
         for off in (-0.12, 0.12):
             q = (p[0] + ux * r * off, p[1] + uy * r * off)
-            pen.line((q[0] + nx * r * 0.45, q[1] + ny * r * 0.45),
-                     (q[0] - nx * r * 0.45, q[1] - ny * r * 0.45), color, max(1, r * 0.12))
+            pen.line((q[0] + nx * r * hi, q[1] + ny * r * hi),
+                     (q[0] + nx * r * lo, q[1] + ny * r * lo), color, max(1, r * 0.12))
 
 
 NAIL_HIDE_DEG = (95.0, 115.0)   # phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
@@ -423,7 +579,9 @@ def _nail(pen, h, f, fill, edge):
     the skin in front of it shrinks away until the squashed nail fills the
     rounded end of the finger. Curled on past straight down, with the tip
     tucked back under the last knuckle, it turns out of sight over that end
-    (NAIL_HIDE_DEG) instead of showing on the knuckle.
+    (NAIL_HIDE_DEG) instead of showing on the knuckle. The thumb plays on its
+    side: its nail is seen nearly edge-on, narrow, along its outer edge
+    (THUMB_SIDE).
     """
     segs = h.radius[f]
     a, b, r = segs[-1]
@@ -448,6 +606,10 @@ def _nail(pen, h, f, fill, edge):
     dux, duy = _unit(dx, dy)
     ux, uy = _unit(px + (dux - px) * w, py + (duy - py) * w)
     nx, ny = -uy, ux
+    half_w, shift = 0.5, 0.0
+    if f == 1:
+        nx, ny = _thumb_out(h, b, nx, ny)
+        half_w, shift = (a_ + (b_ - a_) * h.thumb_edge for a_, b_ in zip(THUMB_SIDE, THUMB_EDGE))
     # pitch of the phalanx below the horizontal, capped at straight down
     cos = max(0.0, fwd / L)
     sin = max(0.0, drop / L) if fwd > 0 else 1.0
@@ -470,9 +632,9 @@ def _nail(pen, h, f, fill, edge):
             t = 2 * math.pi * i / 32
             c, s = math.cos(t), math.sin(t)
             x = mid + (hl + grow * max(cos, 0.35 * show)) * math.copysign(abs(c) ** 0.7, c)
-            y = (0.5 * r + grow) * math.copysign(abs(s) ** 0.7, s)
-            if x > xc:                                   # stay inside the rounded end
-                y = math.copysign(min(abs(y), 0.94 * math.sqrt(max(0.0, rc * rc - (x - xc) ** 2))), y)
+            y = shift * r + (half_w * r + grow) * math.copysign(abs(s) ** 0.7, s)
+            lim = 0.94 * (math.sqrt(max(0.0, rc * rc - (x - xc) ** 2)) if x > xc else r)
+            y = max(-lim, min(lim, y))                   # stay inside the finger (and its rounded end)
             pts.append((b[0] + ux * x + nx * y, b[1] + uy * x + ny * y))
         return pts
     pen.poly(shape(0.12 * r), edge)

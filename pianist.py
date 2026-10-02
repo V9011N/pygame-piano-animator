@@ -70,6 +70,8 @@ def _pct(v): return f"{int(round(v * 100))}%"
 def _ms(v): return f"{int(round(v * 1000))} ms"
 def _deg(v): return f"{int(round(v))}°"
 def _mps(v): return f"{v:.1f} m/s"
+def _sec(v): return f"{v:.2f} s"
+def _notes(v): return f"{int(round(v))} notes"
 
 
 def finger_lead(a):
@@ -160,6 +162,25 @@ BEHAVIORS = [
          min=0.015, max=0.08, default=0.035, fmt=_ms, lo="Quick roll", hi="Slow roll",
          desc="Chords too wide for this hand are rolled from the bottom up; this is the time "
               "between the notes of the roll."),
+    # ---- glissandos (glissando.py, hands.py)
+    dict(id="glissando", group="Glissandos", label="Glissandos", kind="options", default="on",
+         options=[("on", "Detect and slide them", "A quick string of all-white or all-black keys going one "
+                   "way is played as a glissando: the backs of the fingers slide along the keys"),
+                  ("off", "Finger every note", "Only glissandos marked in the file (fingering editor) "
+                   "are slid; everything else is fingered")],
+         desc="Whether this pianist spots glissandos and slides them. Glissandos marked in the file "
+              "(\"g\" in the fingering editor) are always slid."),
+    dict(id="gliss_gap", group="Glissandos", label="Glissando: longest gap between notes", kind="slider",
+         min=0.025, max=0.10, default=0.05, step=0.005, fmt=_ms, lo="Only the fastest", hi="Slower ones too",
+         desc="A string of keys counts as a glissando only if each note comes at most this long after the "
+              "one before."),
+    dict(id="gliss_min", group="Glissandos", label="Glissando: fewest notes", kind="slider",
+         min=3, max=16, default=6, step=1, fmt=_notes, lo="Short flicks too", hi="Only long sweeps",
+         desc="How many notes in a row a string needs to count as a glissando."),
+    dict(id="gliss_merge", group="Glissandos", label="Glissando: stay in the pose between", kind="slider",
+         min=0.25, max=3.0, default=1.0, step=0.05, fmt=_sec, lo="Only quick returns", hi="Long breaks too",
+         desc="Glissandos closer together than this (with nothing else for the hand to play in between) "
+              "are played without leaving the glissando pose - the hand just travels to the next one."),
     # ---- fingering (fingering.py / figures.py / hand_split.py)
     dict(id="fingering_model", group="Fingering", label="Fingering model", kind="options",
          default="learned",
