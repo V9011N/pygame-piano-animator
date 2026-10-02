@@ -1221,7 +1221,7 @@ class HandAnimator:
 
     # ----- geometry that depends on the drawn keyboard ----------------------
     def _ensure_layout(self, kb):
-        sig = (tuple(kb.rect), kb.white_w, kb.black_h)
+        sig = (tuple(kb.rect), kb.white_w, kb.black_h, kb.style)
         if sig == self._layout_sig:
             return
         self._layout_sig = sig
@@ -1282,6 +1282,7 @@ class HandAnimator:
             (x1, y1), (x2, y2) = (self.key_target(p, f, note) for p in pitch)
             return (x1 + x2) / 2, (y1 + y2) / 2
         r = self.kb.key_rects[pitch]
+        x = r.centerx
         front = self.kb.rect.h - self.kb.black_h
         if is_black_key(pitch):
             y = front + BLACK_DEPTH_IN * self.ppi
@@ -1290,8 +1291,10 @@ class HandAnimator:
             up = self.white_up.get(id(note), 0.0) if note is not None else 0.0
             if up > 0:
                 y = max(y, _lerp(y, front + WHITE_UP_IN * self.ppi, up))
+                if pitch in self.kb.tails:                 # equal keys: up among the blacks, the key is its back
+                    x = _lerp(x, self.kb.tails[pitch].centerx, up)
         lo, hi = self._key_depths(pitch, note, f)          # the playing area, for this loudness
-        return self._mx(r.centerx), min(max(y, lo), hi)
+        return self._mx(x), min(max(y, lo), hi)
 
     def _key_depths(self, pk, note=None, f=None):
         """

@@ -37,7 +37,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | File | Role |
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock), `MainMenu`, `Visualizer` (falling notes) |
-| `common.py` | Shared UI and playback: colours, `bottom_layout`, `Keyboard`, `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders |
+| `common.py` | Shared UI and playback: colours, `bottom_layout`, `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
 | `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, thumb/pinky pairs, `score_fingering`) |
@@ -69,6 +69,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the
   current numbers.
+- Every commit adds an entry at the top of `CHANGELOG.md` (shown by the main menu's "What's new"
+  button), headed `## vYYYY.MM.DD.HHMM - title` with user-facing bullets. Commit with
+  `GIT_COMMITTER_DATE` (and `GIT_AUTHOR_DATE`) set to that UTC minute so `VERSION` matches it.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

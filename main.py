@@ -34,11 +34,12 @@ drawn over the keyboard and hand area.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 
 import pygame
 
-from common import (blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
+from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
@@ -186,6 +187,8 @@ class Visualizer(Transport):
 
         for x in kb.lane_lines:
             pygame.draw.line(s, LANE_LINE, (x, fall.top), (x, fall.bottom))
+        for x, w in kb.lane_shade:                  # equal keys: white-key lanes a shade lighter
+            pygame.draw.rect(s, LANE_WHITE, (x, fall.top, w, fall.h))
 
         active = []
         if self.song:
@@ -219,11 +222,23 @@ class Visualizer(Transport):
                     radius = min(5, w // 3)
                     pygame.draw.rect(s, color, rect, border_radius=radius)
                     pygame.draw.rect(s, mix(color, (0, 0, 0), 0.45), rect, 1, border_radius=radius)
+                    # equal keys: every note is the same width, so a white-key note's
+                    # finger number is white (a black-key note's stays dark)
+                    equal_white = kb.style == "equal" and not black_pass
                     if self.show_fingers and n.hand in self.hands and rect.h >= 14:
                         finger = self.hands[n.hand].finger_for(n)
                         if finger:
-                            img = self.fonts["finger"].render(str(finger), True, (15, 15, 20))
-                            s.blit(img, img.get_rect(midbottom=(rect.centerx, rect.bottom - 1)))
+                            font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
+                            if equal_white:      # white number for a white key, black for a black one
+                                txt = str(finger)
+                                w, h = font.size(txt)
+                                at = (pos[0] - w // 2, pos[1] - h)
+                                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                                    s.blit(font.render(txt, True, (15, 15, 20)), (at[0] + dx, at[1] + dy))
+                                s.blit(font.render(txt, True, (250, 250, 250)), at)
+                            else:
+                                img = font.render(str(finger), True, (15, 15, 20))
+                                s.blit(img, img.get_rect(midbottom=pos))
 
             # Glow rising from the keys that are currently pressed (by the hands).
             gh = max(20, fall.h // 6)
@@ -272,6 +287,135 @@ class Visualizer(Transport):
 # --------------------------------------------------------------------------- #
 # Main menu
 # --------------------------------------------------------------------------- #
+CHANGELOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CHANGELOG.md")
+
+
+def _seen_path():
+    return os.path.join(pianists.FOLDER, "changelog_seen.txt")
+
+
+def changelog_seen():
+    """Whether the changelog has been opened since this version arrived."""
+    try:
+        with open(_seen_path(), encoding="utf-8") as fh:
+            return fh.read().strip() == VERSION
+    except OSError:
+        return False
+
+
+def mark_changelog_seen():
+    try:
+        os.makedirs(pianists.FOLDER, exist_ok=True)
+        with open(_seen_path(), "w", encoding="utf-8") as fh:
+            fh.write(VERSION)
+    except OSError as exc:
+        print(f"Couldn't save that the changelog was seen ({exc})")
+
+
+def changelog_entries(path=CHANGELOG):
+    """[(heading, [bullet text])] from CHANGELOG.md, newest first (continuation lines joined)."""
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return [("Changelog not found", [])]
+    for line in lines:
+        if line.startswith("## "):
+            entries.append((line[3:].strip(), []))
+        elif entries and line.startswith("- "):
+            entries[-1][1].append(line[2:].strip())
+        elif entries and entries[-1][1] and line.startswith("  ") and line.strip():
+            entries[-1][1][-1] += " " + line.strip()
+    return entries
+
+
+def wrap_text(font, text, width):
+    lines, cur = [], ""
+    for word in text.split():
+        trial = f"{cur} {word}" if cur else word
+        if cur and font.size(trial)[0] > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    return lines + ([cur] if cur else [])
+
+
+class ChangelogView:
+    """The changelog in a scrollable panel over the main menu."""
+
+    def __init__(self, fonts):
+        self.fonts = fonts
+        self.entries = changelog_entries()
+        self.scroll = 0
+        self.closed = False
+        self.close_button = Button("Close", "close")
+        self._rows, self._width = [], None
+
+    def _layout(self, w, h):
+        self.box = pygame.Rect(0, 0, min(760, w - 60), h - 80)
+        self.box.center = (w // 2, h // 2)
+        self.view = pygame.Rect(self.box.x + 24, self.box.y + 64, self.box.w - 48, self.box.h - 64 - 70)
+        self.close_button.rect = pygame.Rect(self.box.right - 24 - 120, self.box.bottom - 24 - 38, 120, 38)
+        if self._width != self.view.w:            # (re)wrap the text for this width
+            self._width = self.view.w
+            f, rows = self.fonts, []
+            for heading, bullets in self.entries:
+                rows.append((f["button"], ACCENT if heading.startswith(VERSION) else TEXT, heading, 0, 8))
+                indent = f["normal"].size("•  ")[0]
+                for b in bullets:
+                    for i, part in enumerate(wrap_text(f["normal"], b, self.view.w - indent - 4)):
+                        rows.append((f["normal"], TEXT_DIM, ("•  " if i == 0 else "") + part, 0 if i == 0 else indent, 0))
+                rows.append((f["normal"], TEXT_DIM, "", 0, 0))
+            self._rows = rows
+        total = sum(font.get_linesize() + gap for font, _, _, _, gap in self._rows)
+        self.max_scroll = max(0, total - self.view.h)
+        self.scroll = min(max(0, self.scroll), self.max_scroll)
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE):
+                self.closed = True
+            elif event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
+                self.scroll += 40 if event.key == pygame.K_DOWN else self.view.h - 40
+            elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
+                self.scroll -= 40 if event.key == pygame.K_UP else self.view.h - 40
+        elif event.type == pygame.MOUSEWHEEL:
+            self.scroll -= event.y * 48
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.close_button.hit(event.pos) or not self.box.collidepoint(event.pos):
+                self.closed = True
+
+    def draw(self, surf):
+        w, h = surf.get_size()
+        self._layout(w, h)
+        shade = pygame.Surface((w, h), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 150))
+        surf.blit(shade, (0, 0))
+        pygame.draw.rect(surf, PANEL, self.box, border_radius=12)
+        pygame.draw.rect(surf, PANEL_EDGE, self.box, 1, border_radius=12)
+        surf.blit(self.fonts["big"].render("What's new", True, TEXT), (self.box.x + 24, self.box.y + 18))
+        cur = self.fonts["small"].render(f"You have {VERSION}", True, TEXT_DIM)
+        surf.blit(cur, cur.get_rect(topright=(self.box.right - 24, self.box.y + 30)))
+        surf.set_clip(self.view)
+        y = self.view.y - self.scroll
+        for font, color, text, indent, gap in self._rows:
+            y += gap
+            if text and self.view.y - 40 < y < self.view.bottom:
+                surf.blit(font.render(text, True, color), (self.view.x + indent, y))
+            y += font.get_linesize()
+        surf.set_clip(None)
+        if self.max_scroll:
+            frac = self.view.h / (self.view.h + self.max_scroll)
+            bar_h = max(30, int(self.view.h * frac))
+            bar_y = self.view.y + int((self.view.h - bar_h) * self.scroll / self.max_scroll)
+            pygame.draw.rect(surf, PANEL_EDGE, (self.box.right - 14, bar_y, 5, bar_h), border_radius=3)
+            hint = self.fonts["small"].render("Wheel or arrow keys to scroll", True, TEXT_DIM)
+            surf.blit(hint, hint.get_rect(midleft=(self.box.x + 24, self.close_button.rect.centery)))
+        self.close_button.draw(surf, self.fonts, pygame.mouse.get_pos())
+
+
 class MainMenu:
     def __init__(self, app):
         self.app = app
@@ -285,6 +429,10 @@ class MainMenu:
                    sub="Create pianists: hand anatomy, colour and technique; choose the active one"),
             Button("Quit", "quit", font="normal", key_hint="Esc"),
         ]
+        self.changelog_button = Button("What's new", "changelog", font="small")
+        self.keys_button = Button("", "keys", font="small")
+        self.changelog_new = not changelog_seen()       # glows until opened
+        self.changelog = None
         self.layout(app.screen.get_size())
         pygame.display.set_caption(f"Piano Animator {VERSION}")
 
@@ -298,10 +446,17 @@ class MainMenu:
             y += bh + 16
         self.buttons[3].rect = pygame.Rect((w - 160) // 2, y + 4, 160, 40)
         self._active_y = y + 60
+        self.changelog_button.rect = pygame.Rect(w - 16 - 110, 16, 110, 32)
+        self.keys_button.rect = pygame.Rect(w - 16 - 110 - 10 - 150, 16, 150, 32)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
             return False
+        if self.changelog and event.type != pygame.VIDEORESIZE:
+            self.changelog.handle_event(event)
+            if self.changelog.closed:
+                self.changelog = None
+            return True
         if event.type == pygame.VIDEORESIZE:
             self.layout(event.size if hasattr(event, "size") else self.app.screen.get_size())
         elif event.type == pygame.DROPFILE:
@@ -316,12 +471,26 @@ class MainMenu:
             if event.key in (pygame.K_h, pygame.K_3):
                 return self._do("pianists")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            for b in self.buttons:
+            for b in self.buttons + [self.changelog_button, self.keys_button]:
                 if b.hit(event.pos):
                     return self._do(b.action)
         return True
 
+    def open_changelog(self):
+        self.changelog = ChangelogView(self.app.fonts)
+        if self.changelog_new:
+            self.changelog_new = False
+            mark_changelog_seen()
+
     def _do(self, action):
+        if action == "changelog":
+            self.open_changelog()
+            return True
+        if action == "keys":
+            style = KEY_STYLES[(KEY_STYLES.index(key_style()) + 1) % len(KEY_STYLES)]
+            set_key_style(style)
+            pianists.set_app_setting("keys", style)
+            return True
         if action == "quit":
             return False
         if action == "pianists":
@@ -369,6 +538,27 @@ class MainMenu:
         hint = self.message or "Tip: drop a MIDI file on this window to play it"
         img = f["small"].render(hint, True, TEXT_DIM)
         s.blit(img, img.get_rect(midbottom=(w // 2, kb.rect.y - FELT_H - 14)))
+        if self.changelog_new:
+            self._draw_glow(s, self.changelog_button.rect)
+        self.changelog_button.draw(s, f, mouse)
+        self.keys_button.label = "Keys: equal" if key_style() == "equal" else "Keys: realistic"
+        self.keys_button.draw(s, f, mouse)
+        if self.changelog:
+            self.changelog.draw(s)
+
+    @staticmethod
+    def _draw_glow(s, rect, period=2.4):
+        """A soft accent glow around `rect`, slowly pulsing."""
+        pulse = 0.5 - 0.5 * math.cos(2 * math.pi * (pygame.time.get_ticks() / 1000.0) / period)
+        pad = 14
+        glow = pygame.Surface((rect.w + 2 * pad, rect.h + 2 * pad), pygame.SRCALPHA)
+        for i in range(pad, 0, -2):
+            a = int((40 + 120 * pulse) * (1 - i / pad))
+            pygame.draw.rect(glow, (*ACCENT, a), glow.get_rect().inflate(-2 * (pad - i), -2 * (pad - i)),
+                             border_radius=8 + i)
+        s.blit(glow, (rect.x - pad, rect.y - pad))
+        edge = mix(PANEL_EDGE, ACCENT, 0.4 + 0.6 * pulse)
+        pygame.draw.rect(s, edge, rect.inflate(2, 2), 2, border_radius=9)
 
 
 # --------------------------------------------------------------------------- #
@@ -378,6 +568,7 @@ class App:
     def __init__(self, screen, sound=True, speed=1.0):
         self.screen = screen
         self.fonts = load_fonts()
+        set_key_style(pianists.app_setting("keys", "realistic"))
         self.midi = MidiOut(sound)
         self.speed = speed
         self.last_dir = None

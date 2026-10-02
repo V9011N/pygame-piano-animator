@@ -116,14 +116,48 @@ def bottom_layout(size):
 # Small sideways nudges that make black keys sit like they do on a real piano.
 _BLACK_OFFSETS = {1: -0.12, 3: 0.12, 6: -0.14, 8: 0.0, 10: 0.14}
 
+# Key styles: "realistic" (a real piano's proportions) or "equal" (PASHKULI's
+# equal lanes: every key's back, black or white, is the same width, so every
+# falling note is too; white key fronts are C-E = 5 lanes / 3, F-B = 7 / 4).
+KEY_STYLES = ("realistic", "equal")
+_key_style = "realistic"
+LANE_WHITE = (33, 33, 42)        # equal keys: the lanes above white keys, a shade lighter
+KEY_GAP = (44, 44, 50)           # equal keys: the gaps between keys
+_EQUAL_SPAN = 87 + 0.5 + 5 / 3   # the keyboard's width in lanes (A0's front half a lane left of its lane .. C8's front)
+
+
+def key_style():
+    return _key_style
+
+
+def set_key_style(style):
+    global _key_style
+    _key_style = style if style in KEY_STYLES else "realistic"
+
+
+def _equal_head(p):
+    """(left, right) of white key p's front, in lanes from its octave's C."""
+    i = p % 12
+    if i <= 4:
+        k = i // 2
+        return k * 5 / 3, (k + 1) * 5 / 3
+    k = (i - 5) // 2
+    return 5 + k * 7 / 4, 5 + (k + 1) * 7 / 4
+
 
 class Keyboard:
-    def __init__(self, rect: pygame.Rect, low=LOWEST_PIANO_KEY, high=HIGHEST_PIANO_KEY):
+    def __init__(self, rect: pygame.Rect, low=LOWEST_PIANO_KEY, high=HIGHEST_PIANO_KEY, style=None):
         self.low, self.high = low, high
+        self.style = style or key_style()
         self.layout(rect)
 
     def layout(self, rect: pygame.Rect):
         self.rect = pygame.Rect(rect)
+        self.tails = {}              # equal keys: pitch -> Rect of a white key's back (between the blacks)
+        self.lane_shade = []         # equal keys: (x, width) of the lanes above white keys
+        if self.style == "equal" and self.low == LOWEST_PIANO_KEY and self.high == HIGHEST_PIANO_KEY:
+            return self._layout_equal(rect)
+        self.style = "realistic"
         whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
         self.white_w = rect.w / len(whites)
         self.black_w = self.white_w * 0.6
@@ -150,8 +184,82 @@ class Keyboard:
                     self.lane_lines.append(x0)
                 white_index += 1
 
+    def _layout_equal(self, rect):
+        """
+        PASHKULI's equal keys: 88 lanes of one width L, separated by a gap
+        (1 px, or more on big windows); every black key and every white
+        key's back fills one lane, and the white fronts share their group's
+        lanes evenly. The average white key keeps the realistic width, so
+        the hands keep their scale.
+        """
+        whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
+        self.white_w = rect.w / len(whites)
+        L = rect.w / _EQUAL_SPAN
+        self.lane_w = L
+        g = self.gap = max(1, round(L / 15))
+        self.black_w = L - g
+        self.black_h = int(rect.h * 0.63)
+        self.key_rects, self.lanes, self.lane_lines = {}, {}, []
+        lane_x = lambda p: rect.x + (p - self.low + 0.5) * L      # left edge of p's lane
+
+        def span(a, b, top, h):
+            x0, x1 = round(a) + g // 2, round(b) - (g - g // 2)
+            return pygame.Rect(x0, top, max(1, x1 - x0), h)
+
+        for p in range(self.low, self.high + 1):
+            a, b = lane_x(p), lane_x(p) + L
+            if is_black_key(p):
+                self.key_rects[p] = span(a, b, rect.y, self.black_h)
+                self.lanes[p] = (self.key_rects[p].x, self.key_rects[p].w)
+                continue
+            c = lane_x(p - p % 12)
+            h0, h1 = c + _equal_head(p)[0] * L, c + _equal_head(p)[1] * L
+            if p == self.low:                     # the ends: the back reaches the keyboard's edge
+                a = h0
+            if p == self.high:
+                b = h1
+            self.key_rects[p] = span(h0, h1, rect.y, rect.h)          # the front (where it is played)
+            self.tails[p] = span(a, b, rect.y, self.black_h + g)
+            lane = span(lane_x(p), lane_x(p) + L, rect.y, 1)
+            self.lanes[p] = (lane.x, lane.w)
+            self.lane_shade.append((lane.x, lane.w))
+
+    def _draw_equal(self, surf, pressed):
+        pygame.draw.rect(surf, KEY_GAP, self.rect)
+        g = self.gap
+        for p, r in self.key_rects.items():
+            if is_black_key(p):
+                continue
+            color = WHITE_KEY
+            if p in pressed:
+                color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
+            head = pygame.Rect(r.x, self.rect.y + self.black_h + g, r.w, r.h - self.black_h - g)
+            pygame.draw.rect(surf, color, head, border_bottom_left_radius=3, border_bottom_right_radius=3)
+            pygame.draw.rect(surf, color, self.tails[p])
+        for p, r in self.key_rects.items():
+            if not is_black_key(p):
+                continue
+            if p in pressed:
+                pygame.draw.rect(surf, HAND_COLORS[pressed[p]][1], r, border_bottom_left_radius=2,
+                                 border_bottom_right_radius=2)
+            else:
+                pygame.draw.rect(surf, BLACK_KEY, r, border_bottom_left_radius=2, border_bottom_right_radius=2)
+                if r.w > 6:
+                    bevel = pygame.Rect(r.x + 2, r.y, r.w - 4, r.h - max(4, r.h // 9))
+                    pygame.draw.rect(surf, BLACK_KEY_BEVEL, bevel, border_bottom_left_radius=2,
+                                     border_bottom_right_radius=2)
+                    inner = bevel.inflate(-2, 0)
+                    inner.h -= 2
+                    pygame.draw.rect(surf, BLACK_KEY, inner)
+        shade = pygame.Surface((self.rect.w, 6), pygame.SRCALPHA)
+        for y in range(6):
+            pygame.draw.line(shade, (0, 0, 0, 110 - y * 18), (0, y), (self.rect.w, y))
+        surf.blit(shade, self.rect.topleft)
+
     def draw(self, surf, pressed):
         """pressed: dict pitch -> hand for keys currently held."""
+        if self.style == "equal":
+            return self._draw_equal(surf, pressed)
         for p, r in self.key_rects.items():
             if is_black_key(p):
                 continue

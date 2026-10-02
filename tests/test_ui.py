@@ -116,3 +116,51 @@ def test_finger_thickness_range_and_default():
     # older pianists' values outside the new range are brought into it
     assert skins.normalize({"finger_width": 1.35})["finger_width"] == 1.2
     assert skins.normalize({"finger_width": 0.3})["finger_width"] == 0.5
+
+
+def test_changelog_button_glows_until_opened(screen):
+    app = app_on(screen)
+    menu = app.mode
+    assert menu.changelog_new                                  # fresh pianists folder: not seen yet
+    menu.render()
+    click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=menu.changelog_button.rect.center)
+    app.handle_event(click)
+    assert menu.changelog is not None and not menu.changelog_new
+    menu.render()
+    app.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-5))
+    assert menu.changelog.scroll > 0
+    key(app, pygame.K_ESCAPE)                                  # closes the changelog, not the app
+    assert menu.changelog is None and app.mode is menu
+    assert not main.MainMenu(app).changelog_new                # remembered
+    entries = main.changelog_entries()
+    assert len(entries) > 10 and all(bullets for _, bullets in entries)
+
+
+def test_equal_keys_toggle_and_layout(screen):
+    import common
+    import pianist
+    app = app_on(screen)
+    menu = app.mode
+    assert common.key_style() == "realistic"
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=menu.keys_button.rect.center))
+    assert common.key_style() == "equal" and pianist.app_setting("keys") == "equal"
+    try:
+        kb = common.Keyboard(pygame.Rect(0, 0, 1400, 150))
+        assert kb.style == "equal"
+        widths = {w for _, w in kb.lanes.values()}
+        assert max(widths) - min(widths) <= 1                      # every lane the same width
+        xs = [kb.lanes[p][0] for p in range(21, 109)]
+        assert all(b > a for a, b in zip(xs, xs[1:]))              # in pitch order, never overlapping
+        for p in range(21, 109):
+            if midi_loader.is_black_key(p):
+                assert kb.lanes[p] == (kb.key_rects[p].x, kb.key_rects[p].w)   # black key = its lane
+            else:                                                  # a white key's back is its lane
+                assert abs(kb.tails[p].centerx - (kb.lanes[p][0] + kb.lanes[p][1] / 2)) <= 1 or p in (21, 108)
+        assert kb.key_rects[21].left <= 1 and kb.key_rects[108].right >= 1398
+        app.play(midi_path("demo_song.mid"))
+        app.mode.seek(3.0)
+        app.mode.render()
+        app.edit(midi_loader.load_song(midi_path("demo_song.mid")))
+        app.mode.render()
+    finally:
+        common.set_key_style("realistic")
