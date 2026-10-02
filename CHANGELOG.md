@@ -2,6 +2,14 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0309 - Glissando travel at top speed, thumb nail sliver
+- Fixed: going to or from a glissando the hand could jump across the keyboard (up to 2.5 times
+  its top speed, e.g. Liszt's Hungarian Rhapsody No. 10 at 4:23). It now travels there at no more
+  than its top speed, easing in and out; between two glissandos close together it glides straight
+  from one to the next.
+- Fixed: a glissando starting while the last one was still fading out made the hand snap away.
+- Palm-up glissandos show a sliver of the thumb's nail along its edge toward the fingers.
+
 ## v2026.10.02.0250 - Glissando hands refined
 - Thumb glissandos: the thumb's nail is drawn flush with the thumb's outer edge, on the keys.
 - Palm-up glissandos: the fingers lie flush against each other (each finger's outline still

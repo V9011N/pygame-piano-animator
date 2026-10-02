@@ -168,3 +168,25 @@ def test_flush_fingers_touch_outline_to_outline():
         want = (skins.FINGER_W_IN[a] + skins.FINGER_W_IN[b]) * fw * ppi / 2 + gap     # at the knuckles
         assert abs(chains[b][1][0] - chains[a][1][0] - want) < 1e-6
         assert chains[b][-1][0] > chains[a][-1][0]                                   # still in order
+
+
+def test_to_and_from_a_glissando_the_hand_keeps_to_its_top_speed(screen):
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    lead = [Note(40, 0.2, 0.5, 80, 0, RIGHT)]                       # far down at the start
+    a_run = run(WHITE[16:30], t0=1.0)                                # way up
+    b_run = run(WHITE[0:10], t0=1.85)                                # 0.45 s later, far down: its own episode
+    tail = [Note(96, 3.0, 3.3, 80, 0, RIGHT)]                        # and back up
+    a = hands.HandAnimator(song_of(lead + a_run + b_run + tail), RIGHT)
+    assert len(a.gliss_eps) == 2
+    a._ensure_layout(kb)
+    vmax = a.max_speed / 0.0254 * a.ppi
+    fps, prev, worst = 240, None, 0.0
+    for i in range(int(0.1 * fps), int(3.3 * fps)):
+        t = i / fps
+        x, y = a._pose_wrist(a.pose(t, kb))
+        if prev and a._gliss_w(t)[0] < 1.0 and a._gliss_w(t - 1 / fps)[0] < 1.0:
+            worst = max(worst, math.hypot(x - prev[0], y - prev[1]) * fps / vmax)
+        prev = (x, y)
+    assert worst < 1.05, worst

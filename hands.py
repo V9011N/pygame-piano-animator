@@ -235,6 +235,9 @@ GLISS_THUMB_DIR = (-0.18, 1.0, -0.3)   # the straightened thumb, along the fist 
 GLISS_THUMB_PITCH_DEG = 4.0            # the hand tipped down this much for it
 GLISS_WHITE_IN = 0.8        # in, the nails slide this far up the white keys (well clear of the black ones)...
 GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
+GLISS_TRAVEL_ACC = 40.0     # m/s^2, to and from a glissando the hand speeds up (and slows down) this fast...
+GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
+GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
 GLISS_FIST_CLEAR = 0.45     # in, ...but the knuckles' centres this far short of the black keys' front (finger radius + a gap)
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
@@ -262,6 +265,22 @@ def _mul(a, s): return (a[0] * s, a[1] * s, a[2] * s)
 def _dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 def _norm(a): return math.sqrt(_dot(a, a))
 def _lerp(a, b, s): return a + (b - a) * s
+
+
+def _shift_pose(p, dx, dy, mirror):
+    """Pose p moved by (dx, dy) on screen (its working-frame wrist the other way round when mirrored)."""
+    sh = lambda q: (q[0] + dx, q[1] + dy) + tuple(q[2:])
+    out = dict(p)
+    out["bones"] = [(sh(a), sh(b), k) for a, b, k in p["bones"]]
+    out["joints"] = [(sh(q), k) for q, k in p["joints"]]
+    st = dict(p["struct"])
+    st["chains"] = {f: [sh(q) for q in c] for f, c in st["chains"].items()}
+    st["wrist"] = tuple(sh(q) for q in st["wrist"])
+    st["arm_end"] = sh(st["arm_end"])
+    out["struct"] = st
+    wx, wy, psi = p["wrist"]
+    out["wrist"] = (wx + (-dx if mirror else dx), wy + dy, psi)
+    return out
 def _lerp3(a, b, s): return tuple(_lerp(x, y, s) for x, y in zip(a, b))
 
 
@@ -654,6 +673,7 @@ class HandAnimator:
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
         self._gliss_cache = None
+        self._gliss_follow_cache = {}
         self._gliss_starts = [ep[0][0].start for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
@@ -1441,6 +1461,7 @@ class HandAnimator:
         self._limit_cache, self._tip_limit_cache = {}, {}
         self._smooth_hand_cache, self._smooth_tip_cache = {}, {}
         self._gliss_cache = None
+        self._gliss_follow_cache = {}
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
         self.axis_x = kb.key_rects[62].centerx if 62 in kb.key_rects else kb.rect.centerx
@@ -2100,12 +2121,142 @@ class HandAnimator:
         """
         self._ensure_layout(kb)
         g, ep = self._gliss_w(t)
-        if g <= 0.0:
-            return self._finger_pose(t, kb)
-        gp = self._gliss_pose(t, ep, kb, g)
         if g >= 1.0:
-            return gp
-        return _blend_pose(self._finger_pose(t, kb), gp, g)
+            return self._gliss_pose(t, ep, kb, g)
+        fp = self._finger_pose(t, kb)
+        across = self._gliss_across(t, kb)
+        if across is None:
+            fp = self._gliss_travel(t, kb, fp)
+        p = fp if g <= 0.0 else _blend_pose(fp, self._gliss_pose(t, ep, kb, g), g)
+        if across is not None:
+            px, py = self._pose_wrist(p)
+            p = _shift_pose(p, across[0] - px, across[1] - py, self.mirror)
+        return p
+
+    @staticmethod
+    def _pose_wrist(p):
+        (ax, ay, _), (bx, by, _) = p["struct"]["wrist"]
+        return (ax + bx) / 2, (ay + by) / 2
+
+    def _gliss_follow(self, i, kb, leaving):
+        """
+        The hand's way from glissando episode i back to the finger pose
+        (leaving) or from the finger pose into it: [(t, x, y)] on screen, in
+        time order. It chases the finger pose (or, played backwards, runs
+        from it) at no more than the top speed, speeding up and slowing down
+        at GLISS_TRAVEL_ACC, until it is back on it.
+        """
+        key = (i, leaving)
+        path = self._gliss_follow_cache.get(key)
+        if path is not None:
+            return path
+        t0, t1, _ = self._gliss_paths()[i]
+        W = self._pose_wrist
+        # the glissando pose is held until the blend is done (the contact stays put after t1 / before t0)
+        ta = t1 + GLISS_RAMP_T if leaving else t0 - GLISS_RAMP_T
+        x, y = W(self._gliss_pose(t1 if leaving else t0, i, kb))
+        vmax = self.max_speed / 0.0254 * self.ppi
+        acc = GLISS_TRAVEL_ACC / 0.0254 * self.ppi
+        dt = GLISS_TRAVEL_DT * (1 if leaving else -1)
+        vx = vy = 0.0
+        t, path = ta, [(ta, x, y)]
+        for _ in range(int(GLISS_TRAVEL_MAX_T / abs(dt))):
+            t += dt
+            fx, fy = W(self._finger_pose(t, kb))
+            dx, dy = fx - x, fy - y
+            d = math.hypot(dx, dy)
+            if d < 0.5 and math.hypot(vx, vy) < acc * abs(dt) * 2:
+                break
+            sp = min(vmax, math.sqrt(2 * acc * d))           # slowing down to arrive
+            wx, wy = (dx / d * sp, dy / d * sp) if d > 1e-9 else (0.0, 0.0)
+            ex, ey = wx - vx, wy - vy
+            e = math.hypot(ex, ey)
+            if e > acc * abs(dt):
+                ex, ey = ex / e * acc * abs(dt), ey / e * acc * abs(dt)
+            vx, vy = vx + ex, vy + ey
+            x, y = x + vx * abs(dt), y + vy * abs(dt)
+            path.append((t, x, y))
+        if not leaving:
+            path.reverse()
+        self._gliss_follow_cache[key] = path
+        return path
+
+    @staticmethod
+    def _along(path, t):
+        k = bisect.bisect_right([p[0] for p in path], t) - 1
+        k = max(0, min(len(path) - 2, k))
+        (ta, xa, ya), (tb, xb, yb) = path[k], path[k + 1]
+        u = max(0.0, min(1.0, (t - ta) / max(1e-9, tb - ta)))
+        return xa + (xb - xa) * u, ya + (yb - ya) * u
+
+    def _gliss_neighbours(self, t, kb):
+        """(the hand's way back from the last glissando episode, its way into the next, their indices) at t."""
+        paths = self._gliss_paths()
+        k = bisect.bisect_right(self._gliss_starts, t) - 1                  # the last episode started
+        prev = k if k >= 0 and paths[k][1] <= t else None
+        nxt = k + 1 if k + 1 < len(paths) else None
+        out = self._gliss_follow(prev, kb, True) if prev is not None else None
+        into = self._gliss_follow(nxt, kb, False) if nxt is not None else None
+        return out, into, prev, nxt
+
+    def _gliss_across(self, t, kb):
+        """
+        Where the wrist is at t when there's no time to get back to the
+        finger pose between two glissandos (the way back from one ends after
+        the way into the next begins): straight from where the first one
+        ends to where the next begins, over the whole gap, blends included.
+        None otherwise.
+        """
+        if not self.gliss_eps:
+            return None
+        out, into, prev, nxt = self._gliss_neighbours(t, kb)
+        if not (out and into and out[-1][0] > into[0][0]):
+            return None
+        paths = self._gliss_paths()
+        te, ts = paths[prev][1], paths[nxt][0]
+        if not te <= t <= ts:
+            return None
+        (_, xe, ye), (_, xs, ys) = out[0], into[-1]
+        T, D = max(1e-6, ts - te), math.hypot(xs - xe, ys - ye)
+        vmax = self.max_speed / 0.0254 * self.ppi
+        if D * 1.875 / T <= vmax:
+            u = _smooth((t - te) / T)                    # smootherstep: peaks at 1.875x the mean speed
+        else:
+            # speed up, cruise at the slowest speed that makes it, slow down (trapezoid)
+            acc = GLISS_TRAVEL_ACC / 0.0254 * self.ppi
+            disc = (acc * T) ** 2 - 4 * acc * D
+            v = (acc * T - math.sqrt(disc)) / 2 if disc > 0 else acc * T / 2
+            ta = v / acc
+            x = t - te
+            if x < ta:
+                d = 0.5 * acc * x * x
+            elif x > T - ta:
+                d = v * (T - ta) - 0.5 * acc * (T - x) ** 2
+            else:
+                d = 0.5 * acc * ta * ta + v * (x - ta)
+            u = max(0.0, min(1.0, d / max(1e-6, v * (T - ta))))
+        return xe + (xs - xe) * u, ye + (ys - ye) * u
+
+    def _gliss_travel(self, t, kb, fp):
+        """
+        The finger pose, moved so the hand leaves a glissando from where it
+        ended and comes to the next one where it starts, never faster than
+        the top speed (_gliss_follow): after a glissando it catches up with
+        the finger pose, before one it leaves it just in time. (When the two
+        overlap, _gliss_across takes over.)
+        """
+        if not self.gliss_eps:
+            return fp
+        out, into, _, _ = self._gliss_neighbours(t, kb)
+        if out and t > out[-1][0]:
+            out = None
+        if into and t < into[0][0]:
+            into = None
+        if not out and not into:
+            return fp
+        fx, fy = self._pose_wrist(fp)
+        hx, hy = self._along(out or into, t)
+        return _shift_pose(fp, hx - fx, hy - fy, self.mirror)
 
     # ----- glissandos ------------------------------------------------------------
     def _gliss_paths(self):
@@ -2138,16 +2289,21 @@ class HandAnimator:
             return 0.0, None
         paths = self._gliss_paths()
         i = bisect.bisect_right(self._gliss_starts, t + GLISS_RAMP_T) - 1
-        if i < 0:
-            return 0.0, None
-        t0, t1, _ = paths[i]
-        if t < t0:
-            return _smooth(1.0 - (t0 - t) / GLISS_RAMP_T), i
-        if t <= t1:
-            return 1.0, i
-        if t < t1 + GLISS_RAMP_T:
-            return _smooth(1.0 - (t - t1) / GLISS_RAMP_T), i
-        return 0.0, None
+        best = (0.0, None)
+        # the next one may already be coming in while the last is still on or going out
+        for j in (i, i - 1):
+            if j < 0:
+                continue
+            t0, t1, _ = paths[j]
+            if t < t0:
+                w = _smooth(1.0 - (t0 - t) / GLISS_RAMP_T)
+            elif t <= t1:
+                w = 1.0
+            else:
+                w = _smooth(1.0 - (t - t1) / GLISS_RAMP_T)
+            if w > best[0]:
+                best = (w, j)
+        return best
 
     def _gliss_contact(self, t, i):
         """(x, y, roll direction -1..1) where the fingertips are on the keys at t in episode i."""
@@ -2268,8 +2424,6 @@ class HandAnimator:
         hide = (2, 3, 4, 5)
         palm_up = math.cos(ro) < 0.0                 # turned over past its side: we see the palm
         # palm up the fingers lie flush side by side; with the thumb its nail is on its outer edge
-        if palm_up:
-            hide = (1, 2, 3, 4, 5)                   # the tucked thumb shows its pad, its nail underneath
         extra = {"nail_hide": hide, "palm_up": palm_up, "flush": g * u, "thumb_edge": g * (1.0 - u)}
         struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror, **extra}
         if self.mirror:

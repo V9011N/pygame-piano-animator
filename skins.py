@@ -393,7 +393,9 @@ def _draw_cartoon(pen, h):
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
-                if f not in h.nail_hide:
+                if f == 1 and h.palm_up:
+                    _thumb_sliver(pen, h, c["nail"], _mix(line, c["nail"], 0.3))
+                elif f not in h.nail_hide:
                     _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
 
 
@@ -455,6 +457,38 @@ def _thumb_out(h, p, nx, ny):
 
 THUMB_SIDE = (0.28, 0.32)   # the thumb lies on its side: nail half-width / shift outward (x its radius)
 THUMB_EDGE = (0.26, 0.7)    # ...in a thumb glissando, flush with its outer edge: the nail on the keys
+THUMB_SLIVER = 0.4          # ...palm up, the nail is underneath: a sliver this wide (x its radius) shows along
+                            # the thumb's edge toward the fingers
+
+
+def _thumb_sliver(pen, h, fill, edge):
+    """Palm up: the thumb's nail, underneath it, peeking out as a sliver along its edge toward the fingers."""
+    a, b, r = h.radius[1][-1]
+    ux, uy = _unit(b[0] - a[0], b[1] - a[1])
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    if L < 2:
+        return
+    nx, ny = -uy, ux
+    ks = [h.chains[f][-1] for f in range(2, 6)]
+    kx, ky = sum(k[0] for k in ks) / 4, sum(k[1] for k in ks) / 4
+    if (kx - b[0]) * nx + (ky - b[1]) * ny < 0:
+        nx, ny = -nx, -ny
+    outer, inner = [], []
+    for i in range(13):
+        s = i / 12
+        x = 0.25 * L + s * (0.75 * L + 0.55 * r)         # from partway along the last joint round toward the tip
+        bulge = math.sin(math.pi * s)
+        ro = r * 0.97
+        ri = r * (0.97 - THUMB_SLIVER * bulge)
+        # past the tip the edge curves round the end of the thumb
+        over = max(0.0, x - L)
+        k = math.sqrt(max(0.0, 1 - (over / r) ** 2))
+        cx, cy = a[0] + ux * min(x, L + r), a[1] + uy * min(x, L + r)
+        outer.append((cx + nx * ro * k, cy + ny * ro * k))
+        inner.append((cx + nx * ri * k, cy + ny * ri * k))
+    pts = outer + inner[::-1]
+    pen.poly(pts, edge)
+    pen.poly([(p[0] + (q[0] - p[0]) * 0.18, p[1] + (q[1] - p[1]) * 0.18) for p, q in zip(pts, pts[::-1])], fill)
 
 
 def _flush(chains, fw, gap, ppi, w):

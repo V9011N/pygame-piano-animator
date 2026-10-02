@@ -624,6 +624,18 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     starting in between - the hand stays in the glissando pose through the break - unless the next one starts more
     than `MERGE_MAX_KEYS` 5 keys of its colour from where the last ended (`keys_between`), when the hand may go
     back to its rest position on the way (HR10: 17 episodes).
+  - Travel to and from an episode keeps to the top speed. The finger pose takes no notice of glissandos, so it
+    may be far from where one ends or begins; blending straight into it moved the hand up to 7.7 m/s (HR10 at
+    263.8 s). Now `_gliss_travel` shifts the finger pose onto a follower path (`_gliss_follow`, cached per
+    episode end): leaving, from where the glissando pose left the hand once its blend is done, chasing the finger
+    pose at no more than `max_speed` with `GLISS_TRAVEL_ACC` 40 m/s² acceleration until back on it; arriving,
+    the same worked backwards from where the next episode's blend begins. When the way back from one episode
+    ends after the way into the next begins, `_gliss_across` moves the whole (blended) pose straight from one to
+    the other over the gap (smootherstep, or a speed-capped trapezoid when that would be too fast).
+    `_gliss_w` also takes the stronger of two overlapping blends (a glissando starting while the last one is
+    still fading out used to drop the last one: 20 m/s at 270.9 s). HR10 RH, 257-290 s: frames over 3 m/s 102 →
+    11, all inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
+    the contact follows exactly.
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
     finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
   - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
@@ -646,8 +658,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     outer edge (`struct["thumb_edge"]`, `skins.THUMB_EDGE`) to show it on the keys.
     Palm up, the skin packs fingers 2-5 flush side by side, joint by joint, one outline width apart
     (`struct["flush"]`, `skins._flush`, using the skin's finger widths), and the thumb is tucked across the palm
-    below the knuckles (`GLISS_THUMB_TIP`, bending on the palm's side), drawn with its own outline over the palm,
-    its nail hidden. Both are one family
+    below the knuckles (`GLISS_THUMB_TIP`, bending on the palm's side), drawn with its own outline over the palm;
+    its nail, underneath, shows as a sliver along its edge toward the fingers (`skins._thumb_sliver`,
+    `THUMB_SLIVER`). Both are one family
     (u = smoothed (d+1)/2 of `_gliss_contact`'s direction d), so turning round inside an episode morphs from one
     to the other. Palm up, `struct["palm_up"]` is set and the cartoon skin draws the heart, head and life lines
     (`skins._palm_lines`, quadratic curves in palm coordinates between the index/little knuckles and the wrist
