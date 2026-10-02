@@ -2,6 +2,17 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.1605 - Fine-tune fingering (advanced)
+- New "Fine Tune Fingering Behavior (ADVANCED)" button at the bottom left of a pianist's behaviour
+  page: every weight of the fingering planner as a slider - stretches, crossings, repeated
+  fingers, black keys, chords, hand shifts and timing, each finger's strength and ease on black
+  keys, and how firmly scales, arpeggios, octaves, trills and other figures keep their standard
+  fingering.
+- Each weight shows what it does and its default, and has its own Reset button; Reset all is at
+  the top. A weight's default is what the pianist's other behaviour settings make it.
+- The changes are saved with the pianist and used for their fingering everywhere.
+- The behaviour list is a little more compact, so it fits with the new button.
+
 ## v2026.10.02.1546 - Synced recordings
 - After choosing a MIDI file to play, choose how it should sound: the default sound (the MIDI
   synth), or an audio file synced to the notes and hands.

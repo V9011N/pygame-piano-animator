@@ -70,6 +70,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
   recording the player's clock follows the wall clock instead (audio heard at song time t:
   `offset + t / speed`), and the synth is muted.
+- Every fingering weight is user-tunable per pianist (`fingering.FINE_TUNE`, `Pianist.weights`, applied last by
+  `apply_pianist`): add any new weight to `FINE_TUNE` (a test checks).
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the
   current numbers.

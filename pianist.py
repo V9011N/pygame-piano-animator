@@ -249,6 +249,7 @@ class Pianist:
     created: float = 0.0
     modified: float = 0.0
     skin: dict = field(default_factory=dict)      # how the hands look (skins.py)
+    weights: dict = field(default_factory=dict)   # fine-tuned fingering weights: id -> value (fingering.FINE_TUNE)
 
     @property
     def builtin(self):
@@ -257,7 +258,7 @@ class Pianist:
     def copy(self):
         import copy
         return Pianist(self.name, self.id, tuple(self.color), dict(self.anatomy), dict(self.behavior),
-                       self.created, self.modified, copy.deepcopy(self.skin_settings()))
+                       self.created, self.modified, copy.deepcopy(self.skin_settings()), dict(self.weights))
 
     def skin_settings(self):
         """The full skin settings (style, colours per style, options)."""
@@ -278,7 +279,7 @@ class Pianist:
     def to_json(self):
         return {"name": self.name, "color": list(self.color), "anatomy": self.anatomy,
                 "behavior": self.behavior, "created": self.created, "modified": self.modified,
-                "skin": self.skin_settings()}
+                "skin": self.skin_settings(), "weights": self.weights}
 
     @classmethod
     def from_json(cls, pid, d):
@@ -299,8 +300,16 @@ class Pianist:
         from skins import normalize
         # pianists saved before skins existed keep their bone colour, as skeletons
         skin = normalize(d.get("skin") or {"style": "skeleton"}, bone_color=color)
+        from fingering import FINE_TUNE_IDS
+        weights = {}
+        for k, v in (d.get("weights") or {}).items():
+            try:
+                if k in FINE_TUNE_IDS:
+                    weights[k] = max(0.0, float(v))
+            except (TypeError, ValueError):
+                pass
         return cls(str(d.get("name") or pid), pid, color, anatomy, behavior,
-                   float(d.get("created", 0)), float(d.get("modified", 0)), skin)
+                   float(d.get("created", 0)), float(d.get("modified", 0)), skin, weights)
 
     # ----- derived measures ---------------------------------------------------
     def span_whites(self):

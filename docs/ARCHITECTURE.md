@@ -246,6 +246,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - **Synthetic check** (`v5/synth.py`): D and Bb major RH, F major LH, E harmonic minor, chromatic RH/LH, E minor / C first-inversion / Ab arpeggios, chromatic thirds, D major thirds, E major octaves, trills, repeated notes, Alberti bass. All come out with textbook fingering.
 - **Corpus check** (`v5/corpus_check.py`): all 9 user MIDIs run in 0.1–3 s each. The remaining "impossible" counts are mostly metric artefacts (octave passages, double-third crossings, leaps).
 
+### Fine-tuning the weights (2026-10-02)
+- Studio, behaviour page, bottom left: "Fine Tune Fingering Behavior (ADVANCED)" opens a page with every weight
+  of the model as a slider (`fingering.FINE_TUNE`: 63 - all of `W`, the figure weights `figures.W_*` as
+  `fig:NAME`, and the per-finger `FINGER_STRENGTH` / `BLACK_EASE` as `strength:f` / `black_ease:f`), each
+  with its description, its default and its own Reset; "Reset all" at the top of the side panel. `IMPOSSIBLE`
+  is left out: it is a threshold the code tests against, not a preference.
+- Per pianist: `Pianist.weights` holds only the changed values (saved as `"weights"`, unknown ids dropped,
+  negatives clamped to 0). `apply_pianist` applies them last, over the fingering model and the behaviour
+  settings, and includes them in its cache key; before that it records each weight's value as the pianist's
+  default (`TUNE_DEFAULTS`, `tuned_defaults(p)`), so a reset returns exactly to what the other settings give.
+  `apply_pianist` now also restores the figure weights and finger tables to their base values each time.
+- Slider ranges (`tune_range`): 0 to about three times the larger of the two models' defaults (at least 1),
+  200 steps. `test_finetune` checks every weight is listed - a new weight must be added to `FINE_TUNE`.
+- With no fine-tuning the fingering is unchanged (Op. 25 No. 6, HR10, Dante, Winter Wind: 0 of 13,218 notes).
+
 ## Fingering editor (editor.py)
 - Layout, top to bottom:
   - top bar (Follow pitch / Open / Export / Menu buttons);
