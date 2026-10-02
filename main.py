@@ -67,6 +67,7 @@ class Visualizer(Transport):
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
         self._glow_cache = {}
+        self._finger_cache = {}          # (text, colour) -> rendered finger number
         self.hands = {}
         self.show_hands = True
         self.show_fingers = True
@@ -179,16 +180,32 @@ class Visualizer(Transport):
             self._glow_cache[key] = surf
         return surf
 
+    def _lanes(self, kb, fall):
+        """The falling-notes area's background (lane lines, lighter white-key lanes), drawn once and cached."""
+        w = self.screen.get_width()
+        key = (w, tuple(fall), tuple(kb.rect), kb.style)
+        if getattr(self, "_lanes_key", None) != key:
+            surf = pygame.Surface((w, fall.h + 1))
+            surf.fill(BG)
+            for x in kb.lane_lines:
+                pygame.draw.line(surf, LANE_LINE, (x, 0), (x, fall.h))
+            for x, lw in kb.lane_shade:                 # equal keys: white-key lanes a shade lighter
+                pygame.draw.rect(surf, LANE_WHITE, (x, 0, lw, fall.h))
+            self._lanes_surf, self._lanes_key = surf, key
+        return self._lanes_surf
+
+    def _finger_img(self, txt, color):
+        img = self._finger_cache.get((txt, color))
+        if img is None:
+            img = self._finger_cache[(txt, color)] = self.fonts["finger"].render(txt, True, color)
+        return img
+
     def render(self):
         s = self.screen
         s.fill(BG)
         fall = self.fall_rect
         kb = self.keyboard
-
-        for x in kb.lane_lines:
-            pygame.draw.line(s, LANE_LINE, (x, fall.top), (x, fall.bottom))
-        for x, w in kb.lane_shade:                  # equal keys: white-key lanes a shade lighter
-            pygame.draw.rect(s, LANE_WHITE, (x, fall.top, w, fall.h))
+        s.blit(self._lanes(kb, fall), (0, fall.top))
 
         active = []
         if self.song:
@@ -233,13 +250,14 @@ class Visualizer(Transport):
                             font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
                             if equal_white:      # white number for a white key, black for a black one
                                 txt = str(finger)
-                                w, h = font.size(txt)
+                                dark = self._finger_img(txt, (15, 15, 20))
+                                w, h = dark.get_size()
                                 at = (pos[0] - w // 2, pos[1] - h)
                                 for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                                    s.blit(font.render(txt, True, (15, 15, 20)), (at[0] + dx, at[1] + dy))
-                                s.blit(font.render(txt, True, (250, 250, 250)), at)
+                                    s.blit(dark, (at[0] + dx, at[1] + dy))
+                                s.blit(self._finger_img(txt, (250, 250, 250)), at)
                             else:
-                                img = font.render(str(finger), True, (15, 15, 20))
+                                img = self._finger_img(str(finger), (15, 15, 20))
                                 s.blit(img, img.get_rect(midbottom=pos))
 
             # Glow rising from the keys that are currently pressed (by the hands).

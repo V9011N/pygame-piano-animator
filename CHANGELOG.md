@@ -2,6 +2,11 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0616 - Faster equal keys
+- Equal keys no longer slow the player down: the lanes, the keyboard and the finger numbers are
+  drawn once and reused, so equal keys now draw as fast as (or faster than) realistic keys. They
+  look exactly the same.
+
 ## v2026.10.02.0551 - Resting hands stay by their next notes
 - A resting hand is no longer drawn toward the other hand when it plays next where it is (Chopin's
   Op. 25 No. 6 at 0:25: the right hand stays up high between its passages).

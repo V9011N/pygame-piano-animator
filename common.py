@@ -153,6 +153,7 @@ class Keyboard:
 
     def layout(self, rect: pygame.Rect):
         self.rect = pygame.Rect(rect)
+        self._base = None
         self.tails = {}              # equal keys: pitch -> Rect of a white key's back (between the blacks)
         self.lane_shade = []         # equal keys: (x, width) of the lanes above white keys
         if self.style == "equal" and self.low == LOWEST_PIANO_KEY and self.high == HIGHEST_PIANO_KEY:
@@ -224,74 +225,127 @@ class Keyboard:
             self.lanes[p] = (lane.x, lane.w)
             self.lane_shade.append((lane.x, lane.w))
 
-    def _draw_equal(self, surf, pressed):
-        pygame.draw.rect(surf, KEY_GAP, self.rect)
-        g = self.gap
-        for p, r in self.key_rects.items():
-            if is_black_key(p):
-                continue
-            color = WHITE_KEY
-            if p in pressed:
-                color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
-            head = pygame.Rect(r.x, self.rect.y + self.black_h + g, r.w, r.h - self.black_h - g)
+    # ----- drawing -------------------------------------------------------------
+    # The keyboard at rest is drawn once and cached (_base); each frame it is
+    # blitted and only the pressed keys (and the keys they touch) are drawn
+    # again over it, so a frame costs a blit instead of 88 keys.
+
+    def _white(self, surf, p, pressed):
+        color = WHITE_KEY
+        if p in pressed:
+            color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
+        r = self.key_rects[p]
+        if self.style == "equal":
+            head = pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap)
             pygame.draw.rect(surf, color, head, border_bottom_left_radius=3, border_bottom_right_radius=3)
             pygame.draw.rect(surf, color, self.tails[p])
-        for p, r in self.key_rects.items():
+        else:
+            pygame.draw.rect(surf, color, r, border_bottom_left_radius=3, border_bottom_right_radius=3)
+            pygame.draw.line(surf, WHITE_KEY_EDGE, r.topleft, (r.left, r.bottom - 1))
+
+    def _black(self, surf, p, pressed):
+        r = self.key_rects[p]
+        if p in pressed:
+            pygame.draw.rect(surf, HAND_COLORS[pressed[p]][1], r, border_bottom_left_radius=2,
+                             border_bottom_right_radius=2)
+            return
+        pygame.draw.rect(surf, BLACK_KEY, r, border_bottom_left_radius=2, border_bottom_right_radius=2)
+        if self.style == "equal" and r.w <= 6:
+            return
+        bevel = pygame.Rect(r.x + 2, r.y, r.w - 4, r.h - max(4, r.h // 9))
+        pygame.draw.rect(surf, BLACK_KEY_BEVEL, bevel, border_bottom_left_radius=2,
+                         border_bottom_right_radius=2)
+        inner = bevel.inflate(-2, 0)
+        inner.h -= 2
+        pygame.draw.rect(surf, BLACK_KEY, inner)
+
+    def _white_area(self, p):
+        """The rects a white key covers."""
+        r = self.key_rects[p]
+        if self.style == "equal":
+            return [pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap),
+                    self.tails[p]]
+        return [r]
+
+    def _shade(self):
+        shade = getattr(self, "_shade_surf", None)
+        if shade is None or shade.get_width() != self.rect.w:
+            shade = self._shade_surf = pygame.Surface((self.rect.w, 6), pygame.SRCALPHA)
+            for y in range(6):
+                pygame.draw.line(shade, (0, 0, 0, 110 - y * 18), (0, y), (self.rect.w, y))
+        return shade
+
+    def _draw_all(self, surf, pressed):
+        if self.style == "equal":
+            pygame.draw.rect(surf, KEY_GAP, self.rect)
+        for p in self.key_rects:
             if not is_black_key(p):
-                continue
-            if p in pressed:
-                pygame.draw.rect(surf, HAND_COLORS[pressed[p]][1], r, border_bottom_left_radius=2,
-                                 border_bottom_right_radius=2)
-            else:
-                pygame.draw.rect(surf, BLACK_KEY, r, border_bottom_left_radius=2, border_bottom_right_radius=2)
-                if r.w > 6:
-                    bevel = pygame.Rect(r.x + 2, r.y, r.w - 4, r.h - max(4, r.h // 9))
-                    pygame.draw.rect(surf, BLACK_KEY_BEVEL, bevel, border_bottom_left_radius=2,
-                                     border_bottom_right_radius=2)
-                    inner = bevel.inflate(-2, 0)
-                    inner.h -= 2
-                    pygame.draw.rect(surf, BLACK_KEY, inner)
-        shade = pygame.Surface((self.rect.w, 6), pygame.SRCALPHA)
-        for y in range(6):
-            pygame.draw.line(shade, (0, 0, 0, 110 - y * 18), (0, y), (self.rect.w, y))
-        surf.blit(shade, self.rect.topleft)
+                self._white(surf, p, pressed)
+        for p in self.key_rects:
+            if is_black_key(p):
+                self._black(surf, p, pressed)
+        # Shadow cast by the felt strip onto the top of the keys.
+        surf.blit(self._shade(), self.rect.topleft)
 
     def draw(self, surf, pressed):
         """pressed: dict pitch -> hand for keys currently held."""
-        if self.style == "equal":
-            return self._draw_equal(surf, pressed)
-        for p, r in self.key_rects.items():
-            if is_black_key(p):
-                continue
-            color = WHITE_KEY
-            if p in pressed:
-                color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
-            pygame.draw.rect(surf, color, r, border_bottom_left_radius=3,
-                             border_bottom_right_radius=3)
-            pygame.draw.line(surf, WHITE_KEY_EDGE, r.topleft, (r.left, r.bottom - 1))
-
-        for p, r in self.key_rects.items():
-            if not is_black_key(p):
-                continue
-            if p in pressed:
-                base = HAND_COLORS[pressed[p]][1]
-                pygame.draw.rect(surf, base, r, border_bottom_left_radius=2,
-                                 border_bottom_right_radius=2)
+        r = self.rect
+        # what shows through the rounded corners: the background under the keyboard
+        under = tuple(surf.get_at((r.x, r.bottom - 1))) if r.w and r.h else None
+        base = getattr(self, "_base", None)
+        if base is None or self._base_key != (tuple(r), self.style, under) or surf.get_clip() != surf.get_rect():
+            if surf.get_clip() != surf.get_rect():
+                return self._draw_all(surf, pressed)
+            self._draw_all(surf, {})
+            self._base = surf.subsurface(r).copy()
+            self._base_key = (tuple(r), self.style, under)
+        else:
+            surf.blit(base, r)
+        if not pressed:
+            return
+        # the pressed keys, and every key they touch, drawn again in the original order
+        whites = {p for p in pressed if p in self.key_rects and not is_black_key(p)}
+        blacks = {p for p in pressed if p in self.key_rects and is_black_key(p)}
+        if self.style != "equal":
+            # a realistic white key runs under its black neighbours: redraw those
+            # (and the white keys under them) so the overlaps come out the same
+            changed = True
+            while changed:
+                changed = False
+                for p, kr in self.key_rects.items():
+                    if is_black_key(p) and p not in blacks and any(kr.colliderect(self.key_rects[w]) for w in whites):
+                        blacks.add(p)
+                        changed = True
+                for p, kr in self.key_rects.items():
+                    if not is_black_key(p) and p not in whites and any(kr.colliderect(self.key_rects[b]) for b in blacks):
+                        whites.add(p)
+                        changed = True
+        back = KEY_GAP if self.style == "equal" else under
+        dirty = []
+        for p in sorted(whites):
+            for a in self._white_area(p):
+                pygame.draw.rect(surf, back, a)
+                dirty.append(a)
+            self._white(surf, p, pressed)
+        for p in sorted(blacks):
+            kr = self.key_rects[p]
+            if self.style == "equal":
+                pygame.draw.rect(surf, back, kr)
+            dirty.append(kr)
+            self._black(surf, p, pressed)
+        # the felt's shadow again over what was redrawn under it - once per column
+        spans = sorted((a.left, a.right) for a in dirty if a.top < r.top + 6)
+        merged = []
+        for x0, x1 in spans:
+            if merged and x0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], x1)
             else:
-                pygame.draw.rect(surf, BLACK_KEY, r, border_bottom_left_radius=2,
-                                 border_bottom_right_radius=2)
-                bevel = pygame.Rect(r.x + 2, r.y, r.w - 4, r.h - max(4, r.h // 9))
-                pygame.draw.rect(surf, BLACK_KEY_BEVEL, bevel, border_bottom_left_radius=2,
-                                 border_bottom_right_radius=2)
-                inner = bevel.inflate(-2, 0)
-                inner.h -= 2
-                pygame.draw.rect(surf, BLACK_KEY, inner)
-
-        # Shadow cast by the felt strip onto the top of the keys.
-        shade = pygame.Surface((self.rect.w, 6), pygame.SRCALPHA)
-        for y in range(6):
-            pygame.draw.line(shade, (0, 0, 0, 110 - y * 18), (0, y), (self.rect.w, y))
-        surf.blit(shade, self.rect.topleft)
+                merged.append([x0, x1])
+        shade = self._shade()
+        for x0, x1 in merged:
+            surf.set_clip(pygame.Rect(x0, r.top, x1 - x0, 6))
+            surf.blit(shade, r.topleft)
+        surf.set_clip(None)
 
 
 def draw_felt(surf, rect):
