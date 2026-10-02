@@ -570,6 +570,12 @@ def _creases(pen, h, f, color):
 NAIL_HIDE_DEG = (95.0, 115.0)   # phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
 
 
+# the nail's outline: a superellipse, (cos, sin) of 32 angles to the power 0.7
+_NAIL_RING = [(math.copysign(abs(math.cos(2 * math.pi * i / 32)) ** 0.7, math.cos(2 * math.pi * i / 32)),
+               math.copysign(abs(math.sin(2 * math.pi * i / 32)) ** 0.7, math.sin(2 * math.pi * i / 32)))
+              for i in range(32)]
+
+
 def _nail(pen, h, f, fill, edge):
     """
     The nail on the back of the distal phalanx, seen from above. As the
@@ -628,11 +634,9 @@ def _nail(pen, h, f, fill, edge):
 
     def shape(grow):
         pts = []
-        for i in range(32):
-            t = 2 * math.pi * i / 32
-            c, s = math.cos(t), math.sin(t)
-            x = mid + (hl + grow * max(cos, 0.35 * show)) * math.copysign(abs(c) ** 0.7, c)
-            y = shift * r + (half_w * r + grow) * math.copysign(abs(s) ** 0.7, s)
+        for ec, es in _NAIL_RING:
+            x = mid + (hl + grow * max(cos, 0.35 * show)) * ec
+            y = shift * r + (half_w * r + grow) * es
             lim = 0.94 * (math.sqrt(max(0.0, rc * rc - (x - xc) ** 2)) if x > xc else r)
             y = max(-lim, min(lim, y))                   # stay inside the finger (and its rounded end)
             pts.append((b[0] + ux * x + nx * y, b[1] + uy * x + ny * y))

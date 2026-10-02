@@ -210,3 +210,27 @@ def test_a_chord_right_after_a_glissando_is_played_in_place(screen):
         x, y = a._pose_wrist(a.pose(t, kb))
         fx, fy = a._pose_wrist(a._finger_pose(t, kb))
         assert math.hypot(x - fx, y - fy) < 0.1 * a.ppi, t                # on the finger pose: keys under fingers
+
+
+def test_working_ahead_changes_nothing_and_is_ready_in_time(screen):
+    # HandAnimator.prepare (a frame's spare time) computes ahead what frames
+    # would compute anyway: the same poses, and the glissando ways ready
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    lead = [Note(40, 0.2, 0.5, 80, 0, RIGHT)]
+    g = run(WHITE[16:30], t0=2.0)
+    chord = [Note(p, g[-1].start + 0.5, g[-1].start + 0.8, 80, 0, RIGHT) for p in (48, 52, 55)]
+    song = song_of(lead + g + chord)
+    plain = hands.HandAnimator(song, RIGHT)
+    ahead = hands.HandAnimator(song, RIGHT)
+    plain._ensure_layout(kb)
+    ahead._ensure_layout(kb)
+    t = 0.6
+    ahead.prepare(t, kb, budget=10.0)                           # as much time as it wants
+    assert ahead._warm_k * hands.LIMIT_GRID_T >= t + hands.WARM_AHEAD_T - hands.LIMIT_GRID_T
+    assert (0, False) in ahead._gliss_follow_cache           # the way into the glissando is ready
+    for i in range(240):
+        tt = t + i / 60
+        if i % 30 == 0:
+            ahead.prepare(tt, kb, budget=10.0)
+        assert repr(plain.pose(tt, kb)["struct"]["chains"]) == repr(ahead.pose(tt, kb)["struct"]["chains"]), tt

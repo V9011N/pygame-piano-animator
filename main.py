@@ -51,7 +51,7 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     MAX_FRAME_DT, show_loading)
 import pianist as pianists
-from hands import HandAnimator, draw_hands, pair_hands
+from hands import HandAnimator, draw_hands, pair_hands, prepare_hands
 from midi_loader import LEFT, RIGHT, load_song
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
@@ -59,6 +59,7 @@ from version import VERSION
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
 WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it this much slower
 SEEK_STEP = 5.0
+IDLE_MARGIN_T = 0.002        # s of each frame's spare time left unused (Visualizer.idle)
 
 # What a mode's handle_event can return besides True (carry on) / False (quit)
 TO_MENU = "menu"
@@ -267,6 +268,11 @@ class Visualizer(Transport):
             self.set_song(load_song(path))
         except Exception as exc:
             print(f"Could not load {path}: {exc}")
+
+    def idle(self, budget):
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
+        if self.song and self.hands:
+            prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
         self.midi.silence()                     # (with the pedal down, notes would ring on)
@@ -808,10 +814,15 @@ class App:
                 if not self.handle_event(event):
                     running = False
                     break
+            frame_start = time.perf_counter()
             self.mode.update(dt)
             self.mode.render()
             self.draw_version()
             pygame.display.flip()
+            # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
+            spare = 1.0 / FPS - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
+            if spare > 0 and hasattr(self.mode, "idle"):
+                self.mode.idle(spare)
         self.close()
 
     def draw_version(self):

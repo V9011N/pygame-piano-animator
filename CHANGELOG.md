@@ -3,6 +3,12 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.1 - Faster loading and smoother playback
+- Unfingered MIDI files load about a third faster (Chopin's 12-minute Concerto No. 1: 7.5 s to 5 s).
+- Smoother playback: the hands' motion is worked out ahead in each frame's spare time, so far
+  fewer frames run late, and the stalls around glissandos (up to half a second) are gone.
+- Everything looks and plays exactly as before.
+
 ## v26.1.0 - New version numbers
 - Versions are now numbered year.major.minor, starting at v26.1.0; each update raises the last
   number.

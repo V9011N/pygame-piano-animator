@@ -267,6 +267,21 @@ class Keyboard:
                     self.tails[p]]
         return [r]
 
+    def _overlaps(self):
+        """{pitch: keys of the other colour its rect overlaps} (cached per layout)."""
+        key = tuple(self.rect)
+        if getattr(self, "_overlap_key", None) != key:
+            whites = [p for p in self.key_rects if not is_black_key(p)]
+            blacks = [p for p in self.key_rects if is_black_key(p)]
+            touch = {p: [] for p in self.key_rects}
+            for w in whites:
+                for b in blacks:
+                    if self.key_rects[w].colliderect(self.key_rects[b]):
+                        touch[w].append(b)
+                        touch[b].append(w)
+            self._touch, self._overlap_key = touch, key
+        return self._touch
+
     def _shade(self):
         shade = getattr(self, "_shade_surf", None)
         if shade is None or shade.get_width() != self.rect.w:
@@ -309,17 +324,14 @@ class Keyboard:
         if self.style != "equal":
             # a realistic white key runs under its black neighbours: redraw those
             # (and the white keys under them) so the overlaps come out the same
-            changed = True
-            while changed:
-                changed = False
-                for p, kr in self.key_rects.items():
-                    if is_black_key(p) and p not in blacks and any(kr.colliderect(self.key_rects[w]) for w in whites):
-                        blacks.add(p)
-                        changed = True
-                for p, kr in self.key_rects.items():
-                    if not is_black_key(p) and p not in whites and any(kr.colliderect(self.key_rects[b]) for b in blacks):
-                        whites.add(p)
-                        changed = True
+            touch = self._overlaps()
+            todo = list(whites | blacks)
+            while todo:
+                p = todo.pop()
+                for q in touch[p]:
+                    if q not in whites and q not in blacks:
+                        (blacks if is_black_key(q) else whites).add(q)
+                        todo.append(q)
         back = KEY_GAP if self.style == "equal" else under
         dirty = []
         for p in sorted(whites):

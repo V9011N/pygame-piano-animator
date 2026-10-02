@@ -40,6 +40,34 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Performance (v26.1.1)
+Measured headless (SDL dummy video, 1600x900) on the development container; a desktop is faster, but the
+proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames per section.
+- Load (read + hand split + fingering + animators + first frame), unfingered files: Concerto No. 1 (MAESTRO,
+  12 min, 6316 notes) 7.5 -> 5.1 s; HR10 5.3 -> 3.4 s; Op. 25 No. 6 3.7 -> 2.5 s. Files that carry their
+  fingering load in < 0.6 s (no planning). What changed, all with identical results (hands and fingers of
+  all 19 local files, 128,444 notes; 324 poses and frames):
+  - `fingering.key_pos` is a table (it was called 6.3 M times per Concerto load);
+  - `fingering.hand_range` is cached per (keys, fingers), cleared by `apply_pianist`;
+  - `plan_fingering` caches `_transition` per (last fingers, fingers) within a step;
+  - `hand_split`: what a candidate split's notes cost regardless of the hand (`_Part`: pitches, span,
+    chord and range terms) is worked out once per split, not once per beam entry.
+- Frames: the busy parts are the hand solve (`_solve_hand`'s Gauss-Newton, 8 iterations, finite
+  differences - it doesn't converge before 8, so it isn't cut short) and the fingertips (`_key_spot`), then
+  skin drawing. Exact speed-ups: `_clamp_tip` split into `_clamp_prep` (once per finger and hand) and
+  `_clamp_apply` (per point: `_key_spot` tries 22 depths); the Gram matrix summed once per symmetric
+  entry; the nail outline's ring precomputed; the keyboard's overlap map precomputed.
+- Spikes: a glissando's way back to the finger pose (`_gliss_follow`) simulates up to 3 s of future poses,
+  and a far-future pose restarts the speed limit's chain (`LIMIT_RESTART_T`) - 150-500 ms in one frame.
+  Now `HandAnimator.prepare` (from `App.run`, in each frame's spare time: what `clock.tick` would have
+  slept, less `IDLE_MARGIN_T`; `hands.prepare_hands` shares it between the hands; player and editor
+  `idle()`) carries the speed-limited grid on to `WARM_AHEAD_T` 3.5 s ahead, one step at a time (each
+  needs the one before - the same order playback would compute it in, so identical poses), and works
+  the glissando ways (`_gliss_follow_steps`, resumable) once the warm grid reaches them. `_gliss_neighbours`
+  only asks for a way within `GLISS_TRAVEL_MAX_T` of where it applies. Frames over 16.7 ms, per 600:
+  HR10 28 -> 1, Concerto 62 -> 0, Op. 25 No. 6 46 -> 4, Winter Wind 37 -> 0, Dante 119 -> 17; mean
+  13-15 -> 8-9 ms; worst 300 -> 36 ms.
+
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
 menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setting`):

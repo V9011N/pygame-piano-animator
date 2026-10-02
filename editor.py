@@ -642,6 +642,12 @@ class FingeringEditor(Transport):
     def say(self, text):
         self.message, self.message_age = text, 0.0
 
+    def idle(self, budget):
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
+        if self.hands and not self._rebuild_due:
+            from hands import prepare_hands
+            prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
+
     def leave(self):
         self.midi.silence()                     # (with the pedal down, notes would ring on)
         self.app.speed = self.speed

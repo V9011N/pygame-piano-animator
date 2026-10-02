@@ -107,26 +107,52 @@ class _Hand:
         return _Hand(c, t, min(ps), max(ps), held + tuple((n.end, n.pitch) for n in notes))
 
 
-def _hand_cost(hand, t, notes, side, other):
-    """Cost of `hand` (history) playing `notes` (sorted) at time t."""
-    if not notes:
+class _Part:
+    """One hand's share of a group, with everything about it that doesn't depend on the hand (_hand_cost)."""
+    __slots__ = ("notes", "ps", "lo", "hi", "m", "n", "span", "span1", "span2", "chord", "pref")
+
+    def __init__(self, notes, side):
+        self.notes = notes
+        if not notes:
+            return
+        ps = self.ps = [n.pitch for n in notes]
+        lo, hi = self.lo, self.hi = ps[0], ps[-1]
+        self.n = len(ps)
+        self.m = sum(ps) / len(ps)
+        span = self.span = hi - lo
+        self.span1 = 2.5 * (span - SPAN_FREE) if span > SPAN_FREE else None
+        self.span2 = SPAN_OVER + 3.0 * (span - SPAN_MAX) if span > SPAN_MAX else None
+        if len(ps) > 1:
+            size = 0.0 if hi - lo <= 5 else 0.5 if hi - lo <= 9 else 1.0
+            self.chord = CHORD_COST * size * (len(ps) - 1) ** 1.5
+        else:
+            self.chord = None
+        if side == RIGHT:
+            self.pref = 0.02 * sum(max(0, 55 - p) for p in ps)
+        else:
+            self.pref = 0.02 * sum(max(0, p - 67) for p in ps)
+
+
+def _hand_cost(hand, t, part, side, other):
+    """Cost of `hand` (history) playing `part` (_Part: its notes, sorted) at time t."""
+    if not part.notes:
         return 0.0
-    ps = [n.pitch for n in notes]
-    lo, hi = ps[0], ps[-1]
+    ps = part.ps
+    lo, hi = part.lo, part.hi
     c = 0.0
     # --- how many notes and how wide, including what this hand still holds
     held = [p for e, p in hand.held if e > t + HELD_TOL]
-    allp = ps + held
-    if len(ps) > 5:
+    nall = part.n + len(held)
+    if part.n > 5:
         c += 100.0
-    elif len(allp) > 5:
-        c += 8.0 * (len(allp) - 5)
+    elif nall > 5:
+        c += 8.0 * (nall - 5)
     # notes struck together must fit the hand ...
-    span = hi - lo
-    if span > SPAN_FREE:
-        c += 2.5 * (span - SPAN_FREE)
-    if span > SPAN_MAX:
-        c += SPAN_OVER + 3.0 * (span - SPAN_MAX)
+    span = part.span
+    if part.span1 is not None:
+        c += part.span1
+    if part.span2 is not None:
+        c += part.span2
     # ... and should fit with what it still holds (softer: held keys can be
     # let go early, and a rolled chord needn't be held all at once)
     if held:
@@ -138,21 +164,19 @@ def _hand_cost(hand, t, notes, side, other):
     # --- chords at speed: a hand playing several notes at once, again and
     # again, is working harder than two hands sharing the load
     # (small shapes - thirds, fourths, sixths - are what one hand is for)
-    if len(ps) > 1:
+    if part.chord is not None:
         dt_h = t - hand.last_t if hand.last_lo is not None else 1.0
-        size = 0.0 if hi - lo <= 5 else 0.5 if hi - lo <= 9 else 1.0
-        c += CHORD_COST * size * (len(ps) - 1) ** 1.5 * min(3.0, 0.4 / max(1e-3, dt_h))
+        c += part.chord * min(3.0, 0.4 / max(1e-3, dt_h))
     if hand.last_lo is None:
-        m = sum(ps) / len(ps)
-        c += MOVE_COST * abs(m - hand.center)          # first notes: near where it starts
+        c += MOVE_COST * abs(part.m - hand.center)          # first notes: near where it starts
     # --- movement since the hand last played
     if hand.last_lo is not None:
         dt = max(1e-3, t - hand.last_t)
         # how far the hand must reach: the new note furthest from where it
         # just was (a chord reaching back into the other hand's range counts)
-        d = max(max(0.0, p - hand.last_hi, hand.last_lo - p) for p in ps)
-        m = sum(ps) / len(ps)
-        shift = abs(m - hand.center)
+        lh, ll = hand.last_hi, hand.last_lo
+        d = max(max(0.0, p - lh, ll - p) for p in ps)
+        shift = abs(part.m - hand.center)
         fade = math.exp(-dt / 1.5)                    # old positions matter less
         c += fade * MOVE_COST * shift
         # beyond the top speed it quickly becomes impossible: a two-octave
@@ -170,10 +194,7 @@ def _hand_cost(hand, t, notes, side, other):
         if side == LEFT and hi > other.center + 2:
             c += 0.25 * (hi - other.center - 2)
     # --- range preference (weak)
-    if side == RIGHT:
-        c += 0.02 * sum(max(0, 55 - p) for p in ps)
-    else:
-        c += 0.02 * sum(max(0, p - 67) for p in ps)
+    c += part.pref
     return c
 
 
@@ -300,11 +321,12 @@ def split_hands(notes, pianist=None, prefer=None):
             ln = [n for n in ns if prefer[id(n)] == LEFT]
             if ln != ns[:len(ln)]:
                 splits.append((-1, ln, [n for n in ns if prefer[id(n)] != LEFT]))
+        parts = [(_Part(rn, RIGHT), _Part(ln, LEFT)) for _, ln, rn in splits]
         cand = []
         for bi, (cost, rh, lh, _, pk, tr) in enumerate(beam):
             last = dict(tr)
-            for k, ln, rn in splits:
-                c = cost + _hand_cost(rh, t, rn, RIGHT, lh) + _hand_cost(lh, t, ln, LEFT, rh)
+            for (k, ln, rn), (rp, lp) in zip(splits, parts):
+                c = cost + _hand_cost(rh, t, rp, RIGHT, lh) + _hand_cost(lh, t, lp, LEFT, rh)
                 if repeat and k != pk:
                     c += REPEAT_SPLIT
                 c += _crowding(rh, lh, t, rn, ln)

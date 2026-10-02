@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import bisect
 import math
+import time
+from operator import mul
 
 from fingering import group_notes, is_crossing, key_pos, mirror_pitch, plan_fingering
 from midi_loader import RIGHT, is_black_key
@@ -243,6 +245,7 @@ GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
 GLISS_TRAVEL_ACC = 40.0     # m/s^2, to and from a glissando the hand speeds up (and slows down) this fast...
 GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
 GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
+WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out this far ahead of the song
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
@@ -272,6 +275,28 @@ def _mul(a, s): return (a[0] * s, a[1] * s, a[2] * s)
 def _dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 def _norm(a): return math.sqrt(_dot(a, a))
 def _lerp(a, b, s): return a + (b - a) * s
+
+
+def _gram(cols):
+    """J^T J for the three Jacobian columns (symmetric: each entry summed once)."""
+    a00, a01, a02 = sum(map(mul, cols[0], cols[0])), sum(map(mul, cols[0], cols[1])), sum(map(mul, cols[0], cols[2]))
+    a11, a12, a22 = sum(map(mul, cols[1], cols[1])), sum(map(mul, cols[1], cols[2])), sum(map(mul, cols[2], cols[2]))
+    return [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]]
+
+
+def _clamp_apply(prep, x, y):
+    """_clamp_tip's clamp, from _clamp_prep's (base, rotations, splay and reach limits)."""
+    bx, by, cn, sn, cp, sp, lo, hi, hmin, hmax = prep
+    dx, dy = x - bx, y - by
+    lx, ly = dx * cn - dy * sn, dx * sn + dy * cn          # into the hand frame (rot by -psi)
+    a, h = math.atan2(lx, ly), math.hypot(lx, ly)
+    ac = lo if a < lo else hi if a > hi else a
+    if ac != a:
+        h *= max(0.0, math.cos(a - ac))          # nearest point on the limit's line
+    a = ac
+    h = hmin if h < hmin else hmax if h > hmax else h
+    ux, uy = h * math.sin(a), h * math.cos(a)
+    return bx + (ux * cp - uy * sp), by + (ux * sp + uy * cp)
 
 
 def _shift_pose(p, dx, dy, mirror):
@@ -327,6 +352,17 @@ def idle_weight(spans, starts, t):
     a = _smooth((t - last - IDLE_AFTER_T) / IDLE_RAMP_T)
     b = _smooth((nxt - t - IDLE_READY_T) / (IDLE_BEFORE_T - IDLE_READY_T))
     return a * b
+
+
+def prepare_hands(animators, t, kb, budget):
+    """Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare)."""
+    anims = list(animators)
+    end = time.perf_counter() + budget
+    for i, a in enumerate(anims):
+        left = end - time.perf_counter()
+        if left <= 0:
+            break
+        a.prepare(t, kb, left / (len(anims) - i))
 
 
 def pair_hands(animators):
@@ -681,6 +717,8 @@ class HandAnimator:
         self._find_gestures()
         self._gliss_cache = None
         self._gliss_follow_cache = {}
+        self._follow_jobs = {}
+        self._warm_k = None
         self._strike_list = None
         self._gliss_starts = [ep[0][0].start for ep in self.gliss_eps]
         self.runs = self._find_runs()
@@ -1314,8 +1352,8 @@ class HandAnimator:
                 qq = list(q)
                 qq[j] += eps[j]
                 cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq), r0)])
-            A = [[sum(ci * cj for ci, cj in zip(cols[i], cols[j])) for j in range(3)] for i in range(3)]
-            g = [-sum(ci * r for ci, r in zip(cols[i], r0)) for i in range(3)]
+            A = _gram(cols)
+            g = [-sum(map(mul, cols[i], r0)) for i in range(3)]
             for i in range(3):
                 A[i][i] *= 1.0 + GN_DAMPING
             dq = _solve3(A, g)
@@ -1571,6 +1609,8 @@ class HandAnimator:
         self._smooth_hand_cache, self._smooth_tip_cache = {}, {}
         self._gliss_cache = None
         self._gliss_follow_cache = {}
+        self._follow_jobs = {}
+        self._warm_k = None
         self._strike_list = None
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
@@ -1649,12 +1689,14 @@ class HandAnimator:
         line at its nearest point there - not swung round at full length,
         which would stretch the finger out past where it is going.
         """
+        return _clamp_apply(self._clamp_prep(f, z, wx, wy, psi, slack, margin, comp, stretch, low), x, y)
+
+    def _clamp_prep(self, f, z, wx, wy, psi, slack=0.0, margin=0.0, comp=0.0, stretch=1.0, low=1.0):
+        """What _clamp_tip needs for finger f at this hand and height, worked out once (_clamp_apply)."""
         rot = self._rot
         blx, bly, blz = self.base_local[f]
         bx, by = rot(blx, bly, psi)
         bx, by = wx + bx, wy + by
-        lx, ly = rot(x - bx, y - by, -psi)
-        a, h = math.atan2(lx, ly), math.hypot(lx, ly)
         lo, hi = self._splay_at(f, comp, stretch)
         m = math.radians(KEY_FIX_MARGIN_DEG) * margin / KEY_FIX_MARGIN if margin else 0.0
         lo, hi = lo - slack + m, hi + slack - m
@@ -1663,12 +1705,7 @@ class HandAnimator:
             hmin *= self.curl_min            # a retracting pianist curls idle fingers further in
         dm = margin * self.length[f]
         hmin, hmax = hmin + dm, max(hmin + dm, hmax - dm)
-        ac = _clamp(a, lo, hi)
-        if ac != a:
-            h *= max(0.0, math.cos(a - ac))          # nearest point on the limit's line
-        a, h = ac, _clamp(h, hmin, hmax)
-        cx, cy = rot(h * math.sin(a), h * math.cos(a), psi)
-        return bx + cx, by + cy
+        return (bx, by, math.cos(-psi), math.sin(-psi), math.cos(psi), math.sin(psi), lo, hi, hmin, hmax)
 
     def _key_spot(self, pk, f, hand, z=None, note=None, soft=0.0, comp=0.0, low=1.0):
         """
@@ -1692,7 +1729,8 @@ class HandAnimator:
         z = -self.travel if z is None else z
         lo, hi = self._key_depths(pk)          # the whole playing area, if reach needs it
         span = max(1e-6, hi - lo)
-        cx, cy = self._clamp_tip(f, kx, ky, z, *hand, margin=KEY_FIX_MARGIN, comp=comp, low=low)
+        prep = self._clamp_prep(f, z, *hand, margin=KEY_FIX_MARGIN, comp=comp, low=low)
+        cx, cy = _clamp_apply(prep, kx, ky)
         e0 = math.hypot(cx - kx, cy - ky)
         far = _smooth((e0 - 1.5 * span) / (1.5 * span))
         if e0 < 0.5 or far >= 1.0:
@@ -1702,7 +1740,7 @@ class HandAnimator:
         cands = [(ky, kk * e0)]
         for i in range(21):
             y = lo + span * i / 20
-            cx, cy = self._clamp_tip(f, kx, y, z, *hand, margin=KEY_FIX_MARGIN, comp=comp, low=low)
+            cx, cy = _clamp_apply(prep, kx, y)
             cands.append((y, abs(y - ky) + kk * math.hypot(cx - kx, cy - y)))
         best = min(c for _, c in cands)
         ws = [(y, math.exp(-(c - best) / tau)) for y, c in cands]
@@ -1911,9 +1949,9 @@ class HandAnimator:
                 cols.append([(a - b) / eps[j] for a, b in zip(residuals(*qq), r0)])
             # (J^T J + damping) dq = -J^T r, in units scaled so psi ~ pixels
             scale = (1.0, 1.0, arm)
-            A = [[sum(ci * cj for ci, cj in zip(cols[i], cols[j])) / (scale[i] * scale[j])
-                  for j in range(3)] for i in range(3)]
-            g = [-sum(ci * r for ci, r in zip(cols[i], r0)) / scale[i] for i in range(3)]
+            G = _gram(cols)
+            A = [[G[i][j] / (scale[i] * scale[j]) for j in range(3)] for i in range(3)]
+            g = [-sum(map(mul, cols[i], r0)) / scale[i] for i in range(3)]
             lam = GN_DAMPING * (A[0][0] + A[1][1] + A[2][2]) / 3 + 1e-9
             for i in range(3):
                 A[i][i] += lam
@@ -2332,6 +2370,14 @@ class HandAnimator:
         path = self._gliss_follow_cache.get(key)
         if path is not None:
             return path or None
+        job = self._follow_jobs.pop(key, None) or self._gliss_follow_steps(i, kb, leaving)
+        for _ in job:                               # (whatever prepare() hasn't done yet)
+            pass
+        return self._gliss_follow_cache[key] or None
+
+    def _gliss_follow_steps(self, i, kb, leaving):
+        """_gliss_follow as a job that yields after each step, so prepare() can do it a little at a time."""
+        key = (i, leaving)
         t0, t1, _ = self._gliss_paths()[i]
         W = self._pose_wrist
         # the glissando pose is held until the blend is done (the contact stays put after t1 / before t0)
@@ -2358,6 +2404,7 @@ class HandAnimator:
             vx, vy = vx + ex, vy + ey
             x, y = x + vx * abs(dt), y + vy * abs(dt)
             path.append((t, x, y))
+            yield
         # ...but it must be back on the finger pose before the hand's next key
         # counts (or may leave it only once its last key before the glissando
         # is let go): if the chase would take longer, None - _gliss_rush moves
@@ -2365,11 +2412,51 @@ class HandAnimator:
         if (path[-1][0] > self._gliss_rush_window(i, True)[1]) if leaving else \
                 (path[-1][0] < self._gliss_rush_window(i, False)[0]):
             self._gliss_follow_cache[key] = False
-            return None
+            return
         if not leaving:
             path.reverse()
         self._gliss_follow_cache[key] = path
-        return path
+
+    def prepare(self, t, kb, budget=0.005):
+        """
+        Work done ahead, a little each frame (about `budget` seconds): the
+        hand's motion (its speed-limited grid, a chain where each step needs
+        the one before) carried on up to WARM_AHEAD_T past t, then the ways
+        to and from the glissandos it reaches - so working any of it out
+        when it's needed never stalls a frame. In steady play it costs no
+        more than the frames would have spent anyway.
+        """
+        self._ensure_layout(kb)
+        end = time.perf_counter() + budget
+        g = LIMIT_GRID_T
+        k_now = math.floor(t / g)
+        if self._warm_k is None or self._warm_k < k_now or self._warm_k > k_now + 4 * WARM_AHEAD_T / g:
+            self._warm_k = k_now                     # (after a seek: from here)
+        k_end = math.floor((t + WARM_AHEAD_T) / g)
+        while self._warm_k < k_end:
+            if time.perf_counter() > end:
+                return
+            self._warm_k += 1
+            self._smooth_tip_grid(self._warm_k)      # (and the hand's grid under it)
+        if not self.gliss_eps:
+            return
+        frontier = self._warm_k * g
+        paths = self._gliss_paths()
+        k = bisect.bisect_right(self._gliss_starts, frontier)
+        for i in range(max(0, k - 2), k):
+            t0, t1, _ = paths[i]
+            # once the warm motion reaches where each way starts, until it's done
+            for leaving, start in ((False, t0 - GLISS_RAMP_T), (True, t1 + GLISS_RAMP_T)):
+                key = (i, leaving)
+                if key in self._gliss_follow_cache or frontier < start or t > start + GLISS_TRAVEL_MAX_T:
+                    continue
+                job = self._follow_jobs.get(key)
+                if job is None:
+                    job = self._follow_jobs[key] = self._gliss_follow_steps(i, kb, leaving)
+                for _ in job:
+                    if time.perf_counter() > end:
+                        return
+                self._follow_jobs.pop(key, None)
 
     def _gliss_rush_window(self, i, leaving):
         """
@@ -2477,8 +2564,13 @@ class HandAnimator:
         k = bisect.bisect_right(self._gliss_starts, t) - 1                  # the last episode started
         prev = k if k >= 0 and paths[k][1] <= t else None
         nxt = k + 1 if k + 1 < len(paths) else None
-        out = self._gliss_follow(prev, kb, True) if prev is not None else None
-        into = self._gliss_follow(nxt, kb, False) if nxt is not None else None
+        # a way to or from a glissando lasts at most GLISS_TRAVEL_MAX_T: further
+        # off it can't apply yet (() - nothing to follow, not a rush)
+        reach = GLISS_TRAVEL_MAX_T + GLISS_RAMP_T + 0.1
+        out = (self._gliss_follow(prev, kb, True) if t <= paths[prev][1] + reach else ()) \
+            if prev is not None else None
+        into = (self._gliss_follow(nxt, kb, False) if t >= paths[nxt][0] - reach else ()) \
+            if nxt is not None else None
         return out, into, prev, nxt
 
     def _gliss_across(self, t, kb):
