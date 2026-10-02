@@ -66,6 +66,29 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   frames, both styles); a drawing surface with a clip set falls back to drawing every key. Without hands:
   equal 5.0-5.5 → 2.0 ms, realistic 2.8-3.5 → 2.8-3.2 ms; keyboard alone 0.9 / 1.6 → 0.1 ms.
 
+## Synced recordings (audio_sync.py, 2026-10-02)
+- Choosing a MIDI file to play (menu, drop, O in the player) opens `PlaybackSetup`: "Default sound" (the
+  MIDI synth, as before) or "Sync an audio file": a speed slider (25-200%, fixed once playing), then the
+  audio file (tkinter dialog). The file must last at least `duration / speed`; a shorter one is refused
+  with its length and the length needed. The command line skips the screen (`--audio`, `--audio-speed`,
+  `--audio-offset`).
+- `SyncAudio` decodes the whole file with `pygame.mixer.Sound` (WAV / OGG / MP3 / FLAC, to the mixer's
+  format) and keeps `peaks`: the loudest sample in each `PEAK_T` 5 ms slice (numpy, which pretty_midi
+  already needs). `play_from(pos)` plays a `Sound` made over a memoryview of the raw samples from that
+  point (no seeking API needed, any format; ~2 ms per start).
+- Timing: song time t runs at `speed`; the audio heard at t is at `offset + t / speed`. While playing,
+  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`), not from the
+  capped frame clock, so the two never drift; the audio restarts on play, seek, a nudge and the end of a
+  drag. A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
+  synth is muted while a recording plays (restored on leaving); M mutes the recording instead; the speed
+  keys do nothing.
+- The waveform strip (`WAVE_H` 56 px, under the top bar, the falling notes below it) is on the same
+  timeline as the top bar (song times 0..duration across the width): bright where the MIDI is, dimmed
+  outside; a translucent progress fill from the left and the playhead. Dragging it moves the recording
+  against the notes (`_drag_wave`, incremental; Shift `WAVE_FINE` 10x finer), `,` / `.` nudge 10 ms (Shift
+  100 ms); the offset is kept so the recording still overlaps the MIDI. The strip is cached per offset.
+- The player starts paused with a recording, so it can be lined up first.
+
 ## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
 - `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
 - `read_midi`: the strict pretty_midi parse; if it fails, `repair_smf` rewrites the file's bytes and it is parsed

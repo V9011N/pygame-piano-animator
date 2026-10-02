@@ -2,6 +2,16 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.1546 - Synced recordings
+- After choosing a MIDI file to play, choose how it should sound: the default sound (the MIDI
+  synth), or an audio file synced to the notes and hands.
+- For an audio file, first choose the playback speed (fixed from then on), then the file
+  (WAV, OGG, MP3 or FLAC). It must be at least as long as the MIDI at that speed.
+- The player opens paused with the recording's waveform across the top, a progress bar running
+  from the left. Drag the waveform left or right to line the recording up with the notes (hold
+  Shift for finer moves), or nudge it with , and . (10 ms; 100 ms with Shift).
+- From the command line: --audio recording.wav, with --audio-speed and --audio-offset.
+
 ## v2026.10.02.0616 - Faster equal keys
 - Equal keys no longer slow the player down: the lanes, the keyboard and the finger numbers are
   drawn once and reused, so equal keys now draw as fast as (or faster than) realistic keys. They

@@ -33,6 +33,9 @@ From The Cuphead Show with White Gloves
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
   system's MIDI synth. What you hear follows what the animated hands physically play (rolled
   chords, early releases), and the pedals are played as on/off switches.
+- **Synced recordings**: play a rendered audio file (WAV, OGG, MP3, FLAC) instead of the
+  synth, in time with the notes and hands. Pick the playback speed first (it stays fixed), then
+  line the recording up by dragging its waveform across the top of the player.
 - **Automatic hand split** for single-track MIDI, and **fingering** from a beam-search planner
   with figure recognition (scales, arpeggios, chromatic runs, octaves, double notes, trills,
   repeated notes), the thumb or little finger covering two keys when a chord needs it, and
@@ -65,7 +68,8 @@ python main.py song.mid          # play a file straight away
 python main.py song.mid --edit   # open it in the fingering editor
 ```
 
-Other options: `--no-sound`, `--speed 0.5`, `--screenshot frame.png --at 12.5`.
+Other options: `--no-sound`, `--speed 0.5`, `--screenshot frame.png --at 12.5`, and
+`--audio recording.wav --audio-speed 0.75 --audio-offset 1.5` to play a synced recording straight away.
 
 Keyboard controls are listed at the top of `main.py` (player) and `editor.py` (editor), and in
 the app's status lines.

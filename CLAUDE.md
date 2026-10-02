@@ -37,6 +37,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | File | Role |
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock), `MainMenu`, `Visualizer` (falling notes) |
+| `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout`, `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
@@ -66,7 +67,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
   not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
-- The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead.
+- The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
+  recording the player's clock follows the wall clock instead (audio heard at song time t:
+  `offset + t / speed`), and the synth is muted.
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the
   current numbers.
