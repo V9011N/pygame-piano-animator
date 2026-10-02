@@ -379,6 +379,14 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     1.5 spans from the other hand's average place over the last 1.2 s, so it loosely follows. It isn't pushed past
     1.5 in inside the keyboard's end. The other hand is sampled every 0.1 s; shifts are solved at 30 Hz and averaged
     over ±0.25 s. The hand's turn follows the forearm's natural yaw at the new place.
+  - Before a hand's first note, when the other hand plays first, the other hand counts as playing from t = 0
+    (`_first_t`): the waiting hand is kept on its own side from the start (Dante Sonata's RH used to sit at its first
+    notes, below the LH's, crossed until the LH began and then jump aside).
+  - The pull toward the other hand (the 1.5-span follow) never takes the hand past where it plays next
+    (`_short_of_next`, on each shift and again after the ±0.25 s averaging): Op. 25 No. 6 at 16.0-16.8 s, the RH
+    resting between thirds runs was drawn to its next chord, then overshot it by ~1.5 in as it set off for it and
+    jerked back. Getting out of the way (a push away from the other hand) is not limited. Idle-hand reversals
+    (> 3 in/s, idle > 0.1) Op. 25 No. 6 R 15 → 11, L 2 → 1; Dante R 4 → 3, L 2 → 0, crossed 5 → 0 samples.
   - `crossing_episodes` treats a hand with idle weight above 0.5 as out of the way, so a leap by the playing hand past
     the idle one is no longer an episode; a hand playing on the other side still is.
   - Cost: a cold seek into a long idle stretch ~60 ms (memory capped at 8 s, the time to drift across the keyboard);

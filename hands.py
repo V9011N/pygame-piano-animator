@@ -2019,12 +2019,17 @@ class HandAnimator:
         dx = sd / sw if sw else 0.0
         if abs(dx) < 1e-6:
             return wx, wy, psi
+        dx = self._short_of_next(t, wx, dx)          # (the smoothing mustn't carry it past them either)
         return wx + dx, wy, psi + self._yaw(wx + dx) - self._yaw(wx)
 
     def _idle_shift(self, t):
         """How far (working-frame x, + = away from the other hand) to move the idle hand at t."""
         p = self.partner
-        w = self.idle_at(t) * (1.0 - p.idle_at(t))
+        p_idle = p.idle_at(t)
+        mine, theirs = self._first_t(), p._first_t()
+        if t < theirs < mine:
+            p_idle = 0.0          # the other hand plays first: from the very start, keep to this side of it
+        w = self.idle_at(t) * (1.0 - p_idle)
         if w <= 0.0:
             return 0.0
         raw = self._hand_at(t)[0]
@@ -2038,7 +2043,25 @@ class HandAnimator:
         if target > raw:                             # stay on the keyboard
             edge = max(self._mx(self.kb.rect.left), self._mx(self.kb.rect.right)) - IDLE_EDGE_IN * self.ppi
             target = min(target, max(raw, edge))
-        return w * (target - raw)
+        # pulled toward the other hand, never past the notes it plays next
+        return self._short_of_next(t, raw, w * (target - raw))
+
+    def _short_of_next(self, t, raw, dx):
+        """
+        Shift dx of the hand at raw, cut short where it pulls the hand toward
+        the other one past where it plays next (it would overshoot and jerk
+        back). Getting out of the other hand's way (dx > 0) isn't cut.
+        """
+        nxt = self._next_strike(t)
+        if dx < 0 and nxt < math.inf:
+            xn = self._hand_at(nxt)[0]
+            if dx * (xn - raw) > 0 and abs(dx) > abs(xn - raw):
+                return xn - raw
+        return dx
+
+    def _first_t(self):
+        """When this hand strikes its first fingered key (inf if never)."""
+        return self._group_ts[0] if self._group_ts else math.inf
 
     def _partner_x(self, i):
         """The other hand's wrist x at tick i (IDLE_TICK_T), in this hand's frame."""

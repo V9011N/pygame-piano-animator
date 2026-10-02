@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0534 - Hands start uncrossed, no overshoot when resting
+- The hands no longer start a piece crossed: a hand that comes in later waits on its own side of
+  the one that plays first (the beginning of the Dante Sonata).
+- A resting hand drawn toward the playing one no longer goes past the notes it plays next and
+  jerks back (Chopin's Op. 25 No. 6 after the rising chromatic thirds).
+
 ## v2026.10.02.0518 - Steady tremolos
 - Tremolos and trills are now recognised as a figure: the hand plays them from one place, the
   wrist still and each finger staying over its key, instead of swinging toward every note (the

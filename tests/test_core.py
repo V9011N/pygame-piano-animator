@@ -653,3 +653,34 @@ def test_a_tremolo_is_played_from_one_place(screen):
         ns = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate(ps)]
         b = hands.HandAnimator(MidiSong(ns, tracks, 5.0, [], []), RIGHT)
         assert b.trems == [], ps
+
+
+def test_hands_start_uncrossed(screen):
+    # Dante Sonata: the left hand starts alone, above where the right hand will come in much later
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, t, t + 0.5, 80, 1, LEFT) for t in (1.0, 2.0, 3.0) for p in (57, 69)]
+    ns += [Note(p, 6.0, 6.5, 80, 0, RIGHT) for p in (45, 48, 54)]
+    s = song_of(ns, 7.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    for t in (0.0, 0.5, 1.0, 2.5):
+        x = {h: an[h]._pose_wrist(an[h].pose(t, kb))[0] for h in an}
+        assert x[RIGHT] > x[LEFT], t
+
+
+def test_the_idle_pull_stops_at_the_next_notes(screen):
+    # Op. 25 No. 6: the right hand rests far from the left one; drawn toward it,
+    # it never passes the chord it plays next (and so never jerks back)
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, 0.3 * i, 0.3 * i + 0.25, 70, 1, LEFT) for i in range(30) for p in (44, 51)]
+    ns += [Note(p, 1.0, 1.4, 80, 0, RIGHT) for p in (91, 94)] + [Note(p, 4.0, 4.4, 80, 0, RIGHT) for p in (76, 80)]
+    s = song_of(ns, 9.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    r = an[RIGHT]
+    r._ensure_layout(kb)
+    xn = r._hand_at(4.0)[0]
+    xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
+    assert min(xs) > xn - 0.3 * kb.white_w, (min(xs), xn)
