@@ -596,3 +596,29 @@ def test_wrist_glides_through_scale_runs_and_arpeggios_are_left_alone():
     arp = [60, 64, 67, 72, 76, 79, 84, 88, 91, 96]
     b = hands.HandAnimator(song_of(notes_at(arp + arp[-2::-1], step=0.09)), RIGHT)
     assert b.runs == []
+
+
+def test_hand_flattens_for_an_octave_and_spreads_like_a_real_hand():
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    # the span pose (thumb 72 deg out, little finger 45 deg) is the pianist's span
+    geo = hands.HandGeometry()
+    assert abs(geo.span_units() * hands.INCHES_PER_UNIT - hands.HAND_SPAN_IN) < 0.01
+    octave = [Note(60, 1.0, 2.0, 80, 0, RIGHT, 1), Note(72, 1.0, 2.0, 80, 0, RIGHT, 5)]
+    third = [Note(60, 1.0, 2.0, 80, 0, RIGHT, 1), Note(64, 1.0, 2.0, 80, 0, RIGHT, 3)]
+    a = hands.HandAnimator(song_of(octave), RIGHT)
+    b = hands.HandAnimator(song_of(third), RIGHT)
+    for x in (a, b):
+        x._ensure_layout(kb)
+    assert abs(a._low(1.5) - (1 - hands.FLAT_DROP)) < 1e-6     # an octave: the hand drops and flattens
+    assert b._low(1.5) == 1.0                                  # a third: its usual height
+    # both keys of the octave under their fingers while held
+    wx, wy, psi = a._limited_at(1.5)
+    tips = a._limited_tips(1.5)
+    for f, n in ((1, octave[0]), (5, octave[1])):
+        kx, _ = a.key_target(n.pitch, f, n)
+        tip = a._limit_tip(f, tips[f], wx, wy, psi, 0.0, a._key_weight(f, 1.5)[0], a._low(1.5))
+        assert abs(tip[0] - kx) < 0.1 * kb.white_w
+    # in the air the little finger keeps a comfortable spread, not its full stretch
+    lo, hi = a._splay_at(5, 0.0, stretch=0.0)
+    assert abs(math.degrees(hi) - hands.SPLAY_COMFORT_DEG[5][1]) < 1e-9

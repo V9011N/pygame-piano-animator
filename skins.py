@@ -399,16 +399,30 @@ def _web_crease(pen, h, color):
     pen.line(a, b, color, max(1, 0.03 * h.ppi))
 
 
+def _thumb_out(h, p, nx, ny):
+    """(nx, ny) turned to point away from the index finger: the side of the thumb we see."""
+    ix = h.chains[2][1]
+    return (nx, ny) if (p[0] - ix[0]) * nx + (p[1] - ix[1]) * ny > 0 else (-nx, -ny)
+
+
+THUMB_SIDE = (0.28, 0.32)   # the thumb lies on its side: nail half-width / shift outward (x its radius)
+
+
 def _creases(pen, h, f, color):
     segs = h.radius[f]
     joints = [(segs[i][1], segs[i][2], segs[i][0]) for i in range(len(segs) - 1)]
     for p, r, prev in joints[-2:]:
         ux, uy = _unit(p[0] - prev[0], p[1] - prev[1])
         nx, ny = -uy, ux
+        # the thumb, on its side, shows its creases only on the side we see
+        lo, hi = (-0.45, 0.45)
+        if f == 1:
+            nx, ny = _thumb_out(h, p, nx, ny)
+            lo, hi = (0.05, 0.7)
         for off in (-0.12, 0.12):
             q = (p[0] + ux * r * off, p[1] + uy * r * off)
-            pen.line((q[0] + nx * r * 0.45, q[1] + ny * r * 0.45),
-                     (q[0] - nx * r * 0.45, q[1] - ny * r * 0.45), color, max(1, r * 0.12))
+            pen.line((q[0] + nx * r * hi, q[1] + ny * r * hi),
+                     (q[0] + nx * r * lo, q[1] + ny * r * lo), color, max(1, r * 0.12))
 
 
 NAIL_HIDE_DEG = (95.0, 115.0)   # phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
@@ -423,7 +437,9 @@ def _nail(pen, h, f, fill, edge):
     the skin in front of it shrinks away until the squashed nail fills the
     rounded end of the finger. Curled on past straight down, with the tip
     tucked back under the last knuckle, it turns out of sight over that end
-    (NAIL_HIDE_DEG) instead of showing on the knuckle.
+    (NAIL_HIDE_DEG) instead of showing on the knuckle. The thumb plays on its
+    side: its nail is seen nearly edge-on, narrow, along its outer edge
+    (THUMB_SIDE).
     """
     segs = h.radius[f]
     a, b, r = segs[-1]
@@ -448,6 +464,10 @@ def _nail(pen, h, f, fill, edge):
     dux, duy = _unit(dx, dy)
     ux, uy = _unit(px + (dux - px) * w, py + (duy - py) * w)
     nx, ny = -uy, ux
+    half_w, shift = 0.5, 0.0
+    if f == 1:
+        nx, ny = _thumb_out(h, b, nx, ny)
+        half_w, shift = THUMB_SIDE
     # pitch of the phalanx below the horizontal, capped at straight down
     cos = max(0.0, fwd / L)
     sin = max(0.0, drop / L) if fwd > 0 else 1.0
@@ -470,9 +490,9 @@ def _nail(pen, h, f, fill, edge):
             t = 2 * math.pi * i / 32
             c, s = math.cos(t), math.sin(t)
             x = mid + (hl + grow * max(cos, 0.35 * show)) * math.copysign(abs(c) ** 0.7, c)
-            y = (0.5 * r + grow) * math.copysign(abs(s) ** 0.7, s)
-            if x > xc:                                   # stay inside the rounded end
-                y = math.copysign(min(abs(y), 0.94 * math.sqrt(max(0.0, rc * rc - (x - xc) ** 2))), y)
+            y = shift * r + (half_w * r + grow) * math.copysign(abs(s) ** 0.7, s)
+            lim = 0.94 * (math.sqrt(max(0.0, rc * rc - (x - xc) ** 2)) if x > xc else r)
+            y = max(-lim, min(lim, y))                   # stay inside the finger (and its rounded end)
             pts.append((b[0] + ux * x + nx * y, b[1] + uy * x + ny * y))
         return pts
     pen.poly(shape(0.12 * r), edge)

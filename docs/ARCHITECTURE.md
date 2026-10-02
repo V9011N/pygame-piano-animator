@@ -432,7 +432,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 
 ## hands.py design (animation)
 - The LH is a mirrored RH (axis_x/_mx). Shoulders at E3 (LH) and C5 (RH).
-- Joint limits (hand frame, + toward the pinky): thumb −64/+34, index −24/+10, middle ±12, ring −12/+14, pinky −8/+24. Press slack 6° (pinky 3°). Wrist deviation 26° CW / 8° CCW.
+- Joint limits (hand frame, + toward the pinky; see "A real hand's spread" below): full stretch for keys held or struck thumb −85/+34, index −36/+14, middle ±26, ring −22/+24, pinky −12/+55; in the air thumb −64, index −24/+10, middle ±18, ring −15/+16, pinky +24. Press slack 6° (pinky 3°). Wrist deviation 26° CW / 8° CCW.
 - Crossing turn: 14° toward the pinky for thumb-under, the other way for finger-over, decided by which note starts later.
 - Pose per moment:
   - `_items_at` → (pitch, finger, pull, need, note_start, released).
@@ -591,6 +591,24 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     chromatic RH 26 → 2 / 96 → 9 / 81 → 23 / 228 → 0. Concerto No. 1, 690-713 s: reversals R 85 → 49, L 96 → 38;
     pressed tips > 0.1 key off R 86 → 69, L 55 → 52. Arpeggios, Winter Wind (20-30 s) and Ocean: identical.
     Frame cost unchanged (5.7 → 5.8 ms for both hands).
+- **A real hand's spread** (2026-10-02; from a photo of the author's hand stretched over the keys):
+  - The span (`HandGeometry.span_units`, which sets `INCHES_PER_UNIT`) was measured with the thumb 50° and the
+    little finger 22° out, so the hand was 27% bigger than its span says and never looked stretched. Now thumb 72°,
+    little finger 45° (`_THUMB_MAX_ABD`, `_PINKY_MAX_ABD`), and the span view's index −22°, ring +8° - the middle
+    three close together, as in the photo. The default hand's middle finger is 3.1 in (was 3.9).
+  - Playing: `SPLAY_LIMIT_DEG` is the full stretch, for keys a finger holds or is about to strike; a finger in the air
+    keeps `SPLAY_COMFORT_DEG` (the old limits), blended by `_key_weight` (`_splay_at(f, comp, stretch)`) - otherwise
+    a little finger heading for a far key stuck straight out sideways.
+  - Flattening (`_low(t)`): the smaller hand couldn't reach octaves from its usual height (knuckles above the keys,
+    so a finger reaches ~3/4 of its length across). Held / struck keys spread `FLAT_SPAN_WK` 4.5-6.5 white keys
+    (outermost) or more lower the knuckles by up to `FLAT_DROP` 0.6, as a pianist flattens the hand for an octave:
+    in the reach ranges (solver, key fit, tip clamps) and in the drawn pose.
+  - Pressed tips > 0.1 key off (old -> new): Op. 25 No. 10 0-20 s R 131 -> 127, L 160 -> 170; Dante 140-155 s
+    R 28 -> 24, L 58 -> 53; Winter Wind 20-35 s 25 -> 23; demo R 1 -> 1, L 47 -> 37. Without flattening and the
+    wider stretch: Op. 25 No. 10 R 942, Dante R 819. Arpeggios: the smaller hand turns a little more (C major RH
+    turn rate 101 -> 121 deg/s); scale runs keep their glide (C major RH 3 octaves: 2 reversals, no crowded tips).
+  - The thumb plays on its side: its nail is drawn narrow and along its outer edge, its knuckle creases on that side
+    only (`skins.THUMB_SIDE`, `_thumb_out`).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

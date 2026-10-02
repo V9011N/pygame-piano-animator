@@ -2,6 +2,14 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0137 - A real hand's spread, thumb on its side
+- The hand's span is now measured with the thumb and little finger stretched out the way a real
+  hand spreads over the keys, so hands are drawn at a realistic size for their span (about 20%
+  smaller than before) and look properly stretched in the hand span view.
+- For wide chords like octaves the hand flattens and drops a little, so the thumb and little
+  finger reach the full span; fingers in the air keep a relaxed spread.
+- The thumb is drawn on its side, as it lies when playing: a narrow nail along its outer edge.
+
 ## v2026.10.02.0110 - Steady wrist in scales
 - In scale runs (diatonic and chromatic) the wrist now glides steadily along the keyboard
   while the fingers do the crossing, instead of jerking at every thumb crossing.
