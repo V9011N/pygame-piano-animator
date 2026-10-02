@@ -45,8 +45,10 @@ import math
 import time
 from operator import mul
 
+import midi_loader
+import progress
 from fingering import group_notes, is_crossing, key_pos, mirror_pitch, plan_fingering
-from midi_loader import RIGHT, is_black_key
+from midi_loader import LEFT, RIGHT, is_black_key
 
 # --------------------------------------------------------------------------- #
 # Real-world sizes
@@ -363,6 +365,30 @@ def prepare_hands(animators, t, kb, budget):
         if left <= 0:
             break
         a.prepare(t, kb, left / (len(anims) - i))
+
+
+def build_hands(song, **kw):
+    """{hand: HandAnimator} for each hand that has notes, paired (pair_hands); `kw` goes to each animator."""
+    counts = {h: sum(1 for n in song.notes if n.hand == h) for h in (RIGHT, LEFT)}
+    total = sum(counts.values()) or 1
+    out, done = {}, 0
+    for h in (RIGHT, LEFT):
+        if counts[h]:
+            with progress.stage(done / total, (done + counts[h]) / total):
+                out[h] = HandAnimator(song, h, **kw)
+            done += counts[h]
+    pair_hands(out.values())
+    return out
+
+
+def load_with_hands(path_or_song, **kw):
+    """(song, hands.build_hands(song, **kw)) for a MIDI/PIG path or a song; reports progress (progress.py)."""
+    song = path_or_song
+    if isinstance(path_or_song, str):
+        with progress.stage(0.0, 0.5):
+            song = midi_loader.load_song(path_or_song)
+    with progress.stage(0.5 if isinstance(path_or_song, str) else 0.0, 1.0):
+        return song, build_hands(song, **kw)
 
 
 def pair_hands(animators):
@@ -1898,7 +1924,7 @@ class HandAnimator:
         fit = [(t, r, w * k) for (t, r, w, _), k in zip(fit, keep)]
         q = list(self._fit_hand(fit))
 
-        rot, S = self._rot, self.S
+        S = self.S
         dev_lo, dev_hi = (math.radians(a) for a in WRIST_DEV_DEG)
         arm = 3.0 * S
         wsum = sum(w for _, _, w in fit)
@@ -1993,7 +2019,6 @@ class HandAnimator:
         quick shifts accelerate and settle instead of snapping. Solves are
         made on a fixed time grid and cached, so each frame costs one or two.
         """
-        g = HAND_GRID_T
         if self.smooth_t <= 0:
             return self._solve_hand(self._items_at(t), self._run_w(t), self._low(t))
         q = self._hand_avg(t, self.smooth_t)

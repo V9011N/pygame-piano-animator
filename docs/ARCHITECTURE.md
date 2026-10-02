@@ -67,6 +67,16 @@ proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames
   only asks for a way within `GLISS_TRAVEL_MAX_T` of where it applies. Frames over 16.7 ms, per 600:
   HR10 28 -> 1, Concerto 62 -> 0, Op. 25 No. 6 46 -> 4, Winter Wind 37 -> 0, Dante 119 -> 17; mean
   13-15 -> 8-9 ms; worst 300 -> 36 ms.
+- Loading in the background (v26.1.2): `common.run_busy(surf, fonts, text, job)` runs the job in a worker
+  thread while the main thread draws a progress bar every `BUSY_FRAME_T` (pygame stays on the main thread;
+  QUIT and VIDEORESIZE are kept and posted again afterwards, other input dropped; the job's exception is
+  raised in the caller). Progress comes from `progress.py`: deep loops call `progress.report(frac)` (the hand
+  split's and the planner's per-group loops), and `progress.stage(lo, hi)` maps a part of the job onto its
+  share (`hands.load_with_hands`: read 0-0.5 - of which `read_midi` 0-0.15 -, then `hands.build_hands`
+  split between the hands by note count). Outside a tracked job `report` does nothing. The app loads the song
+  and plans its hands in one job (`App._load`), so the playback setup and the editor get them ready-made
+  (`Visualizer(hands=)`, `FingeringEditor(app, song, hands)`); the synced recording decodes in one too.
+  Costs 3-5% of the load time (Concerto 5.1 -> 5.25 s), for a window that keeps responding.
 
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main

@@ -20,8 +20,8 @@ import os
 import numpy as np
 import pygame
 
-from common import (ACCENT, BAR_BG, BAR_FILL, BG, PANEL, PANEL_EDGE, SPEED_MAX, SPEED_MIN, TEXT, TEXT_DIM,
-                    Button, Slider, _after_dialog, _tk_root, fmt_time, mix, show_loading)
+from common import (ACCENT, BAR_BG, BG, PANEL, PANEL_EDGE, SPEED_MAX, TEXT, TEXT_DIM,
+                    Button, Slider, _after_dialog, _tk_root, fmt_time, run_busy)
 
 AUDIO_TYPES = [("Audio files", "*.wav *.ogg *.mp3 *.flac"), ("All files", "*.*")]
 PEAK_T = 0.005               # s, the waveform is kept as the loudest sample in each slice this long
@@ -131,8 +131,9 @@ class SyncAudio:
 class PlaybackSetup:
     """Default sound, or a synced audio file (its speed chosen first, fixed after)."""
 
-    def __init__(self, app, song):
+    def __init__(self, app, song, hands=None):
         self.app, self.song = app, song
+        self.hands = hands                  # hands.build_hands(song), already planned
         self.page = "sound"
         self.message = ""
         self.speed = 1.0
@@ -201,7 +202,7 @@ class PlaybackSetup:
     def _do(self, action):
         from main import TO_MENU
         if action == "default":
-            self.app.play(self.song)
+            self.app.play(self.song, hands=self.hands)
         elif action == "sync":
             self.page, self.message = "speed", ""
         elif action == "back":
@@ -217,9 +218,9 @@ class PlaybackSetup:
 
     def open_audio(self, path):
         """Load and check a recording; play with it if it's long enough. True if it was."""
-        show_loading(self.app.screen, self.app.fonts, f"Loading {os.path.basename(path)}…")
         try:
-            audio = SyncAudio(path)
+            audio = run_busy(self.app.screen, self.app.fonts, f"Loading {os.path.basename(path)}…",
+                             lambda: SyncAudio(path))
         except Exception as exc:
             self.message = f"Could not open {os.path.basename(path)}: {exc}"
             return False
@@ -227,7 +228,7 @@ class PlaybackSetup:
             self.message = (f"{audio.name} is {fmt_time(audio.length)} long; at {int(round(self.speed * 100))}% "
                             f"the MIDI takes {fmt_time(self.needed())}. Choose a longer file or a faster speed.")
             return False
-        self.app.play(self.song, audio=audio, speed=self.speed)
+        self.app.play(self.song, audio=audio, speed=self.speed, hands=self.hands)
         return True
 
     def update(self, dt):

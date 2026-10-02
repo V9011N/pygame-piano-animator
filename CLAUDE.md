@@ -38,13 +38,14 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock), `MainMenu`, `Visualizer` (falling notes) |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
-| `common.py` | Shared UI and playback: colours, `bottom_layout`, `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders |
+| `common.py` | Shared UI and playback: colours, `bottom_layout`, `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `run_busy` (a job in a worker thread behind a progress bar) |
+| `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
 | `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, thumb/pinky pairs, `score_fingering`) |
 | `glissando.py` | Glissando detection (strings of next-door white or black keys), marked glissandos (`Note.gliss`), episodes |
 | `figures.py` | Figure recognition (scales, arpeggios, chromatic, octaves, repeated notes, trills, double notes) feeding the planner |
-| `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing |
+| `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing, `build_hands` / `load_with_hands` |
 | `skins.py` | Skinned hand drawing (cartoon, gloves, robot) from the pose structure |
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
 | `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
@@ -58,6 +59,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   keyboard pattern is symmetric about D, so white/black properties survive mirroring.
 - Behaviour settings live in `pianist.BEHAVIORS`; the studio's behaviour page lists them
   automatically. Read them with `Pianist.b(key)` (e.g. `p.b("wrist_bounce")`) so older pianist files get defaults.
+- Load songs through `App._load` (or `run_busy` + `hands.load_with_hands`): it plans the hands in a worker
+  thread behind a progress bar. Never touch the display from the job.
 - Call `hands.pair_hands` on the animators whenever you build them: an idle hand moves out of the playing
   hand's way (`HandAnimator._placed_at`), and `crossing_episodes` assumes it does.
 - `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while

@@ -1,7 +1,4 @@
 """Glissandos: detection, the pose, and marking them in the fingering editor."""
-import pygame
-
-from conftest import midi_path
 
 import glissando
 import hands

@@ -49,10 +49,10 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    MAX_FRAME_DT, show_loading)
+                    MAX_FRAME_DT, run_busy)
 import pianist as pianists
-from hands import HandAnimator, draw_hands, pair_hands, prepare_hands
-from midi_loader import LEFT, RIGHT, load_song
+from hands import build_hands, draw_hands, load_with_hands, prepare_hands
+from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
 
@@ -69,7 +69,7 @@ TO_MENU = "menu"
 # The falling-notes player
 # --------------------------------------------------------------------------- #
 class Visualizer(Transport):
-    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None):
+    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None, hands=None):
         self.screen = screen
         self.fonts = fonts or load_fonts()
         self._init_transport(midi or MidiOut(False), speed)
@@ -94,15 +94,14 @@ class Visualizer(Transport):
         self.show_fingers = True
         self.layout(screen.get_size())
         if song:
-            self.set_song(song)
+            self.set_song(song, hands)
 
     # ----- setup -------------------------------------------------------------
-    def set_song(self, song):
+    def set_song(self, song, hands=None):
+        """Play `song`; `hands` (hands.build_hands), when already built for it, saves planning them again."""
         self.midi.silence()
         self.song = song
-        self.hands = {h: HandAnimator(song, h) for h in (RIGHT, LEFT)
-                      if any(n.hand == h for n in song.notes)}
-        pair_hands(self.hands.values())
+        self.hands = hands if hands is not None else build_hands(song)
         # what's heard and the keys that go down follow what the hands play
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.t = -LEAD_IN
@@ -263,11 +262,13 @@ class Visualizer(Transport):
             self.seek(frac * self.song.duration)
 
     def open_file(self, path):
-        show_loading(self.screen, self.fonts, f"Loading {os.path.basename(path)}…")
         try:
-            self.set_song(load_song(path))
+            song, hands = run_busy(self.screen, self.fonts, f"Loading {os.path.basename(path)}…",
+                                   lambda: load_with_hands(path))
         except Exception as exc:
             print(f"Could not load {path}: {exc}")
+            return
+        self.set_song(song, hands)
 
     def idle(self, budget):
         """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
@@ -359,7 +360,7 @@ class Visualizer(Transport):
                         if self.hands[n.hand].is_gliss(n):
                             finger = "g"                 # slid in a glissando
                         if finger:
-                            font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
+                            pos = (rect.centerx, rect.bottom - 1)
                             if equal_white:      # white number for a white key, black for a black one
                                 txt = str(finger)
                                 dark = self._finger_img(txt, (15, 15, 20))
@@ -750,36 +751,48 @@ class App:
         self._switch(MainMenu(self))
         self.mode.message = message
 
-    def _load(self, path):
-        show_loading(self.screen, self.fonts, f"Loading {os.path.basename(path)}…")
+    def _load(self, path_or_song, **kw):
+        """
+        (song, its hands - hands.build_hands(song, **kw)) for a path or a song
+        already loaded, worked out in the background behind a progress bar;
+        (None, None) if the file can't be read.
+        """
+        if isinstance(path_or_song, str):
+            text = f"Loading {os.path.basename(path_or_song)}…"
+        else:
+            text = "Preparing the hands…"
         try:
-            song = load_song(path)
+            song, hands = run_busy(self.screen, self.fonts, text, lambda: load_with_hands(path_or_song, **kw))
         except Exception as exc:
-            print(f"Could not load {path}: {exc}")
+            if not isinstance(path_or_song, str):
+                raise
+            print(f"Could not load {path_or_song}: {exc}")
             if isinstance(self.mode, MainMenu):
-                self.mode.message = f"Could not open {os.path.basename(path)}: {exc}"
-            return None
-        self.last_dir = os.path.dirname(os.path.abspath(path))
-        return song
+                self.mode.message = f"Could not open {os.path.basename(path_or_song)}: {exc}"
+            return None, None
+        if isinstance(path_or_song, str):
+            self.last_dir = os.path.dirname(os.path.abspath(path_or_song))
+        return song, hands
 
-    def choose_playback(self, path_or_song):
+    def choose_playback(self, path_or_song, hands=None):
         """A MIDI file chosen to play: first how it should sound (audio_sync.PlaybackSetup)."""
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        song, hands = self._load(path_or_song) if hands is None else (path_or_song, hands)
         if song:
-            self._switch(PlaybackSetup(self, song))
+            self._switch(PlaybackSetup(self, song, hands))
 
-    def play(self, path_or_song, audio=None, speed=None):
+    def play(self, path_or_song, audio=None, speed=None, hands=None):
         """Play straight away: with the synth, or with a synced recording (audio_sync.SyncAudio) at `speed`."""
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        song, hands = self._load(path_or_song) if hands is None else (path_or_song, hands)
         if song:
             self._switch(Visualizer(self.screen, song, midi=self.midi, speed=speed or self.speed,
-                                    fonts=self.fonts, audio=audio))
+                                    fonts=self.fonts, audio=audio, hands=hands))
 
     def edit(self, path_or_song):
         from editor import FingeringEditor
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        # the editor shows the file's fingering as it is, even where it can't be played
+        song, hands = self._load(path_or_song, repair=False)
         if song:
-            self._switch(FingeringEditor(self, song))
+            self._switch(FingeringEditor(self, song, hands))
 
     def studio(self):
         from hand_editor import PianistStudio

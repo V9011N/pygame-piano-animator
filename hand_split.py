@@ -41,6 +41,7 @@ from __future__ import annotations
 import bisect
 import math
 
+import progress
 from fingering import key_pos, travel_time, MOVE_SHARE
 
 LEFT, RIGHT = "L", "R"
@@ -310,7 +311,9 @@ def split_hands(notes, pianist=None, prefer=None):
     beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, ())]
     history = []
     last_group = None
-    for t, ns in groups:
+    for gi, (t, ns) in enumerate(groups):
+        if gi % 64 == 0:
+            progress.report(gi / len(groups))
         repeat = last_group is not None and t - last_group[0] < REPEAT_T and \
             [n.pitch for n in last_group[1]] == [n.pitch for n in ns]
         last_group = (t, ns)

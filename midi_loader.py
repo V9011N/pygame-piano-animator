@@ -25,6 +25,8 @@ from typing import List, Optional
 
 import pretty_midi
 
+import progress
+
 LOWEST_PIANO_KEY = 21    # A0
 HIGHEST_PIANO_KEY = 108  # C8
 MIDDLE_C = 60
@@ -659,7 +661,8 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
     min_duration:  very short notes are stretched to this length (seconds) so
                    they stay visible when drawn.
     """
-    pm, report = read_midi(path)
+    with progress.stage(0.0, 0.15):
+        pm, report = read_midi(path)
     instruments, r = sanitize_instruments(pm, include_drums)
     report += r
 
@@ -710,7 +713,8 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
     if loose:
         try:
             from hand_split import split_hands
-            hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
+            with progress.stage(0.15, 1.0):
+                hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
         except ImportError:
             hands = {id(n): n.hand or (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
         moved = sum(1 for n in loose if n.hand and hands[id(n)] != n.hand)

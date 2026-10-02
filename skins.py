@@ -840,7 +840,6 @@ def draw_skinned(surf, items):
     (screen x, screen y, height in pixels). Shadows first (all hands), then
     each hand, lowest first.
     """
-    import pygame
     hands = []
     for it in items:
         h = _Hand(*it[:4])

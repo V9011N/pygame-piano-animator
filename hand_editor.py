@@ -23,7 +23,7 @@ import pygame
 import pianist as pianists
 from common import (ACCENT, BAR_BG, BG, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button,
                     Dialog, Slider, TextInput, mix)
-from hands import (HOVER, INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeometry, bone_width,
+from hands import (INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeometry, bone_width,
                    halo_for, joint_radius, static_skeleton, curl_factor)
 from midi_loader import is_black_key, note_name
 import skins

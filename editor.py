@@ -56,13 +56,13 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     LEAD_IN, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button, Dialog,
                     Keyboard, Performance, Transport, bottom_layout, default_export_name,
                     draw_felt, draw_hand_area, draw_pianist_badge, fmt_time, mix, pick_file,
-                    save_file_dialog)
+                    run_busy, save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
-from hands import HandAnimator, draw_hands, pair_hands
+from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
-                         is_black_key, is_pig, load_song, note_name, save_fingered_midi,
+                         is_black_key, is_pig, note_name, save_fingered_midi,
                          save_pig)
 
 INFO_H = 24                  # status line under the top bar
@@ -252,7 +252,7 @@ class ContextMenu:
 # The editor
 # --------------------------------------------------------------------------- #
 class FingeringEditor(Transport):
-    def __init__(self, app, song):
+    def __init__(self, app, song, hands=None):
         self.app = app
         self.screen = app.screen
         self.fonts = app.fonts
@@ -284,20 +284,19 @@ class FingeringEditor(Transport):
                             Button("Export…", "export", font="small"),
                             Button("Menu", "menu", font="small")]
         self.layout(self.screen.get_size())
-        self.load_song(song)
+        self.load_song(song, hands)
 
     # ----- song and fingering state ----------------------------------------
-    def load_song(self, song):
+    def load_song(self, song, hands=None):
+        """Edit `song`; `hands`, when already built for it (build_hands with repair=False), saves planning them again."""
         self.midi.silence()
         self.song = song
         self.notes = list(song.notes)
-        present = {n.hand for n in self.notes}
         # the editor shows the file's fingering as it is, even where it can't be played
-        planned = {h: HandAnimator(song, h, repair=False) for h in (RIGHT, LEFT) if h in present}
+        planned = hands if hands is not None else build_hands(song, repair=False)
         self.finger = [planned[n.hand].finger_for(n) if n.hand in planned else None
                        for n in self.notes]
         self.hands = planned
-        pair_hands(planned.values())
         self.difficulty = None
         self.perf = Performance.from_animators(planned.values()) if planned else None
         self.index = {id(n): i for i, n in enumerate(self.notes)}
@@ -620,9 +619,10 @@ class FingeringEditor(Transport):
         return self._load_path(path) if path else True
 
     def _load_path(self, path):
-        show_loading(self.screen, self.fonts, f"Loading {os.path.basename(path)}…")
         try:
-            self.load_song(load_song(path))
+            song, hands = run_busy(self.screen, self.fonts, f"Loading {os.path.basename(path)}…",
+                                   lambda: load_with_hands(path, repair=False))
+            self.load_song(song, hands)
             self.app.last_dir = os.path.dirname(os.path.abspath(path))
         except Exception as exc:
             self.say(f"Could not open {os.path.basename(path)}: {exc}")

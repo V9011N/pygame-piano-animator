@@ -51,6 +51,8 @@ import math
 
 from itertools import combinations, product
 
+import progress
+
 MIRROR_SUM = 2 * 62            # reflect about D4: 124 - p
 
 _BLACK = {1, 3, 6, 8, 10}
@@ -807,7 +809,9 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
     beam_ = [(0.0, None, (), None, None)]
     history = []
     prev_ps = prev_start = None
-    for start, ns in groups:
+    for gi, (start, ns) in enumerate(groups):
+        if gi % 64 == 0:
+            progress.report(gi / len(groups))
         ps = [vp(n.pitch) for n in ns]
         given = [fixed.get(id(n)) if fixed is not None else getattr(n, "finger", None) for n in ns]
         sug = [suggest.get(id(n)) for n in ns]

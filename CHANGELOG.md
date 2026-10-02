@@ -3,6 +3,13 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.2 - Loading progress bar
+- Opening a file shows a progress bar, and the window keeps responding while the song loads and the
+  hands' fingering is planned (in the background).
+- Choosing "Default sound" or syncing a recording no longer stops for a second plan of the hands:
+  they're ready from the load.
+- Fixed: opening another file from the fingering editor ("Open…") crashed the app.
+
 ## v26.1.1 - Faster loading and smoother playback
 - Unfingered MIDI files load about a third faster (Chopin's 12-minute Concerto No. 1: 7.5 s to 5 s).
 - Smoother playback: the hands' motion is worked out ahead in each frame's spare time, so far

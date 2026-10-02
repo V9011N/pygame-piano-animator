@@ -214,7 +214,7 @@ CHROM_MAPS = {
 
 def _chrom_groups4(lo, hi):
     """{pitch: finger} for 'groups of up to four': thumbs on white keys, as far apart as possible."""
-    out, f, p = {}, 1, lo
+    out, p = {}, lo
     out[p] = 1
     while p < hi:
         # the next thumb: the furthest white key at most four notes on

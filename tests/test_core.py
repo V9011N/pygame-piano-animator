@@ -425,7 +425,6 @@ def test_octaves_open_to_1_5_around_a_held_inner_note():
 
 
 def test_the_hand_reaches_an_octave_with_a_held_middle_finger():
-    import math
     import pygame
     from common import Keyboard, bottom_layout
     pygame.init()
