@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0110 - Steady wrist in scales
+- In scale runs (diatonic and chromatic) the wrist now glides steadily along the keyboard
+  while the fingers do the crossing, instead of jerking at every thumb crossing.
+- The fingers may draw together to let the wrist glide, but never overlap.
+- Arpeggios move exactly as before.
+
 ## v2026.10.02.0049 - Free hand takes over, textbook scales and arpeggios
 - When a file's tracks give one hand more than it can reach at its top speed, while the other
   hand is free, the free hand now takes those notes (the alternating passage at 0:57 of the

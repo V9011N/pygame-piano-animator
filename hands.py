@@ -208,6 +208,13 @@ LIMIT_GRID_T = 1 / 60       # s, the speed limit steps on this grid (linear in b
 LIMIT_SMOOTH_HAND = 3       # grid steps each side the limited hand is averaged over...
 LIMIT_SMOOTH_HAND_ON = 1    # ...and while its fingers are on keys
 LIMIT_SMOOTH_TIPS = 3       # ...and the fingertips
+# Scale runs: the wrist glides and the fingers do the crossing
+RUN_MIN_NOTES = 7           # single notes moving by step, at least this many in a row...
+RUN_GAP_T = 0.3             # s, ...none further apart than this
+RUN_RAMP_T = 0.15           # s, the run's hold on the hand eases in and out over this
+RUN_GLIDE_T = 0.25          # s, in a run the wrist is averaged over +-this (the crossings' steps even out)
+RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
+TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
 SHAPE_FALLOFF = 0.6         # idle fingers follow a busy neighbour by this much per finger
 
 
@@ -593,7 +600,97 @@ class HandAnimator:
         self.partner = None                      # the other hand, see pair_hands
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
+        self.runs = self._find_runs()
+        self.run_starts = [a for a, _ in self.runs]
         self._layout_sig = None
+
+    # ----- scale runs ------------------------------------------------------------
+    def _find_runs(self):
+        """
+        [(start, end)] of this hand's scale runs: RUN_MIN_NOTES or more single
+        notes in a row, each a step (1-2 semitones, or a harmonic minor's
+        augmented second after a step) from the one before and at most
+        RUN_GAP_T after it. Arpeggios (thirds and wider) never qualify.
+        """
+        runs, cur = [], []
+
+        def close():
+            if len(cur) >= RUN_MIN_NOTES:
+                runs.append((cur[0][0], cur[-1][2]))
+        for t, ns in self.groups:
+            if len(ns) != 1:
+                close()
+                cur = []
+                continue
+            n = ns[0]
+            if cur:
+                d = abs(n.pitch - cur[-1][1])
+                step = 1 <= d <= 2 or (d == 3 and len(cur) > 1 and 1 <= abs(cur[-1][1] - cur[-2][1]) <= 2)
+                if not step or t - cur[-1][0] > RUN_GAP_T:
+                    close()
+                    cur = []
+            cur.append((t, n.pitch, min(n.end, t + RUN_GAP_T)))
+        close()
+        return runs
+
+    def _run_span(self, t):
+        """The run (start, end) whose eased reach covers t, or None."""
+        i = bisect.bisect_right(self.run_starts, t + RUN_RAMP_T) - 1
+        if i >= 0 and t < self.runs[i][1] + RUN_RAMP_T:
+            return self.runs[i]
+        return None
+
+    def _run_w(self, t):
+        """0..1 how much t is inside a scale run (eased in and out over RUN_RAMP_T)."""
+        r = self._run_span(t)
+        if r is None:
+            return 0.0
+        a, b = r
+        return _smooth(min((t - a) / RUN_RAMP_T + 1.0, (b - t) / RUN_RAMP_T + 1.0, 1.0))
+
+    def _splay_at(self, f, comp):
+        """Finger f's splay limits (rad), widened toward the hand's middle by `comp` (a run)."""
+        lo, hi = self.splay[f]
+        if comp > 0:
+            elo, ehi = RUN_COMPRESS_DEG[f]
+            lo, hi = lo - math.radians(elo) * comp, hi + math.radians(ehi) * comp
+        return lo, hi
+
+    def _separate(self, tips, wx, wy, psi, t, comp):
+        """
+        In a run, fingertips 2-5 that would come closer than TIP_GAP_WK (or
+        pass each other) are pushed apart across the hand - a finger on its
+        key stays put - blended in by `comp`: compressed, never overlapping.
+        """
+        if comp <= 0:
+            return tips
+        rot, gap = self._rot, TIP_GAP_WK * self.kb.white_w
+        fs = [f for f in (2, 3, 4, 5) if f in tips]
+        loc = {f: list(rot(tips[f][0] - wx, tips[f][1] - wy, -psi)) for f in fs}
+        fixed = {f: self._pressing(f, t) for f in fs}
+        for _ in range(12):
+            moved = False
+            for a, b in zip(fs, fs[1:]):
+                d = gap - (loc[b][0] - loc[a][0])
+                if d <= 1e-6 or (fixed[a] and fixed[b]):
+                    continue
+                moved = True
+                if fixed[a]:
+                    loc[b][0] += d
+                elif fixed[b]:
+                    loc[a][0] -= d
+                else:
+                    loc[a][0] -= d / 2
+                    loc[b][0] += d / 2
+            if not moved:
+                break
+        out = dict(tips)
+        k = min(1.0, 3.0 * comp)                  # fully apart early in the run's ease-in
+        for f in fs:
+            x, y = rot(loc[f][0], loc[f][1], psi)
+            ox, oy, oz = tips[f]
+            out[f] = (_lerp(ox, wx + x, k), _lerp(oy, wy + y, k), oz)
+        return out
 
     # ----- wrist gestures ------------------------------------------------------
     def _find_gestures(self):
@@ -855,11 +952,12 @@ class HandAnimator:
             tips[f], busy[f] = self._tip_target(f, t, to_world_xy(rx, ry - rb[f]), hand)
             local[f] = rot(tips[f][0] - wx, tips[f][1] - wy, -psi)
         shaped = self._shaped_rests(busy, local)
+        comp = self._run_w(t)
         for f in range(1, 6):
             if busy[f] < 1.0:
                 tips[f], _ = self._tip_target(f, t, to_world_xy(shaped[f][0], shaped[f][1] - rb[f]), hand)
-            tips[f] = self._limit_tip(f, tips[f], wx, wy, psi)
-        return tips
+            tips[f] = self._limit_tip(f, tips[f], wx, wy, psi, comp)
+        return self._separate(tips, wx, wy, psi, t, comp)
 
     def _limited_tips(self, t):
         """
@@ -958,6 +1056,7 @@ class HandAnimator:
         _limit_tip never has to pull a fingertip off its key.
         """
         cons = []
+        comp = self._run_w(t)
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
             if n is None or not self._has_key(self._pk(n)):
@@ -965,7 +1064,7 @@ class HandAnimator:
             kx, ky = self.key_target(self._pk(n), f, n)
             ylo, yhi = self._key_depths(self._pk(n))
             ys = sorted([ky] + [ylo + (yhi - ylo) * i / 12 for i in range(13)], key=lambda y: abs(y - ky))
-            lo, hi = self.splay[f]
+            lo, hi = self._splay_at(f, comp)
             # a finger already down on its key may use its pressing slack (as _limit_tip allows)
             m = math.radians(KEY_FIX_MARGIN_DEG) - (math.radians(PRESS_SLACK_DEG[f]) if self._pressing(f, t) else 0.0)
             hmin, hmax = self._reach_range(f, self.base_local[f][2] + self.travel, 0.99)
@@ -1324,7 +1423,7 @@ class HandAnimator:
             hi = _lerp(hi, cap, loudness(note.velocity))
         return lo, hi
 
-    def _clamp_tip(self, f, x, y, z, wx, wy, psi, slack=0.0, margin=0.0):
+    def _clamp_tip(self, f, x, y, z, wx, wy, psi, slack=0.0, margin=0.0, comp=0.0):
         """
         (x, y) clamped into finger f's splay and reach range (shrunk by
         `margin` share, widened by `slack` rad): the reachable point closest
@@ -1338,7 +1437,7 @@ class HandAnimator:
         bx, by = wx + bx, wy + by
         lx, ly = rot(x - bx, y - by, -psi)
         a, h = math.atan2(lx, ly), math.hypot(lx, ly)
-        lo, hi = self.splay[f]
+        lo, hi = self._splay_at(f, comp)
         m = math.radians(KEY_FIX_MARGIN_DEG) * margin / KEY_FIX_MARGIN if margin else 0.0
         lo, hi = lo - slack + m, hi + slack - m
         hmin, hmax = self._reach_range(f, blz - z, 0.99)
@@ -1353,7 +1452,7 @@ class HandAnimator:
         cx, cy = rot(h * math.sin(a), h * math.cos(a), psi)
         return bx + cx, by + cy
 
-    def _key_spot(self, pk, f, hand, z=None, note=None, soft=0.0):
+    def _key_spot(self, pk, f, hand, z=None, note=None, soft=0.0, comp=0.0):
         """
         Where finger f plays key(s) pk with the hand at `hand` (wx, wy, psi):
         squarely across the key, and along it where it aims (key_target:
@@ -1375,7 +1474,7 @@ class HandAnimator:
         z = -self.travel if z is None else z
         lo, hi = self._key_depths(pk)          # the whole playing area, if reach needs it
         span = max(1e-6, hi - lo)
-        cx, cy = self._clamp_tip(f, kx, ky, z, *hand, margin=KEY_FIX_MARGIN)
+        cx, cy = self._clamp_tip(f, kx, ky, z, *hand, margin=KEY_FIX_MARGIN, comp=comp)
         e0 = math.hypot(cx - kx, cy - ky)
         far = _smooth((e0 - 1.5 * span) / (1.5 * span))
         if e0 < 0.5 or far >= 1.0:
@@ -1385,7 +1484,7 @@ class HandAnimator:
         cands = [(ky, kk * e0)]
         for i in range(21):
             y = lo + span * i / 20
-            cx, cy = self._clamp_tip(f, kx, y, z, *hand, margin=KEY_FIX_MARGIN)
+            cx, cy = self._clamp_tip(f, kx, y, z, *hand, margin=KEY_FIX_MARGIN, comp=comp)
             cands.append((y, abs(y - ky) + kk * math.hypot(cx - kx, cy - y)))
         best = min(c for _, c in cands)
         ws = [(y, math.exp(-(c - best) / tau)) for y, c in cands]
@@ -1465,7 +1564,7 @@ class HandAnimator:
                     items.append((self._pk(notes[nxt]), f, w, c, starts[nxt], 0, notes[nxt]))
         return [it for it in items if self._has_key(it[0])]
 
-    def _solve_hand(self, items):
+    def _solve_hand(self, items, comp=0.0):
         """
         Wrist (x, y) and hand turn psi serving the weighted items:
           1. a weighted rigid fit of the natural fingertip spots onto the keys
@@ -1552,7 +1651,7 @@ class HandAnimator:
         k_dev = math.sqrt(LIMIT_K * 25) * arm
         lims = []
         for tx, ty, f, c, rshare in lim:
-            lo, hi = self.splay[f]
+            lo, hi = self._splay_at(f, comp)
             hmin, hmax = self._reach_range(f, self.base_local[f][2] + self.travel)
             # keys being pressed don't saturate; keys just let go of barely count
             soft = max(1e-3, 1.0 - c)
@@ -1640,14 +1739,26 @@ class HandAnimator:
         """
         g = HAND_GRID_T
         if self.smooth_t <= 0:
-            return self._solve_hand(self._items_at(t))
-        span = self.smooth_t
+            return self._solve_hand(self._items_at(t), self._run_w(t))
+        q = self._hand_avg(t, self.smooth_t)
+        w = self._run_w(t)
+        if w > 0:
+            # a scale run: the wrist glides - its path averaged over the
+            # run's own notes - and the fingers do the crossing
+            a, b = self._run_span(t)
+            glide = self._hand_avg(t, RUN_GLIDE_T, a - RUN_RAMP_T, b + RUN_RAMP_T)
+            q = tuple(_lerp(x, y, w) for x, y in zip(q, glide))
+        return q
+
+    def _hand_avg(self, t, span, lo=-math.inf, hi=math.inf):
+        """The solved hand averaged over t +- span (triangular), only from poses within lo..hi."""
+        g = HAND_GRID_T
         k0 = math.ceil((t - span) / g)
         k1 = math.floor((t + span) / g)
         sx = sy = sp = sw = 0.0
         for k in range(k0, k1 + 1):
             w = 1.0 - abs(k * g - t) / span
-            if w <= 0:
+            if w <= 0 or not lo <= k * g <= hi:
                 continue
             x, y, p = self._grid_pose(k)
             sx, sy, sp, sw = sx + w * x, sy + w * y, sp + w * p, sw + w
@@ -1751,7 +1862,7 @@ class HandAnimator:
         if pose is None:
             if len(cache) > 4000:
                 cache.clear()
-            pose = cache[k] = self._solve_hand(self._items_at(k * HAND_GRID_T))
+            pose = cache[k] = self._solve_hand(self._items_at(k * HAND_GRID_T), self._run_w(k * HAND_GRID_T))
         return pose
 
     # ----- fingertip timeline -------------------------------------------------
@@ -1798,13 +1909,14 @@ class HandAnimator:
         prev = notes[i] if i >= 0 else None
         nxt = notes[i + 1] if i + 1 < len(notes) else None
         prev_end = ends[i] if prev else -math.inf
+        comp = self._run_w(t)
 
         if prev and t < prev_end:                                    # pressing
-            kx, ky = self._key_spot(self._pk(prev), f, hand, note=prev)
+            kx, ky = self._key_spot(self._pk(prev), f, hand, note=prev, comp=comp)
             return (kx, ky, -travel * min(1.0, (t - starts[i]) / PRESS_T)), 1.0
 
         if prev:                                                     # released
-            kx, ky = self._key_spot(self._pk(prev), f, hand, note=prev)
+            kx, ky = self._key_spot(self._pk(prev), f, hand, note=prev, comp=comp)
             since = t - prev_end
             z = _lerp(-travel, hover, _ease_out(since / RELEASE_T))
             s = _smooth((since - LINGER_T) / RETURN_T)
@@ -1822,7 +1934,7 @@ class HandAnimator:
         if t < prep_start:
             return idle, busy
         s = self._travel(f, i, t)[0] if t < strike_start else 1.0
-        kx, ky = self._key_spot(self._pk(nxt), f, hand, note=nxt, soft=1.0 - s)
+        kx, ky = self._key_spot(self._pk(nxt), f, hand, note=nxt, soft=1.0 - s, comp=comp)
         if t < strike_start:
             arc = 0.0
             if f != 1:   # fingers arc up and over; the thumb slides under instead
@@ -1881,12 +1993,12 @@ class HandAnimator:
             out[f] = (rest[f][0] + _clamp(dx, -cap_x, cap_x), rest[f][1] + _clamp(dy, -cap_y, cap_y))
         return out
 
-    def _limit_tip(self, f, tip, wx, wy, psi):
-        """Clamp a fingertip target to the finger's splay and reach range."""
+    def _limit_tip(self, f, tip, wx, wy, psi, comp=0.0):
+        """Clamp a fingertip target to the finger's splay and reach range (widened inward in a run, `comp`)."""
         # a finger already down on its key may stretch a touch further
         # rather than slide off it while the hand is still moving
         slack = math.radians(PRESS_SLACK_DEG[f]) if tip[2] < 0 else 0.0
-        x, y = self._clamp_tip(f, tip[0], tip[1], tip[2], wx, wy, psi, slack)
+        x, y = self._clamp_tip(f, tip[0], tip[1], tip[2], wx, wy, psi, slack, comp=comp)
         return (x, y, tip[2])
 
     # ----- full pose ------------------------------------------------------------
@@ -1922,7 +2034,9 @@ class HandAnimator:
             return (wx + x, wy + y, p[2] * S + self.z_off + gw * (hb[0] + droll(lx)))
 
         # fingertips, held to the top speed across the keys (_limited_tips)
-        tips = {f: self._limit_tip(f, p, wx, wy, psi) for f, p in self._limited_tips(t).items()}
+        comp = self._run_w(t)
+        tips = {f: self._limit_tip(f, p, wx, wy, psi, comp) for f, p in self._limited_tips(t).items()}
+        tips = self._separate(tips, wx, wy, psi, t, comp)
         if gw > 0:
             travel = self.travel
             lxs = {f: rot(tips[f][0] - wx, tips[f][1] - wy, -psi)[0] for f in tips}

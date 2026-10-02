@@ -574,6 +574,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     1522 chords struck late (median 15 ms, max 84 ms). Pressed-tip frames > 0.3 key off 101 → 80, worst 1.80 → 0.78.
     156 notes changed hands and 337 fingers; the bundled MIDIs are unchanged. Loading: split 0.8 → 1.2 s (beam 32),
     plan unchanged; ~1.4 ms per hand per frame (demo), cold seek ~60-100 ms.
+- **Scale runs: the wrist glides** (2026-10-02): at every thumb crossing the solved hand stepped to the next
+  position and the crossing turn swung in and out, so in a scale the wrist went back and forth (C major RH, 3
+  octaves up and down: 18-21 lateral reversals; chromatic: 25-26).
+  - `_find_runs`: `RUN_MIN_NOTES` 7+ single notes in a row, each a step (1-2 semitones, or 3 right after a step - a
+    harmonic minor's augmented second), at most `RUN_GAP_T` 0.3 s apart. Arpeggios (thirds and wider) never qualify,
+    so their motion is untouched. `_run_w(t)` eases in and out over `RUN_RAMP_T` 0.15 s.
+  - `_hand_at`: in a run the solved hand (position and turn) is averaged over +-`RUN_GLIDE_T` 0.25 s, from poses
+    within the run only (`_hand_avg`), blended in by `_run_w`: a steady glide, the turn evened out.
+  - Fingers compress to let it: the splay limits widen toward the hand's middle by `RUN_COMPRESS_DEG` (2: +10° toward
+    3, 3: ±6°, 4 and 5: 8° / 10° toward the thumb) in the solver, the key fit and the tip clamps (`_splay_at`), and
+    `_separate` keeps fingertips 2-5 at least `TIP_GAP_WK` 0.6 white keys apart across the hand (a finger on its key
+    stays put; fully applied from a third of the ease-in): compressed, never overlapping.
+  - Results (wrist reversals / RMS jerk / RMS turn rate / frames with fingertips 2-5 < 0.3 key apart):
+    C major RH 0.065 s 21 → 4 / 126 → 53 / 109 → 51 deg/s / 139 → 0; E major LH 29 → 2 / 134 → 49 / 114 → 44 / 174 → 0;
+    chromatic RH 26 → 2 / 96 → 9 / 81 → 23 / 228 → 0. Concerto No. 1, 690-713 s: reversals R 85 → 49, L 96 → 38;
+    pressed tips > 0.1 key off R 86 → 69, L 55 → 52. Arpeggios, Winter Wind (20-30 s) and Ocean: identical.
+    Frame cost unchanged (5.7 → 5.8 ms for both hands).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

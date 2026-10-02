@@ -564,3 +564,35 @@ def test_track_hands_give_way_only_where_a_hand_cant_keep_up():
         prefer[id(r)], prefer[id(lft)] = RIGHT, LEFT
     split = hand_split.split_hands(ns, prefer=prefer)
     assert all(split[id(n)] == prefer[id(n)] for n in ns)
+
+
+def test_wrist_glides_through_scale_runs_and_arpeggios_are_left_alone():
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    major = [0, 2, 4, 5, 7, 9, 11]
+    up = [60 + 12 * o + x for o in range(3) for x in major] + [96]
+    scale = notes_at(up + up[-2::-1], step=0.08, dur=0.084)
+    a = hands.HandAnimator(song_of(scale), RIGHT)
+    a._ensure_layout(kb)
+    assert len(a.runs) == 1
+    xs, close = [], 0
+    t = scale[0].start
+    while t < scale[-1].end:
+        wx, wy, psi = a._limited_at(t)
+        xs.append(wx)
+        a.pose(t, kb)
+        c = a._run_w(t)
+        tips = a._separate({f: a._limit_tip(f, p, wx, wy, psi, c) for f, p in a._limited_tips(t).items()},
+                           wx, wy, psi, t, c)
+        loc = {f: hands.HandAnimator._rot(x - wx, y - wy, -psi)[0] for f, (x, y, _) in tips.items()}
+        close += any(loc[f + 1] - loc[f] < 0.5 * kb.white_w for f in (2, 3, 4))
+        t += 1 / 60
+    v = [b - x for x, b in zip(xs, xs[1:])]
+    signs = [1 if d > 0.3 else -1 for d in v if abs(d) > 0.3]
+    reversals = sum(1 for p, q in zip(signs, signs[1:]) if p != q)
+    assert reversals <= 4, reversals          # up and back down: one turn (was 18)
+    assert close == 0                          # fingers compress, but never overlap
+    # arpeggios (thirds and wider) are not runs: their motion is untouched
+    arp = [60, 64, 67, 72, 76, 79, 84, 88, 91, 96]
+    b = hands.HandAnimator(song_of(notes_at(arp + arp[-2::-1], step=0.09)), RIGHT)
+    assert b.runs == []
