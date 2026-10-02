@@ -634,8 +634,16 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     `GLISS_BLACK_IN` 0.5 in into a black one - which follows the notes (`_gliss_contact`; through a break it travels
     and turns round, eased). Only the thumb's nail is drawn (`struct["nail_hide"]` = fingers 2-5, kept once a blend
     is a third of the way in; `skins._draw_cartoon`). The bones are in the same order as `_finger_pose`'s, so the
-    two blend point by point. (Tried first: the hand rolled 78° onto its side with straight fingers; then the
-    fingertips and thumb pinched to one point - the thumb's occlusion couldn't be drawn well.)
+    two blend point by point. That is for sliding toward the little finger (RH up, LH down). Toward the thumb
+    (RH down, LH up) it is the thumb method: palm down, fingers 2-5 curled right in (`GLISS_CURL`), the thumb
+    straight out beside the fist (`GLISS_THUMB_DIR`), the hand turned so the thumb lies along the keys, tipped
+    down `GLISS_THUMB_PITCH_DEG` 12°, the thumb's nail on the contact point. Both are one family
+    (u = smoothed (d+1)/2 of `_gliss_contact`'s direction d), so turning round inside an episode morphs from one
+    to the other. Palm up, `struct["palm_up"]` is set and the cartoon skin draws the heart, head and life lines
+    (`skins._palm_lines`, quadratic curves in palm coordinates between the index/little knuckles and the wrist
+    sides - the wrist sides swapped when the hand is turned over, as the forearm isn't) instead of the back's web
+    crease. (Tried first: the hand rolled 78° onto its side with straight fingers; then the fingertips and thumb
+    pinched to one point - the thumb's occlusion couldn't be drawn well.)
   - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
     `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.

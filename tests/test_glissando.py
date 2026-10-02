@@ -116,3 +116,31 @@ def test_marking_a_glissando_in_the_editor_and_exporting_it(screen, tmp_path):
     back = midi_loader.load_song(str(out))
     assert sorted(n.pitch for n in back.notes if n.gliss) == ps
     assert not any(n.gliss for n in back.notes if n.pitch not in ps)
+
+
+def test_palm_up_toward_the_little_finger_thumb_method_toward_the_thumb(screen):
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    d3 = lambda a, b: math.dist(a, b)
+    for hand, ps, palm_up in ((RIGHT, WHITE[14:30], True), (RIGHT, WHITE[29:13:-1], False),
+                              (LEFT, WHITE[16:0:-1], True), (LEFT, WHITE[1:17], False)):
+        g = run(ps, t0=1.0, hand=hand)
+        a = hands.HandAnimator(song_of(g), hand)
+        a._ensure_layout(kb)
+        n = g[8]
+        s = a.pose(n.start + 0.01, kb)["struct"]
+        assert s["palm_up"] == palm_up, (hand, palm_up)
+        if palm_up:
+            continue
+        ch = s["chains"]
+        # fingers 2-5 curled right in: their tips near their knuckles
+        for f in range(2, 6):
+            length = sum(d3(p, q) for p, q in zip(ch[f][1:], ch[f][2:]))
+            assert d3(ch[f][1], ch[f][-1]) < 0.6 * length, f
+        # the thumb straight, along the keys, its tip (the nail) on the glissando's key
+        th = ch[1]
+        assert d3(th[0], th[-1]) > 0.95 * sum(d3(p, q) for p, q in zip(th, th[1:]))
+        dx, dy = th[-1][0] - th[1][0], th[-1][1] - th[1][1]
+        assert abs(dx) < 0.3 * abs(dy)
+        assert abs(th[-1][0] - kb.key_rects[n.pitch].centerx) < 1.5 * kb.white_w

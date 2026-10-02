@@ -2,6 +2,13 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0231 - Palm lines, thumb glissandos
+- When the hand is turned palm up for a glissando, the palm's lines (heart, head and life lines)
+  are drawn, so it's clear it is the palm you see.
+- Glissandos toward the thumb (right hand going down, left hand going up) are now played with the
+  thumb: fingers 2-5 curled right in, the thumb straight out and lying along the keys, its nail
+  sliding on them. Turning round between glissandos goes smoothly from one pose to the other.
+
 ## v2026.10.02.0218 - Simpler glissando pose
 - The glissando hand is now flat and turned palm up, the fingers straight and together, the thumb
   tucked in beside them, sliding the backs of the fingers along the keys with the fingers trailing.

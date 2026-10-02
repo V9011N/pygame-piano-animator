@@ -211,6 +211,7 @@ class _Hand:
         P = project
         self.chains = {f: [P(p) for p in c] for f, c in struct["chains"].items()}
         self.nail_hide = set(struct.get("nail_hide", ()))     # nails turned away (fingers curled under)
+        self.palm_up = bool(struct.get("palm_up", False))       # turned over: we see the palm
         self.wr, self.wu = (P(p) for p in struct["wrist"])
         self.arm_end = P(struct["arm_end"])
         fw = skin["finger_width"]
@@ -379,13 +380,53 @@ def _draw_cartoon(pen, h):
         if kind == "palm":
             h.fill_palm(pen, c["skin"])
             if skin["details"]:
-                _web_crease(pen, h, _mix(line, c["skin"], 0.35))
+                if h.palm_up:
+                    _palm_lines(pen, h, _mix(line, c["skin"], 0.3))
+                else:
+                    _web_crease(pen, h, _mix(line, c["skin"], 0.35))
         elif kind == "finger":
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
                 if f not in h.nail_hide:
                     _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
+
+
+def _palm_at(h, s, t):
+    """
+    A point on the palm: s across it from the thumb side (0, index knuckle
+    and wrist's thumb side) to the little finger's (1), t down it from the
+    knuckles (0) to the wrist (1).
+    """
+    k2, k5, wr, wu = h.chains[2][1], h.chains[5][1], h.wr, h.wu
+    # the forearm doesn't turn over with the hand: take each wrist side with the edge it's on
+    if math.hypot(k2[0] - wr[0], k2[1] - wr[1]) + math.hypot(k5[0] - wu[0], k5[1] - wu[1]) > \
+            math.hypot(k2[0] - wu[0], k2[1] - wu[1]) + math.hypot(k5[0] - wr[0], k5[1] - wr[1]):
+        wr, wu = wu, wr
+    top = (k2[0] + (k5[0] - k2[0]) * s, k2[1] + (k5[1] - k2[1]) * s)
+    bot = (wr[0] + (wu[0] - wr[0]) * s, wr[1] + (wu[1] - wr[1]) * s)
+    return (top[0] + (bot[0] - top[0]) * t, top[1] + (bot[1] - top[1]) * t)
+
+
+PALM_LINES = (                  # (start, control, end) as (across, down) palm coordinates
+    ((1.02, 0.24), (0.55, 0.36), (0.12, 0.13)),     # heart line: from the little finger's edge, curving up between index and middle
+    ((-0.04, 0.30), (0.35, 0.40), (0.78, 0.48)),    # head line: from the thumb side, across and a little down
+    ((-0.02, 0.33), (0.42, 0.62), (0.18, 0.98)),    # life line: round the ball of the thumb to the wrist
+)
+
+
+def _palm_lines(pen, h, color):
+    """The heart, head and life lines, shown when the hand is turned palm up."""
+    w = max(2, 0.05 * h.ppi)
+    for a, m, b in PALM_LINES:
+        pts = []
+        for i in range(11):
+            t = i / 10
+            s = (1 - t) ** 2 * a[0] + 2 * (1 - t) * t * m[0] + t * t * b[0]
+            d = (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * m[1] + t * t * b[1]
+            pts.append(_palm_at(h, s, d))
+        for p, q in zip(pts, pts[1:]):
+            pen.line(p, q, color, w)
 
 
 def _web_crease(pen, h, color):
