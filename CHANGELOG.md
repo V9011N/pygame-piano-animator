@@ -1,6 +1,63 @@
 # Changelog
 
-Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
+Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
+v20YY.MM.DD.HHMM). Newest first.
+
+## v26.1.8 - Tidying
+- Internal tidying (one text-wrapping helper instead of three); nothing looks or works
+  differently.
+
+## v26.1.7 - Speed limits from the command line
+- Fixed: `--speed` and `--audio-speed` took any number - 0 froze the song, a negative one ran it
+  backwards. They're now kept between 10% and 200%, like the speed keys.
+
+## v26.1.6 - Fingers on their keys
+- Fixed: in fast, wide repeated broken chords (Chopin's Ocean Étude) the hand was held still as if
+  playing a tremolo, halfway between notes it couldn't reach, so fingers struck beside their keys.
+  Only figures the hand can cover from one place are played as tremolos now.
+- Fixed: a rolled chord too wide to hold let go of its lower notes only after the top one was
+  struck, so the hand never reached it; they're now let go in time.
+- Fixed: undoing in sequential fingering mode could crash the editor when the undo went back to a
+  note of the other hand.
+
+## v26.1.5 - Glissandos keep to the top speed
+- Fixed: in Liszt's Hungarian Rhapsody No. 10 at 4:21 the hand jumped across four keys in one
+  frame at the end of a glissando. A glissando key further on than the hand can slide in time is
+  now struck a moment late instead.
+- Fixed: a chord far away straight after a glissando made the hand fly there at up to three times
+  the pianist's top speed; it's now struck a little late, as the hand gets there.
+- Fixed: the hand twitched sideways as it left one glissando with another coming.
+
+## v26.1.4 - Bug fixes
+- Fixed: a MIDI file without notes did nothing when opened; it now says it has no notes.
+- Fixed: resizing the window while the fingering editor asked about unsaved changes crashed the
+  app.
+- Fixed: dragging a synced recording's waveform to the window's left edge while playing left the
+  recording silent.
+- Fixed: a pianist named "Settings" could overwrite the app's settings file.
+- Removed leftover code that no longer did anything.
+
+## v26.1.3 - pygame-ce
+- Now runs on pygame-ce, the community edition of pygame: drawing is about 5% faster and looks
+  the same. To switch an existing install: `pip uninstall -y pygame`, then
+  `pip install -r requirements.txt`. Plain pygame still works.
+
+## v26.1.2 - Loading progress bar
+- Opening a file shows a progress bar, and the window keeps responding while the song loads and the
+  hands' fingering is planned (in the background).
+- Choosing "Default sound" or syncing a recording no longer stops for a second plan of the hands:
+  they're ready from the load.
+- Fixed: opening another file from the fingering editor ("Open…") crashed the app.
+
+## v26.1.1 - Faster loading and smoother playback
+- Unfingered MIDI files load about a third faster (Chopin's 12-minute Concerto No. 1: 7.5 s to 5 s).
+- Smoother playback: the hands' motion is worked out ahead in each frame's spare time, so far
+  fewer frames run late, and the stalls around glissandos (up to half a second) are gone.
+- Everything looks and plays exactly as before.
+
+## v26.1.0 - New version numbers
+- Versions are now numbered year.major.minor, starting at v26.1.0; each update raises the last
+  number.
 
 ## v2026.10.02.1613 - Sound stops when you leave
 - Fixed: leaving the player or the fingering editor while the sustain pedal was down left the

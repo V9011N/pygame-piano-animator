@@ -49,16 +49,17 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    MAX_FRAME_DT, show_loading)
+                    MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
 import pianist as pianists
-from hands import HandAnimator, draw_hands, pair_hands
-from midi_loader import LEFT, RIGHT, load_song
+from hands import build_hands, draw_hands, load_with_hands, prepare_hands
+from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
 
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
 WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it this much slower
 SEEK_STEP = 5.0
+IDLE_MARGIN_T = 0.002        # s of each frame's spare time left unused (Visualizer.idle)
 
 # What a mode's handle_event can return besides True (carry on) / False (quit)
 TO_MENU = "menu"
@@ -68,7 +69,7 @@ TO_MENU = "menu"
 # The falling-notes player
 # --------------------------------------------------------------------------- #
 class Visualizer(Transport):
-    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None):
+    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None, hands=None):
         self.screen = screen
         self.fonts = fonts or load_fonts()
         self._init_transport(midi or MidiOut(False), speed)
@@ -82,7 +83,7 @@ class Visualizer(Transport):
         self.audio_muted = False
         self._audio_pending = False      # waiting for the recording's start (the song's lead-in)
         self._anchor = None              # (song time, wall time) the clock runs from while playing
-        self.dragging_wave = None        # (mouse x, offset) when the waveform drag began
+        self.dragging_wave = None        # the mouse x while the waveform is dragged (0 is a place too)
         self._wave_cache = (None, None)
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
@@ -93,15 +94,14 @@ class Visualizer(Transport):
         self.show_fingers = True
         self.layout(screen.get_size())
         if song:
-            self.set_song(song)
+            self.set_song(song, hands)
 
     # ----- setup -------------------------------------------------------------
-    def set_song(self, song):
+    def set_song(self, song, hands=None):
+        """Play `song`; `hands` (hands.build_hands), when already built for it, saves planning them again."""
         self.midi.silence()
         self.song = song
-        self.hands = {h: HandAnimator(song, h) for h in (RIGHT, LEFT)
-                      if any(n.hand == h for n in song.notes)}
-        pair_hands(self.hands.values())
+        self.hands = hands if hands is not None else build_hands(song)
         # what's heard and the keys that go down follow what the hands play
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.t = -LEAD_IN
@@ -185,11 +185,11 @@ class Visualizer(Transport):
                 self.dragging_wave = event.pos[0]
         elif event.type == pygame.MOUSEMOTION and self.dragging_bar:
             self._seek_to_x(event.pos[0])
-        elif event.type == pygame.MOUSEMOTION and self.dragging_wave:
+        elif event.type == pygame.MOUSEMOTION and self.dragging_wave is not None:
             self._drag_wave(event.pos[0])
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_bar = False
-            if self.dragging_wave:
+            if self.dragging_wave is not None:
                 self.dragging_wave = None
                 if not self.paused:
                     self._start_audio()              # carry on from the new alignment
@@ -241,12 +241,12 @@ class Visualizer(Transport):
                 self._start_audio()
 
     def update(self, dt):
-        if self.audio and self.song and not self.paused and not self.dragging_wave:
+        if self.audio and self.song and not self.paused and self.dragging_wave is None:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
             target = t_a + (time.perf_counter() - wall) * self.speed
             dt = max(0.0, (target - self.t) / self.speed)
-        elif self.audio and self.dragging_wave:
+        elif self.audio and self.dragging_wave is not None:
             dt = 0.0                                # held while the recording is moved
         Transport.update(self, dt)
         if self.audio:
@@ -261,12 +261,10 @@ class Visualizer(Transport):
             frac = min(1.0, max(0.0, x / self.bar_rect.w))
             self.seek(frac * self.song.duration)
 
-    def open_file(self, path):
-        show_loading(self.screen, self.fonts, f"Loading {os.path.basename(path)}…")
-        try:
-            self.set_song(load_song(path))
-        except Exception as exc:
-            print(f"Could not load {path}: {exc}")
+    def idle(self, budget):
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
+        if self.song and self.hands:
+            prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
         self.midi.silence()                     # (with the pedal down, notes would ring on)
@@ -353,7 +351,7 @@ class Visualizer(Transport):
                         if self.hands[n.hand].is_gliss(n):
                             finger = "g"                 # slid in a glissando
                         if finger:
-                            font, pos = self.fonts["finger"], (rect.centerx, rect.bottom - 1)
+                            pos = (rect.centerx, rect.bottom - 1)
                             if equal_white:      # white number for a white key, black for a black one
                                 txt = str(finger)
                                 dark = self._finger_img(txt, (15, 15, 20))
@@ -413,7 +411,7 @@ class Visualizer(Transport):
         pygame.draw.line(s, PANEL_EDGE, (r.x, r.bottom - 1), (r.right, r.bottom - 1))
         font = self.fonts["small"]
         pos = self.audio_pos()
-        hint = ("drag to line the recording up (Shift: finer),  , .  nudge 10 ms" if self.paused or self.dragging_wave
+        hint = ("drag to line the recording up (Shift: finer),  , .  nudge 10 ms" if self.paused or self.dragging_wave is not None
                 else "")
         label = f"{a.name}   {fmt_time(max(0.0, pos))} / {fmt_time(a.length)}   offset {a.offset:+.2f}s   {hint}"
         blit_shadowed(s, font, label, TEXT, (r.x + 8, r.y + 4))
@@ -488,18 +486,6 @@ def changelog_entries(path=CHANGELOG):
     return entries
 
 
-def wrap_text(font, text, width):
-    lines, cur = [], ""
-    for word in text.split():
-        trial = f"{cur} {word}" if cur else word
-        if cur and font.size(trial)[0] > width:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = trial
-    return lines + ([cur] if cur else [])
-
-
 class ChangelogView:
     """The changelog in a scrollable panel over the main menu."""
 
@@ -520,7 +506,7 @@ class ChangelogView:
             self._width = self.view.w
             f, rows = self.fonts, []
             for heading, bullets in self.entries:
-                rows.append((f["button"], ACCENT if heading.startswith(VERSION) else TEXT, heading, 0, 8))
+                rows.append((f["button"], ACCENT if heading.split(" ")[0] == VERSION else TEXT, heading, 0, 8))
                 indent = f["normal"].size("•  ")[0]
                 for b in bullets:
                     for i, part in enumerate(wrap_text(f["normal"], b, self.view.w - indent - 4)):
@@ -728,7 +714,7 @@ class App:
         self.fonts = load_fonts()
         set_key_style(pianists.app_setting("keys", "realistic"))
         self.midi = MidiOut(sound)
-        self.speed = speed
+        self.speed = min(SPEED_MAX, max(SPEED_MIN, speed))
         self.last_dir = None
         self._fresh = True
         self.mode = MainMenu(self)
@@ -744,36 +730,52 @@ class App:
         self._switch(MainMenu(self))
         self.mode.message = message
 
-    def _load(self, path):
-        show_loading(self.screen, self.fonts, f"Loading {os.path.basename(path)}…")
+    def _load(self, path_or_song, **kw):
+        """
+        (song, its hands - hands.build_hands(song, **kw)) for a path or a song
+        already loaded, worked out in the background behind a progress bar;
+        (None, None) if the file can't be read.
+        """
+        if isinstance(path_or_song, str):
+            text = f"Loading {os.path.basename(path_or_song)}…"
+        else:
+            text = "Preparing the hands…"
         try:
-            song = load_song(path)
+            song, hands = run_busy(self.screen, self.fonts, text, lambda: load_with_hands(path_or_song, **kw))
         except Exception as exc:
-            print(f"Could not load {path}: {exc}")
+            if not isinstance(path_or_song, str):
+                raise
+            print(f"Could not load {path_or_song}: {exc}")
             if isinstance(self.mode, MainMenu):
-                self.mode.message = f"Could not open {os.path.basename(path)}: {exc}"
-            return None
-        self.last_dir = os.path.dirname(os.path.abspath(path))
-        return song
+                self.mode.message = f"Could not open {os.path.basename(path_or_song)}: {exc}"
+            return None, None
+        if isinstance(path_or_song, str):
+            self.last_dir = os.path.dirname(os.path.abspath(path_or_song))
+            if not song.notes:
+                if isinstance(self.mode, MainMenu):
+                    self.mode.message = f"{os.path.basename(path_or_song)} has no notes to play"
+                return None, None
+        return song, hands
 
-    def choose_playback(self, path_or_song):
+    def choose_playback(self, path_or_song, hands=None):
         """A MIDI file chosen to play: first how it should sound (audio_sync.PlaybackSetup)."""
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        song, hands = self._load(path_or_song) if hands is None else (path_or_song, hands)
         if song:
-            self._switch(PlaybackSetup(self, song))
+            self._switch(PlaybackSetup(self, song, hands))
 
-    def play(self, path_or_song, audio=None, speed=None):
+    def play(self, path_or_song, audio=None, speed=None, hands=None):
         """Play straight away: with the synth, or with a synced recording (audio_sync.SyncAudio) at `speed`."""
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        song, hands = self._load(path_or_song) if hands is None else (path_or_song, hands)
         if song:
             self._switch(Visualizer(self.screen, song, midi=self.midi, speed=speed or self.speed,
-                                    fonts=self.fonts, audio=audio))
+                                    fonts=self.fonts, audio=audio, hands=hands))
 
     def edit(self, path_or_song):
         from editor import FingeringEditor
-        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        # the editor shows the file's fingering as it is, even where it can't be played
+        song, hands = self._load(path_or_song, repair=False)
         if song:
-            self._switch(FingeringEditor(self, song))
+            self._switch(FingeringEditor(self, song, hands))
 
     def studio(self):
         from hand_editor import PianistStudio
@@ -808,10 +810,15 @@ class App:
                 if not self.handle_event(event):
                     running = False
                     break
+            frame_start = time.perf_counter()
             self.mode.update(dt)
             self.mode.render()
             self.draw_version()
             pygame.display.flip()
+            # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
+            spare = 1.0 / FPS - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
+            if spare > 0 and hasattr(self.mode, "idle"):
+                self.mode.idle(spare)
         self.close()
 
     def draw_version(self):
@@ -849,7 +856,7 @@ def main():
         from audio_sync import SyncAudio
         audio = SyncAudio(args.audio)
         audio.offset = args.audio_offset
-        app.play(args.midi, audio=audio, speed=args.audio_speed)
+        app.play(args.midi, audio=audio, speed=min(SPEED_MAX, max(SPEED_MIN, args.audio_speed)))
     elif args.midi:
         (app.edit if args.edit else app.play)(args.midi)
 

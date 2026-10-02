@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import bisect
 import os
+import threading
 
 import pygame
 
+import progress
 from midi_loader import HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, is_black_key
 
 # --------------------------------------------------------------------------- #
@@ -21,7 +23,6 @@ MAX_FRAME_DT = 1 / 15        # a slow frame (loading, a big redraw) never skips 
 LEAD_IN = 2.0                # seconds of empty time before the first note
 TOP_BAR_H = 34
 FELT_H = 6
-HAND_AREA_RATIO = 0.24       # share of the window height kept free below the keys
 HAND_AREA_MIN_H = 150
 SPEED_MIN, SPEED_MAX = 0.1, 2.0
 
@@ -196,7 +197,6 @@ class Keyboard:
         whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
         self.white_w = rect.w / len(whites)
         L = rect.w / _EQUAL_SPAN
-        self.lane_w = L
         g = self.gap = max(1, round(L / 15))
         self.black_w = L - g
         self.black_h = int(rect.h * 0.63)
@@ -267,6 +267,21 @@ class Keyboard:
                     self.tails[p]]
         return [r]
 
+    def _overlaps(self):
+        """{pitch: keys of the other colour its rect overlaps} (cached per layout)."""
+        key = tuple(self.rect)
+        if getattr(self, "_overlap_key", None) != key:
+            whites = [p for p in self.key_rects if not is_black_key(p)]
+            blacks = [p for p in self.key_rects if is_black_key(p)]
+            touch = {p: [] for p in self.key_rects}
+            for w in whites:
+                for b in blacks:
+                    if self.key_rects[w].colliderect(self.key_rects[b]):
+                        touch[w].append(b)
+                        touch[b].append(w)
+            self._touch, self._overlap_key = touch, key
+        return self._touch
+
     def _shade(self):
         shade = getattr(self, "_shade_surf", None)
         if shade is None or shade.get_width() != self.rect.w:
@@ -309,17 +324,14 @@ class Keyboard:
         if self.style != "equal":
             # a realistic white key runs under its black neighbours: redraw those
             # (and the white keys under them) so the overlaps come out the same
-            changed = True
-            while changed:
-                changed = False
-                for p, kr in self.key_rects.items():
-                    if is_black_key(p) and p not in blacks and any(kr.colliderect(self.key_rects[w]) for w in whites):
-                        blacks.add(p)
-                        changed = True
-                for p, kr in self.key_rects.items():
-                    if not is_black_key(p) and p not in whites and any(kr.colliderect(self.key_rects[b]) for b in blacks):
-                        whites.add(p)
-                        changed = True
+            touch = self._overlaps()
+            todo = list(whites | blacks)
+            while todo:
+                p = todo.pop()
+                for q in touch[p]:
+                    if q not in whites and q not in blacks:
+                        (blacks if is_black_key(q) else whites).add(q)
+                        todo.append(q)
         back = KEY_GAP if self.style == "equal" else under
         dirty = []
         for p in sorted(whites):
@@ -900,19 +912,98 @@ class TextInput:
             pygame.draw.line(surf, TEXT, (cx, r.y + 7), (cx, r.bottom - 8), 2)
 
 
-def show_loading(surf, fonts, text):
-    """Draw a 'Loading...' notice right away (before a slow load), over whatever is on screen."""
+def wrap_text(font, text, width):
+    """`text` broken into lines no wider than `width` pixels in `font`."""
+    lines, cur = [], ""
+    for word in text.split():
+        trial = f"{cur} {word}" if cur else word
+        if cur and font.size(trial)[0] > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    return lines + ([cur] if cur else [])
+
+
+def shade_screen(surf):
+    """A copy of what's on `surf`, darkened (behind a notice)."""
+    out = surf.copy()
+    shade = pygame.Surface(out.get_size(), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 150))
+    out.blit(shade, (0, 0))
+    return out
+
+
+def show_loading(surf, fonts, text, frac=None, backdrop=None):
+    """
+    Draw a 'Loading...' notice right away (before a slow load), over whatever
+    is on screen shaded (or over `backdrop`, shaded already: shade_screen),
+    with a progress bar when `frac` (0..1) is given.
+    """
     try:
         w, h = surf.get_size()
-        shade = pygame.Surface((w, h), pygame.SRCALPHA)
-        shade.fill((0, 0, 0, 150))
-        surf.blit(shade, (0, 0))
+        if backdrop is not None:
+            surf.blit(backdrop, (0, 0))
+        else:
+            surf.blit(shade_screen(surf), (0, 0))
         img = fonts["big"].render(text, True, TEXT)
-        box = img.get_rect(center=(w // 2, h // 2)).inflate(48, 28)
+        box = img.get_rect(center=(w // 2, h // 2)).inflate(48, 28 if frac is None else 52)
+        box.width = max(box.width, 320)
+        box.centerx = w // 2
         pygame.draw.rect(surf, PANEL, box, border_radius=12)
         pygame.draw.rect(surf, PANEL_EDGE, box, 1, border_radius=12)
-        surf.blit(img, img.get_rect(center=box.center))
+        if frac is None:
+            surf.blit(img, img.get_rect(center=box.center))
+        else:
+            surf.blit(img, img.get_rect(midtop=(box.centerx, box.y + 12)))
+            bar = pygame.Rect(box.x + 24, box.bottom - 26, box.w - 48, 10)
+            pygame.draw.rect(surf, BAR_BG, bar, border_radius=5)
+            fill = bar.copy()
+            fill.w = int(bar.w * min(1.0, max(0.0, frac)))
+            if fill.w > 0:
+                pygame.draw.rect(surf, BAR_FILL, fill, border_radius=5)
         pygame.display.flip()
         pygame.event.pump()
     except Exception:
         pass
+
+
+BUSY_FRAME_T = 0.05      # s, how often the progress bar is redrawn while a job runs
+
+
+def run_busy(surf, fonts, text, job):
+    """
+    job() run in a worker thread while the window shows `text` and a progress
+    bar (progress.py), staying responsive; returns job's result, or raises
+    its exception here. Closing the window or resizing it meanwhile is
+    passed on once the job is done; other input is dropped.
+    """
+    result = {}
+
+    def work():
+        try:
+            result["value"] = job()
+        except BaseException as exc:          # handed to the caller below
+            result["error"] = exc
+
+    backdrop = shade_screen(surf)
+    kept = []
+    progress.begin()
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    try:
+        while worker.is_alive():
+            surf = pygame.display.get_surface() or surf
+            show_loading(surf, fonts, text, progress.value(), backdrop)
+            try:
+                kept += [e for e in pygame.event.get() if e.type in (pygame.QUIT, pygame.VIDEORESIZE)]
+            except pygame.error:
+                pass
+            worker.join(BUSY_FRAME_T)
+    finally:
+        progress.end()
+        for e in kept:
+            pygame.event.post(e)
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")

@@ -398,7 +398,7 @@ def save(p):
     if not p.id:
         base = _slug(p.name)
         pid, k = base, 2
-        while pid == DEFAULT_ID or os.path.exists(_path(pid)):
+        while pid in (DEFAULT_ID, "settings") or os.path.exists(_path(pid)):     # (settings.json: the app's)
             pid, k = f"{base}-{k}", k + 1
         p.id = pid
         p.created = p.created or now

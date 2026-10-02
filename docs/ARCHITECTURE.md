@@ -40,6 +40,49 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Performance (v26.1.1)
+Measured headless (SDL dummy video, 1600x900) on the development container; a desktop is faster, but the
+proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames per section.
+- Load (read + hand split + fingering + animators + first frame), unfingered files: Concerto No. 1 (MAESTRO,
+  12 min, 6316 notes) 7.5 -> 5.1 s; HR10 5.3 -> 3.4 s; Op. 25 No. 6 3.7 -> 2.5 s. Files that carry their
+  fingering load in < 0.6 s (no planning). What changed, all with identical results (hands and fingers of
+  all 19 local files, 128,444 notes; 324 poses and frames):
+  - `fingering.key_pos` is a table (it was called 6.3 M times per Concerto load);
+  - `fingering.hand_range` is cached per (keys, fingers), cleared by `apply_pianist`;
+  - `plan_fingering` caches `_transition` per (last fingers, fingers) within a step;
+  - `hand_split`: what a candidate split's notes cost regardless of the hand (`_Part`: pitches, span,
+    chord and range terms) is worked out once per split, not once per beam entry.
+- Frames: the busy parts are the hand solve (`_solve_hand`'s Gauss-Newton, 8 iterations, finite
+  differences - it doesn't converge before 8, so it isn't cut short) and the fingertips (`_key_spot`), then
+  skin drawing. Exact speed-ups: `_clamp_tip` split into `_clamp_prep` (once per finger and hand) and
+  `_clamp_apply` (per point: `_key_spot` tries 22 depths); the Gram matrix summed once per symmetric
+  entry; the nail outline's ring precomputed; the keyboard's overlap map precomputed.
+- Spikes: a glissando's way back to the finger pose (`_gliss_follow`) simulates up to 3 s of future poses,
+  and a far-future pose restarts the speed limit's chain (`LIMIT_RESTART_T`) - 150-500 ms in one frame.
+  Now `HandAnimator.prepare` (from `App.run`, in each frame's spare time: what `clock.tick` would have
+  slept, less `IDLE_MARGIN_T`; `hands.prepare_hands` shares it between the hands; player and editor
+  `idle()`) carries the speed-limited grid on to `WARM_AHEAD_T` 3.5 s ahead, one step at a time (each
+  needs the one before - the same order playback would compute it in, so identical poses), and works
+  the glissando ways (`_gliss_follow_steps`, resumable) once the warm grid reaches them. `_gliss_neighbours`
+  only asks for a way within `GLISS_TRAVEL_MAX_T` of where it applies. Frames over 16.7 ms, per 600:
+  HR10 28 -> 1, Concerto 62 -> 0, Op. 25 No. 6 46 -> 4, Winter Wind 37 -> 0, Dante 119 -> 17; mean
+  13-15 -> 8-9 ms; worst 300 -> 36 ms.
+- Loading in the background (v26.1.2): `common.run_busy(surf, fonts, text, job)` runs the job in a worker
+  thread while the main thread draws a progress bar every `BUSY_FRAME_T` (pygame stays on the main thread;
+  QUIT and VIDEORESIZE are kept and posted again afterwards, other input dropped; the job's exception is
+  raised in the caller). Progress comes from `progress.py`: deep loops call `progress.report(frac)` (the hand
+  split's and the planner's per-group loops), and `progress.stage(lo, hi)` maps a part of the job onto its
+  share (`hands.load_with_hands`: read 0-0.5 - of which `read_midi` 0-0.15 -, then `hands.build_hands`
+  split between the hands by note count). Outside a tracked job `report` does nothing. The app loads the song
+  and plans its hands in one job (`App._load`), so the playback setup and the editor get them ready-made
+  (`Visualizer(hands=)`, `FingeringEditor(app, song, hands)`); the synced recording decodes in one too.
+  Costs 3-5% of the load time (Concerto 5.1 -> 5.25 s), for a window that keeps responding.
+- pygame-ce (v26.1.3, `requirements.txt`; plain pygame still works and the tests pass on both): frames
+  ~5% faster (mean HR10 8.2 -> 7.7 ms, Concerto 7.9 -> 7.6, Op. 25 No. 6 8.7 -> 8.0); a frame differs only
+  in text anti-aliasing and rounded-corner edge pixels (newer SDL_ttf), the hands and notes identical.
+  `pygame.midi` is there too. Cython/Numba were not used: the hot spot (`_solve_hand`) is many small
+  Python-level steps over dicts of poses, so it would need rewriting, not compiling.
+
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
 menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setting`):
@@ -295,13 +338,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 | Behaviour | Controls |
 |---|---|
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
-| antic_hand | `ANTIC_T` / `NEED_T` |
-| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
+| antic_hand | `HandAnimator.antic_t` (0.15–0.65 s, 0.4 at the default) / `need_t` (0.06–0.24 s) |
+| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `prep_max_t` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
-| smoothness | `HAND_SMOOTH_T` |
-| early_release | `EARLY_LIFT_T` |
+| smoothness | `HandAnimator.smooth_t` (the hand's motion averaged over ± this) |
+| early_release | `HandAnimator.early_lift` |
 | key_area_near, key_area_far | where on a key fingertips may play; loudness sets the aim within it |
 | max_speed | top travel speed of any part of the hand (m/s): hand split, fingering, schedule and animation limit |
 | roll_speed | time between rolled-chord notes |
@@ -313,7 +356,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `fingering.apply_pianist(p)` is called at the start of `plan_fingering` (the default is the active pianist). With the default pianist, results are identical to before: Hanon RH 21.5% / LH 22.8%.
 - Chromatic fingerings are pitch-class maps in the RH frame (the LH is mirrored), except "1234", which greedily forms groups of up to four with thumbs on white keys.
 - Performance: `HandAnimator.performance` is `[(press, release, note)]`.
-  - Chords wider than the physical reach are rolled bottom-up, and their lower notes are released early.
+  - Chords wider than the physical reach are rolled bottom-up, and their lower notes are released early: in time
+    for the hand to stretch on to the top note at the top speed (`travel_time` of how far it is beyond the pair's
+    reach), the top note waiting for that, never past the hand's next chord (v26.1.6; they used to be let go 20 ms
+    after the top was struck, so for that moment the hand had to span the impossible).
   - Finger early lifts shorten notes.
   - Keys are let go early, or struck late, to keep to the pianist's top travel speed (see below).
   - Notes a hand drops (a 6th note) aren't played.
@@ -422,7 +468,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `idle_weight` (from each hand's merged busy spans): 0 while a key is held; ramps to 1 from 0.35 to 0.85 s after the
     last release; back to 0 between 1.1 and 0.35 s before the next note.
   - `pair_hands(animators)` links the two `HandAnimator`s (called by the player and the editor whenever they are built).
-    `pose()` uses `_placed_at`: `_hand_at` shifted sideways by `_idle_shift`, weighted by `idle(self)·(1 − idle(other))`.
+    `pose()` uses `_placed_at`: `_hand_at` shifted sideways by `_idle_shift_parts`, weighted by `idle(self)·(1 − idle(other))`.
   - The shift keeps the idle wrist at least 0.8 hand spans outside the other hand's furthest reach over the next 0.5 s
     (`_clear_line`, which then relaxes at 6 in/s so the idle hand drifts back rather than springs), and no more than
     1.5 spans from the other hand's average place over the last 1.2 s, so it loosely follows. It isn't pushed past
@@ -671,7 +717,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     two different ones. A plain repeated note (p = 1), a scale, an arpeggio, Winter Wind's alternating line and
     Ocean's figures don't qualify. Pieces split by a stray chord (two notes landing together) within a period are
     joined; a tremolo whose lowest or highest key jumps by more than `TREM_JUMP` 4 semitones (Hanon 60 moving to a new
-    position) starts again there, so the hold never straddles a move.
+    position) starts again there, so the hold never straddles a move. Each cycle (any `TREM_PERIOD` strikes in a row)
+    must fit in the hand: no wider than the thumb-little finger stretch plus `TREM_REACH_EXTRA` 1.25 white keys
+    (v26.1.6: Ocean's repeated broken chords, 11-12 keys a cycle, were held still halfway between their notes -
+    pressed tips up to 2.4 keys off; Hanon 60's tenths, 9 keys, are still tremolos).
   - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
     inside it (`_trem_w`, so the hand is free by the next figure).
   - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's
@@ -680,6 +729,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Results: Dante LH 11.5-16.8 s wrist path 24.6 → 7.5 in, fingers' lateral path relative to the wrist ~28 → ~11 in;
     pressed tips > 0.3 key off in the tremolos of Dante, Hanon 60 and Winter Wind: 0 → 0 (max 0.3). Scales,
     arpeggios, Concerto No. 1, Winter Wind 20-30 s and Ocean: identical.
+- **Fingertips on their keys, whole pieces** (v26.1.6): pressed fingertips more than a quarter key off their key at
+  each strike (+10 ms), old -> new. Op. 25 No. 6 RH 4 -> 0, Dante LH 10 -> 0, Winter Wind LH 1 -> 0, HR10 LH 4 -> 0,
+  Op. 25 No. 10 RH 4 -> 4 (worst 2.35 -> 0.63 key), Ocean RH 177 -> 80, LH 14 -> 13; Hanon 60 0 / 1, Ossia 4 / 0 unchanged. Left: Ocean's
+  fastest arpeggios (fingerings that don't fit at the file's pace), HR10 RH's 14 fingered notes struck between
+  back-to-back glissandos (the hand is in the glissando pose), and a thumb on two keys at once (0.63 off by this
+  measure, which takes one of the two keys). A rule in `_solve_hand` letting the less important of two targets
+  further apart than those fingers can span give way was tried and dropped: one note better.
 - **A real hand's spread** (2026-10-02; from a photo of the author's hand stretched over the keys):
   - The span (`HandGeometry.span_units`, which sets `INCHES_PER_UNIT`) was measured with the thumb 50° and the
     little finger 22° out, so the hand was 27% bigger than its span says and never looked stretched. Now thumb 72°,
@@ -733,8 +789,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     still fading out used to drop the last one: 20 m/s at 270.9 s). HR10 RH, 257-290 s: frames over 3 m/s 102 →
     13 (two at 3.1 / 3.8 m/s between glissandos with a chord in a tight gap; the rest inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
     the contact follows exactly); pressed frames off the finger pose: 0.
+  - Top speed inside and around glissandos (v26.1.5; found by scanning every joint at 60 fps through whole pieces,
+    which the earlier checks skipped while fully in the glissando pose). `_gliss_schedule` times the glissando notes
+    (`gliss_start`): as written, but a step further than the slide can go in its time - at `GLISS_SPEED_SHARE` 0.9
+    of the top speed, `GLISS_EASE_PEAK` 1.5x for the eased steps where `_gliss_contact` turns round or pauses - is
+    struck late, the run's later keys with it (HR10 261.32 s: a loose end 4 keys on in 18 ms, 1.7x -> 0.9x).
+    `_gliss_paths`, `_gliss_end`, `_gliss_starts` and `performance` (`_gliss_performance`) use those times.
+    `_speed_schedule` now reaches the first chord after a glissando from where it ended (`_gliss_exits`: the last
+    key with finger 2 palm up, else the thumb), striking it late by up to `MAX_DELAY_T` (a chord 0.25-0.4 s after
+    a glissando, far away: joints 1.3-3.15x -> 1.03x, the chord 0.08-0.23 s late), but never so late the hand
+    can't let go `GLISS_RAMP_T` before the next glissando. `_gliss_rush` keeps off the neighbouring episode's way
+    in or out (an arriving rush starting during the last one's blend-out snapped the wrist 34 px in a frame).
+    HR10 changed in 58 notes, by at most 21 ms; no other test file changed. All joints over 105% of the top speed,
+    whole pieces: none in Op. 25 No. 6, Dante, Winter Wind, Ocean, Ossia, Concerto, the Hanon; HR10 RH 4 frames
+    at 270.0 s (knuckles 1.16x, the wrist at 0.99x: the hand turns back from the palm-up pose as it travels, and
+    the palm-up wrist sits ~5 keys beyond where the key-range estimate puts it - a known limit).
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
-    finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
+    finger, `finger_for` None, `is_gliss`) and added to `performance` at their scheduled times (`gliss_start`).
   - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
     of the author's hand: the hand flat and turned over, palm up (`GLISS_ROLL_DEG` 180°, turning over as it blends
     in so the point-by-point blend never folds the hand flat), the fingers straight and side by side (knuckles

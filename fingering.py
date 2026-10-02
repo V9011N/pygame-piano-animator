@@ -51,6 +51,8 @@ import math
 
 from itertools import combinations, product
 
+import progress
+
 MIRROR_SUM = 2 * 62            # reflect about D4: 124 - p
 
 _BLACK = {1, 3, 6, 8, 10}
@@ -78,7 +80,20 @@ def travel_time(dist_wk, max_speed=None):
     return PEAK_RATIO * abs(dist_wk) * WHITE_KEY_M / (max_speed or MAX_SPEED)
 
 
+_RANGE_CACHE = {}                # (ps, st) -> hand_range; cleared when the pianist's reach changes
+
+
 def hand_range(ps, st):
+    key = (tuple(ps), tuple(st))
+    r = _RANGE_CACHE.get(key)
+    if r is None:
+        if len(_RANGE_CACHE) > 200000:
+            _RANGE_CACHE.clear()
+        r = _RANGE_CACHE[key] = _hand_range(ps, st)
+    return r
+
+
+def _hand_range(ps, st):
     """
     (lo, hi): where the hand (its thumb's natural spot, in white keys) can
     be to play keys ps with fingers st. A chord wider than the fingers'
@@ -349,6 +364,7 @@ def apply_pianist(p):
     if key == _applied:
         return
     _applied = key
+    _RANGE_CACHE.clear()
     import figures
     base = W_TEXTBOOK if p is not None and p.b("fingering_model") == "textbook" else BASE_W
     W.clear()
@@ -406,10 +422,20 @@ def is_black(pitch):
     return pitch % 12 in _BLACK
 
 
-def key_pos(pitch):
-    """Horizontal position of a key's centre, in white-key widths."""
+def _key_pos(pitch):
     octave, pc = divmod(pitch, 12)
     return octave * 7 + (_WHITE_IDX[pc] + 0.5 if pc in _WHITE_IDX else _BLACK_POS[pc])
+
+
+_KEY_POS = [_key_pos(p) for p in range(-128, 256)]       # (mirrored pitches can leave 0..127)
+
+
+def key_pos(pitch):
+    """Horizontal position of a key's centre, in white-key widths."""
+    try:
+        return _KEY_POS[pitch + 128]
+    except (IndexError, TypeError):
+        return _key_pos(pitch)
 
 
 def mirror_pitch(pitch):
@@ -783,7 +809,9 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
     beam_ = [(0.0, None, (), None, None)]
     history = []
     prev_ps = prev_start = None
-    for start, ns in groups:
+    for gi, (start, ns) in enumerate(groups):
+        if gi % 64 == 0:
+            progress.report(gi / len(groups))
         ps = [vp(n.pitch) for n in ns]
         given = [fixed.get(id(n)) if fixed is not None else getattr(n, "finger", None) for n in ns]
         sug = [suggest.get(id(n)) for n in ns]
@@ -826,6 +854,7 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
 
         dt = start - prev_start if prev_start is not None else 1.0
         cand = []
+        trans = {}                 # (last fingers, fingers) -> _transition: beam entries share last fingers
         for bi, (cost, pf, held, _, _) in enumerate(beam_):
             held_now = tuple(h for h in held if h[0] > start + held_tol)
             held_map = {}
@@ -853,7 +882,10 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                         if keep:
                             c += inner_room_cost(rest + list(zip(ps, st))) - inner_room_cost(list(zip(ps, st)))
                 if pf is not None:
-                    c += _transition(prev_ps, pf, ps, st, dt)
+                    tc = trans.get((pf, st))
+                    if tc is None:
+                        tc = trans[(pf, st)] = _transition(prev_ps, pf, ps, st, dt)
+                    c += tc
                 cand.append((c, bi, si, keep))
         cand.sort(key=lambda x: x[0])
         new, seen = [], set()

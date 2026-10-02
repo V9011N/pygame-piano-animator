@@ -425,7 +425,6 @@ def test_octaves_open_to_1_5_around_a_held_inner_note():
 
 
 def test_the_hand_reaches_an_octave_with_a_held_middle_finger():
-    import math
     import pygame
     from common import Keyboard, bottom_layout
     pygame.init()
@@ -653,6 +652,29 @@ def test_a_tremolo_is_played_from_one_place(screen):
         ns = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate(ps)]
         b = hands.HandAnimator(MidiSong(ns, tracks, 5.0, [], []), RIGHT)
         assert b.trems == [], ps
+    # a broken chord repeated over more than a hand can reach (Op. 25 No. 12) is played moving
+    wide = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate([43, 48, 64, 55] * 4)]
+    assert hands.HandAnimator(MidiSong(wide, tracks, 5.0, [], []), RIGHT).trems == []
+    # an octave tremolo still holds still
+    octave = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate([60, 72] * 6)]
+    assert len(hands.HandAnimator(MidiSong(octave, tracks, 5.0, [], []), RIGHT).trems) == 1
+
+
+def test_a_rolled_chord_too_wide_to_hold_is_let_go_in_time(screen):
+    # a tenth with 3 and 5 can't be held: the lower key is let go so the hand reaches the top one
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(48, 1.0, 1.3, 80, 0, RIGHT), Note(64, 1.004, 1.3, 80, 0, RIGHT), Note(60, 2.0, 2.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(ns, 3.0), RIGHT, fingering={id(ns[0]): 3, id(ns[1]): 5, id(ns[2]): 1})
+    assert a.rolled == 1
+    heard = {id(n): (s, e) for s, e, n in a.performance}
+    assert heard[id(ns[0])][1] < heard[id(ns[1])][0]                 # let go before the top is struck
+    a._ensure_layout(kb)
+    for n in ns[:2]:
+        s, e = heard[id(n)]
+        tip = a.pose(s + 0.01, kb)["struct"]["chains"][a.finger_for(n)][-1]
+        r = kb.key_rects[n.pitch]
+        assert r.left - 0.25 * kb.white_w <= tip[0] <= r.right + 0.25 * kb.white_w, n.pitch
 
 
 def test_hands_start_uncrossed(screen):

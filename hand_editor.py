@@ -22,8 +22,8 @@ import pygame
 
 import pianist as pianists
 from common import (ACCENT, BAR_BG, BG, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button,
-                    Dialog, Slider, TextInput, mix)
-from hands import (HOVER, INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeometry, bone_width,
+                    Dialog, Slider, TextInput, mix, wrap_text)
+from hands import (INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeometry, bone_width,
                    halo_for, joint_radius, static_skeleton, curl_factor)
 from midi_loader import is_black_key, note_name
 import skins
@@ -664,9 +664,6 @@ class PianistStudio:
                 xx += w + 6
         return out
 
-    def _overview_y(self):
-        return TOP_BAR_H + 20 + 30 + 3 * 60 + 70
-
     def _behavior_list_rects(self):
         body, panel, view = self._geom()
         x, y = 20, TOP_BAR_H + 16
@@ -1221,7 +1218,7 @@ class PianistStudio:
         x, y = d.x + 24, d.y + 20
         s.blit(f["big"].render(spec["label"], True, TEXT), (x, y))
         y += 46
-        for line in _wrap(spec["desc"], f["normal"], d.w - 48):
+        for line in wrap_text(f["normal"], spec["desc"], d.w - 48):
             s.blit(f["normal"].render(line, True, TEXT_DIM), (x, y))
             y += 22
         y = max(y + 12, d.y + 120)
@@ -1243,7 +1240,7 @@ class PianistStudio:
                 s.blit(f["button"].render(label, True, TEXT), (r.x + 14, r.y + 6))
                 if detail:
                     dw = r.w - (280 if spec["id"] == "chromatic" else 28)
-                    for k, line in enumerate(_wrap(detail, f["small"], dw)[:3]):
+                    for k, line in enumerate(wrap_text(f["small"], detail, dw)[:3]):
                         s.blit(f["small"].render(line, True, TEXT_DIM), (r.x + 14, r.y + 34 + 18 * k))
                 if spec["id"] == "chromatic":
                     self._draw_chrom_keys(s, pygame.Rect(r.right - 250, r.y + 8, 236, r.h - 16), val)
@@ -1271,7 +1268,7 @@ class PianistStudio:
                 pygame.draw.circle(s, ACCENT, (r.x + 12, r.y + 18), 4)
             s.blit(f["normal"].render(item["label"], True, TEXT), (r.x + 24, r.y + 8))
             text_w = int(r.w * 0.46)
-            for k, line in enumerate(_wrap(item["desc"], f["small"], text_w - 30)[:2]):
+            for k, line in enumerate(wrap_text(f["small"], item["desc"], text_w - 30)[:2]):
                 s.blit(f["small"].render(line, True, TEXT_DIM), (r.x + 24, r.y + 32 + 17 * k))
             reset = pygame.Rect(r.right - 84, r.y + (r.h - 30) // 2, 72, 30)
             sx = r.x + text_w
@@ -1304,7 +1301,7 @@ class PianistStudio:
                  "A weight's default is what this pianist's behaviour settings make it; a changed weight overrides "
                  "them. Changes apply to this pianist's fingering once saved."]
         for para in lines:
-            for line in _wrap(para, f["small"], panel.w - 40) or [""]:
+            for line in wrap_text(f["small"], para, panel.w - 40) or [""]:
                 s.blit(f["small"].render(line, True, TEXT_DIM), (panel.x + 20, y))
                 y += 18
 
@@ -1335,17 +1332,3 @@ class PianistStudio:
 
 def _fmt_w(v):
     return f"{v:.3g}" if abs(v) >= 0.01 or v == 0 else f"{v:.2e}"
-
-
-def _wrap(text, font, width):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if font.size(t)[0] > width and cur:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = t
-    if cur:
-        lines.append(cur)
-    return lines

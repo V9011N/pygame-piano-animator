@@ -25,6 +25,8 @@ from typing import List, Optional
 
 import pretty_midi
 
+import progress
+
 LOWEST_PIANO_KEY = 21    # A0
 HIGHEST_PIANO_KEY = 108  # C8
 MIDDLE_C = 60
@@ -126,6 +128,9 @@ class MidiSong:
 
     def __len__(self) -> int:
         return len(self.notes)
+
+    def __bool__(self) -> bool:
+        return True                  # a song without notes is still a song (`if song:` means "loaded")
 
     def notes_between(self, t0: float, t1: float) -> List[Note]:
         """Notes that overlap the time window [t0, t1), in start order."""
@@ -659,7 +664,8 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
     min_duration:  very short notes are stretched to this length (seconds) so
                    they stay visible when drawn.
     """
-    pm, report = read_midi(path)
+    with progress.stage(0.0, 0.15):
+        pm, report = read_midi(path)
     instruments, r = sanitize_instruments(pm, include_drums)
     report += r
 
@@ -710,7 +716,8 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
     if loose:
         try:
             from hand_split import split_hands
-            hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
+            with progress.stage(0.15, 1.0):
+                hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
         except ImportError:
             hands = {id(n): n.hand or (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
         moved = sum(1 for n in loose if n.hand and hands[id(n)] != n.hand)

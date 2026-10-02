@@ -214,7 +214,7 @@ CHROM_MAPS = {
 
 def _chrom_groups4(lo, hi):
     """{pitch: finger} for 'groups of up to four': thumbs on white keys, as far apart as possible."""
-    out, f, p = {}, 1, lo
+    out, p = {}, lo
     out[p] = 1
     while p < hi:
         # the next thumb: the furthest white key at most four notes on
@@ -319,7 +319,7 @@ def _fmap(spec):
     return out
 
 
-def _cyclic_cost(order_pcs, fmap, rh_frame_up):
+def _cyclic_cost(order_pcs, fmap):
     """
     How awkward a cyclic arpeggio fingering is, in the right-hand frame going
     up: order_pcs are the chord tones in rising order starting from the thumb.
@@ -362,7 +362,7 @@ def arpeggio_map(pcs_order, hand, vp):
             fmap = dict(zip(rot, fingers))
             # intervals in the frame (mirrored for the LH)
             order_frame = [vp(p + 60) % 12 for p in rot]
-            c = _cyclic_cost(order_frame, dict(zip(order_frame, fingers)), True)
+            c = _cyclic_cost(order_frame, dict(zip(order_frame, fingers)))
             if best is None or c < best[0]:
                 best = (c, fmap)
     return best[1]

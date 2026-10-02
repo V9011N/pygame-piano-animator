@@ -216,3 +216,14 @@ def test_leaving_with_the_pedal_down_silences_the_synth(screen):
             assert (0xB0 | ch, 64, 0) in port.sent                      # pedal up...
             assert (0xB0 | ch, 123, 0) in port.sent                     # ...all notes off...
             assert (0xB0 | ch, 120, 0) in port.sent                     # ...and all sound off
+
+
+def test_version_matches_the_changelog():
+    import os
+    import re
+    from version import VERSION
+    assert re.fullmatch(r"v\d\d\.\d+\.\d+", VERSION)
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
+    with open(path, encoding="utf-8") as fh:
+        top = next(line for line in fh if line.startswith("## "))
+    assert top.split(" ")[1] == VERSION, top
