@@ -356,7 +356,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `fingering.apply_pianist(p)` is called at the start of `plan_fingering` (the default is the active pianist). With the default pianist, results are identical to before: Hanon RH 21.5% / LH 22.8%.
 - Chromatic fingerings are pitch-class maps in the RH frame (the LH is mirrored), except "1234", which greedily forms groups of up to four with thumbs on white keys.
 - Performance: `HandAnimator.performance` is `[(press, release, note)]`.
-  - Chords wider than the physical reach are rolled bottom-up, and their lower notes are released early.
+  - Chords wider than the physical reach are rolled bottom-up, and their lower notes are released early: in time
+    for the hand to stretch on to the top note at the top speed (`travel_time` of how far it is beyond the pair's
+    reach), the top note waiting for that, never past the hand's next chord (v26.1.6; they used to be let go 20 ms
+    after the top was struck, so for that moment the hand had to span the impossible).
   - Finger early lifts shorten notes.
   - Keys are let go early, or struck late, to keep to the pianist's top travel speed (see below).
   - Notes a hand drops (a 6th note) aren't played.
@@ -714,7 +717,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     two different ones. A plain repeated note (p = 1), a scale, an arpeggio, Winter Wind's alternating line and
     Ocean's figures don't qualify. Pieces split by a stray chord (two notes landing together) within a period are
     joined; a tremolo whose lowest or highest key jumps by more than `TREM_JUMP` 4 semitones (Hanon 60 moving to a new
-    position) starts again there, so the hold never straddles a move.
+    position) starts again there, so the hold never straddles a move. Each cycle (any `TREM_PERIOD` strikes in a row)
+    must fit in the hand: no wider than the thumb-little finger stretch plus `TREM_REACH_EXTRA` 1.25 white keys
+    (v26.1.6: Ocean's repeated broken chords, 11-12 keys a cycle, were held still halfway between their notes -
+    pressed tips up to 2.4 keys off; Hanon 60's tenths, 9 keys, are still tremolos).
   - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
     inside it (`_trem_w`, so the hand is free by the next figure).
   - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's
@@ -723,6 +729,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Results: Dante LH 11.5-16.8 s wrist path 24.6 → 7.5 in, fingers' lateral path relative to the wrist ~28 → ~11 in;
     pressed tips > 0.3 key off in the tremolos of Dante, Hanon 60 and Winter Wind: 0 → 0 (max 0.3). Scales,
     arpeggios, Concerto No. 1, Winter Wind 20-30 s and Ocean: identical.
+- **Fingertips on their keys, whole pieces** (v26.1.6): pressed fingertips more than a quarter key off their key at
+  each strike (+10 ms), old -> new. Op. 25 No. 6 RH 4 -> 0, Dante LH 10 -> 0, Winter Wind LH 1 -> 0, HR10 LH 4 -> 0,
+  Op. 25 No. 10 RH 4 -> 3, Ocean RH 177 -> 80, LH 14 -> 13; Hanon 60 0 / 1, Ossia 4 / 0 unchanged. Left: Ocean's
+  fastest arpeggios (fingerings that don't fit at the file's pace), HR10 RH's 14 fingered notes struck between
+  back-to-back glissandos (the hand is in the glissando pose), and a thumb on two keys at once (0.63 off by this
+  measure, which takes one of the two keys). A rule in `_solve_hand` letting the less important of two targets
+  further apart than those fingers can span give way was tried and dropped: one note better.
 - **A real hand's spread** (2026-10-02; from a photo of the author's hand stretched over the keys):
   - The span (`HandGeometry.span_units`, which sets `INCHES_PER_UNIT`) was measured with the thumb 50° and the
     little finger 22° out, so the hand was 27% bigger than its span says and never looked stretched. Now thumb 72°,

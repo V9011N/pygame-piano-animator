@@ -80,3 +80,19 @@ def test_a_pianist_called_settings_keeps_the_settings_file():
     assert pianist.app_setting("keys") == "equal"
     assert any(q.name == "Settings" for q in pianist.list_pianists())
     assert os.path.exists(pianist.SETTINGS)
+
+
+def test_undo_in_sequential_mode_reaching_the_other_hand(screen):
+    from midi_loader import LEFT, RIGHT
+    app = main.App(screen, sound=False)
+    app.edit(midi_path("demo_song.mid"))
+    ed = app.mode
+    li = next(i for i, n in enumerate(ed.notes) if n.hand == LEFT)
+    ri = next(i for i, n in enumerate(ed.notes) if n.hand == RIGHT)
+    ed.set_note(li, LEFT, 3 if ed.finger[li] != 3 else 2)      # an edit to the left hand...
+    ed.start_sequential(ri)                                    # ...then right-hand sequential fingering
+    at = ed.seq_note()
+    app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_z, mod=pygame.KMOD_CTRL, unicode=""))
+    assert ed.seq is not None and ed.seq_note() == at          # undone, and still where it was
+    assert not ed.undo_stack
+    ed.render()

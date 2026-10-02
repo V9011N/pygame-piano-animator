@@ -520,9 +520,11 @@ class FingeringEditor(Transport):
             self._clamp_pitch()
 
     def _seq_goto(self, i):
+        """Go to note i, if it's in the sequence (an undo can reach a note of the other hand: then stay)."""
         q = self.seq
-        q["k"] = next(k for k, st in enumerate(q["steps"]) if i in st)
-        q["j"] = q["steps"][q["k"]].index(i)
+        k = next((k for k, st in enumerate(q["steps"]) if i in st), None)
+        if k is not None:
+            q["k"], q["j"] = k, q["steps"][k].index(i)
         self._seq_show()
 
     def _seq_step(self, d):

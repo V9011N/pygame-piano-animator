@@ -220,6 +220,7 @@ TREM_MIN_NOTES = 6          # tremolos (and trills): at least this many strikes,
 TREM_PERIOD = 4             # strikes back (up to this many) - the same key or chord again...
 TREM_GAP_T = 0.3            # s, ...none further apart than this
 TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key jumps further starts again there
+TREM_REACH_EXTRA = 1.25     # white keys: a tremolo's cycle may span this much more than the thumb-little finger stretch
 TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
@@ -789,8 +790,13 @@ class HandAnimator:
         again p strikes later or was p strikes before (so a key that moves
         on, the tremolo's middle note going up a semitone, keeps it going),
         at least two different ones. Played from one place: the wrist holds
-        still and each finger stays over its key.
+        still and each finger stays over its key - so each cycle's keys must
+        be within the hand's reach (a repeated broken chord wider than that,
+        Chopin's Op. 25 No. 12, is played moving).
         """
+        import fingering as fg
+        # (a white key past the planner's widest stretch: rocking the forearm, a tremolo reaches a little further)
+        reach = fg.BASE_MAX_SPAN[(1, 5)] * reach_scale(self.pianist.anatomy)[(1, 5)] + TREM_REACH_EXTRA
         groups = self.groups
         n = len(groups)
         sets = [frozenset(m.pitch for m in ns) for _, ns in groups]
@@ -831,6 +837,10 @@ class HandAnimator:
         out = []
         for lo, hi in pieces:
             if hi - lo + 1 < TREM_MIN_NOTES or len(set(sets[lo:hi + 1])) < 2:
+                continue
+            kp = [[key_pos(self.vp(p)) for p in s_] for s_ in sets[lo:hi + 1]]
+            if any(max(max(c) for c in kp[i:i + TREM_PERIOD]) - min(min(c) for c in kp[i:i + TREM_PERIOD]) > reach
+                   for i in range(max(1, len(kp) - TREM_PERIOD + 1))):
                 continue
             t1, ns = groups[hi]
             out.append((groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T)))
@@ -1564,7 +1574,10 @@ class HandAnimator:
         """
         A chord this hand can't span is rolled from the bottom up, and the
         lower notes are let go as the hand moves on to the top ones (the pedal,
-        if it's down, keeps them sounding).
+        if it's down, keeps them sounding): a note the top finger can't reach
+        from is let go in time for the hand to stretch on to the top at its
+        top speed, and the top note waits for that if the roll is quicker
+        (never past the hand's next chord).
         """
         import fingering as fg
         scale = reach_scale(self.pianist.anatomy)
@@ -1581,7 +1594,8 @@ class HandAnimator:
                 return (key_pos(self.vp(pk[0])) + key_pos(self.vp(pk[1]))) / 2
             return key_pos(self.vp(n.pitch))
 
-        for _, ns in self.groups:
+        groups = self.groups
+        for gi, (_, ns) in enumerate(groups):
             if len(ns) < 2:
                 continue
             fs = [(pos(n), self.fingering[id(n)], n) for n in ns]
@@ -1595,10 +1609,14 @@ class HandAnimator:
                 so[id(n)] = n.start + k * self.roll_dt
             top = order[-1]
             ft, pt = self.fingering[id(top)], pos(top)
+            latest = max(so[id(top)], (groups[gi + 1][0] - 0.03) if gi + 1 < len(groups) else math.inf)
             for n in order[:-1]:
                 f = self.fingering[id(n)]
-                if f != ft and abs(pt - pos(n)) > reach(f, ft):
-                    eo[id(n)] = min(eo[id(n)], so[id(top)] + 0.02)
+                over = abs(pt - pos(n)) - reach(f, ft)
+                if f != ft and over > 0:
+                    need = fg.travel_time(over, self.max_speed)
+                    eo[id(n)] = min(eo[id(n)], max(so[id(n)] + 0.03, so[id(top)] - need))
+                    so[id(top)] = min(latest, max(so[id(top)], eo[id(n)] + need))
             for n in order:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
 

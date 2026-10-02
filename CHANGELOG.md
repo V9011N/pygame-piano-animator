@@ -3,6 +3,15 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.6 - Fingers on their keys
+- Fixed: in fast, wide repeated broken chords (Chopin's Ocean Étude) the hand was held still as if
+  playing a tremolo, halfway between notes it couldn't reach, so fingers struck beside their keys.
+  Only figures the hand can cover from one place are played as tremolos now.
+- Fixed: a rolled chord too wide to hold let go of its lower notes only after the top one was
+  struck, so the hand never reached it; they're now let go in time.
+- Fixed: undoing in sequential fingering mode could crash the editor when the undo went back to a
+  note of the other hand.
+
 ## v26.1.5 - Glissandos keep to the top speed
 - Fixed: in Liszt's Hungarian Rhapsody No. 10 at 4:21 the hand jumped across four keys in one
   frame at the end of a glissando. A glissando key further on than the hand can slide in time is
