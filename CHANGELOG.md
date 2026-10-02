@@ -3,6 +3,15 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.4 - Bug fixes
+- Fixed: a MIDI file without notes did nothing when opened; it now says it has no notes.
+- Fixed: resizing the window while the fingering editor asked about unsaved changes crashed the
+  app.
+- Fixed: dragging a synced recording's waveform to the window's left edge while playing left the
+  recording silent.
+- Fixed: a pianist named "Settings" could overwrite the app's settings file.
+- Removed leftover code that no longer did anything.
+
 ## v26.1.3 - pygame-ce
 - Now runs on pygame-ce, the community edition of pygame: drawing is about 5% faster and looks
   the same. To switch an existing install: `pip uninstall -y pygame`, then

@@ -23,7 +23,6 @@ MAX_FRAME_DT = 1 / 15        # a slow frame (loading, a big redraw) never skips 
 LEAD_IN = 2.0                # seconds of empty time before the first note
 TOP_BAR_H = 34
 FELT_H = 6
-HAND_AREA_RATIO = 0.24       # share of the window height kept free below the keys
 HAND_AREA_MIN_H = 150
 SPEED_MIN, SPEED_MAX = 0.1, 2.0
 
@@ -198,7 +197,6 @@ class Keyboard:
         whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
         self.white_w = rect.w / len(whites)
         L = rect.w / _EQUAL_SPAN
-        self.lane_w = L
         g = self.gap = max(1, round(L / 15))
         self.black_w = L - g
         self.black_h = int(rect.h * 0.63)

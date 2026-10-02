@@ -664,9 +664,6 @@ class PianistStudio:
                 xx += w + 6
         return out
 
-    def _overview_y(self):
-        return TOP_BAR_H + 20 + 30 + 3 * 60 + 70
-
     def _behavior_list_rects(self):
         body, panel, view = self._geom()
         x, y = 20, TOP_BAR_H + 16

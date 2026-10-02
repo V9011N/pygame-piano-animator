@@ -338,13 +338,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 | Behaviour | Controls |
 |---|---|
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
-| antic_hand | `ANTIC_T` / `NEED_T` |
-| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `PREP_MAX_T` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
+| antic_hand | `HandAnimator.antic_t` (0.15–0.65 s, 0.4 at the default) / `need_t` (0.06–0.24 s) |
+| antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `prep_max_t` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
-| smoothness | `HAND_SMOOTH_T` |
-| early_release | `EARLY_LIFT_T` |
+| smoothness | `HandAnimator.smooth_t` (the hand's motion averaged over ± this) |
+| early_release | `HandAnimator.early_lift` |
 | key_area_near, key_area_far | where on a key fingertips may play; loudness sets the aim within it |
 | max_speed | top travel speed of any part of the hand (m/s): hand split, fingering, schedule and animation limit |
 | roll_speed | time between rolled-chord notes |
@@ -465,7 +465,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `idle_weight` (from each hand's merged busy spans): 0 while a key is held; ramps to 1 from 0.35 to 0.85 s after the
     last release; back to 0 between 1.1 and 0.35 s before the next note.
   - `pair_hands(animators)` links the two `HandAnimator`s (called by the player and the editor whenever they are built).
-    `pose()` uses `_placed_at`: `_hand_at` shifted sideways by `_idle_shift`, weighted by `idle(self)·(1 − idle(other))`.
+    `pose()` uses `_placed_at`: `_hand_at` shifted sideways by `_idle_shift_parts`, weighted by `idle(self)·(1 − idle(other))`.
   - The shift keeps the idle wrist at least 0.8 hand spans outside the other hand's furthest reach over the next 0.5 s
     (`_clear_line`, which then relaxes at 6 in/s so the idle hand drifts back rather than springs), and no more than
     1.5 spans from the other hand's average place over the last 1.2 s, so it loosely follows. It isn't pushed past

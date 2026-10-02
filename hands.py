@@ -28,7 +28,7 @@ How it works
          (DIP joint coupled to PIP), so seen from above their segments
          accordion in and out as they curl. The thumb flexes on its side, so
          its bend shows as a sideways curl.
-  3. draw_hand() projects the skeleton straight down onto the screen and draws
+  3. draw_hands() projects the skeleton straight down onto the screen and draws
      black bone segments, lowest bones first so crossings overlap correctly.
 
 World coordinates used for posing are pixels:
@@ -129,14 +129,12 @@ THUMB_BEND_MAX = 1.2
 PRESS_T = 0.035             # key going down after the strike
 RELEASE_T = 0.12            # lift after a note ends
 STRIKE_T = 0.12             # final drop onto the key
-PREP_MAX_T = 0.9            # never start preparing earlier than this
 LINGER_T = 0.06             # a released finger stays over its key this long
 RETURN_T = 0.35             # ... then drifts back to its resting spot
 # How strongly each finger pulls the hand toward its natural spot when a chord
 # is wider than the resting hand: the thumb is flexible and takes most of the
 # stretch, the little finger barely abducts, so it stays near its rest position.
 FIT_WEIGHT = {1: 0.35, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.6}
-EARLY_LIFT_T = 0.22         # a finger that jumps to a new key leaves the old one this early
 LEGATO_STEP_WK = 2.5        # a finger moving this many white keys or less lets go only LEGATO_LIFT_T early...
 LEGATO_LIFT_T = 0.03
 JUMP_WK = 6.0               # ...and the full early release from this far
@@ -168,17 +166,13 @@ SOFT_K = 1.0                # pull of the natural hand shape...
 LIMIT_K = 400.0             # ...versus the push of a finger past its limits
 GN_ITERS = 8
 GN_DAMPING = 0.05
-HAND_SMOOTH_T = 0.07        # the hand's motion is averaged over +-this many seconds
-HAND_GRID_T = 1 / 120       # ...from poses solved on this time grid
+HAND_GRID_T = 1 / 120       # the hand's poses are solved on this time grid (smoothed over pianist "smoothness")
 
 # Anticipation
-ANTIC_T = 0.4               # the hand starts leaning toward a note this long before it
 RELEASE_HOLD_T = 0.25       # ...and stops caring about a released key over this long
-TRAVEL_SHARE = 0.6          # a free finger reaches its next key in this share of the time it has
 ANTIC_HELD = 0.3            # how much a finger still holding a key leans toward its next one
 RELEASE_NEED_T = 0.08       # a released key stops needing to be reachable this soon...
 RELEASE_NEED = 1.0          # ...fading from this much
-NEED_T = 0.15               # a finger must be able to reach its next key from this long before the strike
 VOTE_POWER = 16             # reach limits count for pressed keys and ones about to be struck, not faint ones
 IDLE_W = 0.05               # faint memory of the last keys so an idle hand stays put
 # A hand with nothing to play gets out of the other hand's way and loosely
@@ -603,7 +597,7 @@ class HandAnimator:
     between fixed keyframes:
 
       * every finger's current key (pressing, weight 1), the key it just let
-        go of (fading out) and the key it plays next (fading in over ANTIC_T)
+        go of (fading out) and the key it plays next (fading in over self.antic_t)
         become weighted targets;
       * the wrist position AND its turn are fit to those targets (a weighted
         rigid fit with the forearm's natural turn as a prior), then corrected
@@ -2091,14 +2085,6 @@ class HandAnimator:
         dx = self._short_of_next(t, wx, dx)          # (the smoothing mustn't carry it past them either)
         return wx + dx, wy, psi + self._yaw(wx + dx) - self._yaw(wx)
 
-    def _idle_shift(self, t):
-        """How far (working-frame x, + = away from the other hand) to move the idle hand at t."""
-        d, f = self._idle_shift_parts(t)
-        if f > 0.0:
-            raw = self._hand_at(t)[0]
-            d += f * (self._hand_at(self._next_strike(t))[0] - raw)
-        return d
-
     def _idle_shift_parts(self, t):
         """
         (shift, share): the idle hand's shift at t, and - moved as far as its
@@ -2234,7 +2220,7 @@ class HandAnimator:
         """
         How far (0..1) finger f has travelled from its last key toward the
         next one at time t. It leaves as soon as it is free and gets there
-        early (TRAVEL_SHARE of the time), then hovers, ready to strike.
+        early (self.travel_share of the time), then hovers, ready to strike.
         """
         prep_start, strike_start, _ = self._prep_window(f, i)
         window = strike_start - prep_start
@@ -2279,7 +2265,7 @@ class HandAnimator:
         if nxt is None:
             return idle, busy
         # Head for the next key as soon as this finger is free (but not more
-        # than PREP_MAX_T ahead), arriving raised and ready to strike.
+        # than self.prep_max_t ahead), arriving raised and ready to strike.
         prep_start, strike_start, strike = self._prep_window(f, i)
         if t < prep_start:
             return idle, busy
@@ -3062,10 +3048,6 @@ def joint_radius(kind, z, ppi):
     return max(2, int(round(JOINT_RADIUS_IN[kind] * ppi * depth_scale(z, ppi))))
 
 
-def draw_hand(surf, pose):
-    draw_hands(surf, [pose])
-
-
 # --------------------------------------------------------------------------- #
 # Hands crossing each other
 # --------------------------------------------------------------------------- #
@@ -3203,15 +3185,6 @@ def _crossing_lifts(episodes, t):
         elif t0 - 0.6 > t:
             break
     return out
-
-
-def _crossing_at(episodes, t):
-    """(top hand, 0..1 how far it is raised) at time t."""
-    lifts = _crossing_lifts(episodes, t)
-    if not lifts:
-        return None, 0.0
-    top = max(lifts, key=lifts.get)
-    return top, lifts[top]
 
 
 def _lift_pose(pose, dz):

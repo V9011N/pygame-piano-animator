@@ -133,7 +133,6 @@ class ContextMenu:
         self.bounds = pygame.Rect(bounds)
         self.hover = None
         self.child = None                  # (parent index, ContextMenu) when a submenu is open
-        self.parent_value = None
         self.rect = self._place(pos)
 
     def _place(self, pos, flip_from=None):
@@ -359,7 +358,6 @@ class FingeringEditor(Transport):
         ref = nz[int(0.9 * (len(nz) - 1))] if nz else 1.0
         ref = max(ref, 1.0)
         self.difficulty = [min(1.5, c / ref) for c in raw]
-        self.difficulty_raw = raw
         return self.difficulty
 
     def _snapshot(self, idxs):
@@ -760,6 +758,11 @@ class FingeringEditor(Transport):
 
     # ----- input ------------------------------------------------------------
     def handle_event(self, event):
+        if event.type == pygame.VIDEORESIZE:          # (also under a dialog: the layout must follow the window)
+            self.screen = pygame.display.get_surface() or self.screen
+            self.layout(self.screen.get_size())
+            self.menu = None
+            return True
         if self.dialog:
             if event.type == pygame.QUIT:
                 return False
@@ -776,11 +779,6 @@ class FingeringEditor(Transport):
 
         if event.type == pygame.QUIT:
             return self._guard(lambda: False)
-        if event.type == pygame.VIDEORESIZE:
-            self.screen = pygame.display.get_surface() or self.screen
-            self.layout(self.screen.get_size())
-            self.menu = None
-            return True
         if event.type == pygame.DROPFILE:
             path = event.file
             return self._guard(lambda: self._load_path(path))

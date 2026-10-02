@@ -83,7 +83,7 @@ class Visualizer(Transport):
         self.audio_muted = False
         self._audio_pending = False      # waiting for the recording's start (the song's lead-in)
         self._anchor = None              # (song time, wall time) the clock runs from while playing
-        self.dragging_wave = None        # (mouse x, offset) when the waveform drag began
+        self.dragging_wave = None        # the mouse x while the waveform is dragged (0 is a place too)
         self._wave_cache = (None, None)
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
@@ -185,11 +185,11 @@ class Visualizer(Transport):
                 self.dragging_wave = event.pos[0]
         elif event.type == pygame.MOUSEMOTION and self.dragging_bar:
             self._seek_to_x(event.pos[0])
-        elif event.type == pygame.MOUSEMOTION and self.dragging_wave:
+        elif event.type == pygame.MOUSEMOTION and self.dragging_wave is not None:
             self._drag_wave(event.pos[0])
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_bar = False
-            if self.dragging_wave:
+            if self.dragging_wave is not None:
                 self.dragging_wave = None
                 if not self.paused:
                     self._start_audio()              # carry on from the new alignment
@@ -241,12 +241,12 @@ class Visualizer(Transport):
                 self._start_audio()
 
     def update(self, dt):
-        if self.audio and self.song and not self.paused and not self.dragging_wave:
+        if self.audio and self.song and not self.paused and self.dragging_wave is None:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
             target = t_a + (time.perf_counter() - wall) * self.speed
             dt = max(0.0, (target - self.t) / self.speed)
-        elif self.audio and self.dragging_wave:
+        elif self.audio and self.dragging_wave is not None:
             dt = 0.0                                # held while the recording is moved
         Transport.update(self, dt)
         if self.audio:
@@ -260,15 +260,6 @@ class Visualizer(Transport):
         if self.song and self.song.duration > 0:
             frac = min(1.0, max(0.0, x / self.bar_rect.w))
             self.seek(frac * self.song.duration)
-
-    def open_file(self, path):
-        try:
-            song, hands = run_busy(self.screen, self.fonts, f"Loading {os.path.basename(path)}…",
-                                   lambda: load_with_hands(path))
-        except Exception as exc:
-            print(f"Could not load {path}: {exc}")
-            return
-        self.set_song(song, hands)
 
     def idle(self, budget):
         """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
@@ -420,7 +411,7 @@ class Visualizer(Transport):
         pygame.draw.line(s, PANEL_EDGE, (r.x, r.bottom - 1), (r.right, r.bottom - 1))
         font = self.fonts["small"]
         pos = self.audio_pos()
-        hint = ("drag to line the recording up (Shift: finer),  , .  nudge 10 ms" if self.paused or self.dragging_wave
+        hint = ("drag to line the recording up (Shift: finer),  , .  nudge 10 ms" if self.paused or self.dragging_wave is not None
                 else "")
         label = f"{a.name}   {fmt_time(max(0.0, pos))} / {fmt_time(a.length)}   offset {a.offset:+.2f}s   {hint}"
         blit_shadowed(s, font, label, TEXT, (r.x + 8, r.y + 4))
@@ -772,6 +763,10 @@ class App:
             return None, None
         if isinstance(path_or_song, str):
             self.last_dir = os.path.dirname(os.path.abspath(path_or_song))
+            if not song.notes:
+                if isinstance(self.mode, MainMenu):
+                    self.mode.message = f"{os.path.basename(path_or_song)} has no notes to play"
+                return None, None
         return song, hands
 
     def choose_playback(self, path_or_song, hands=None):

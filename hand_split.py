@@ -73,7 +73,6 @@ TRACK_PRIOR = 200.0      # per note played by the other hand than its track says
 TRACK_PRIOR_SOFT = 1.0   # ... near where that hand couldn't keep up with its track:
 TRACK_FREE_T = 0.5       # within this of a move needing more than
 TOO_FAST_TRACK = 0.5     # 50% over the top speed
-CROWD_T = 0.25           # a hand's last notes count this long for crowding          # a note ending within this after the onset counts as released
 
 
 def _groups(notes):

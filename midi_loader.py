@@ -129,6 +129,9 @@ class MidiSong:
     def __len__(self) -> int:
         return len(self.notes)
 
+    def __bool__(self) -> bool:
+        return True                  # a song without notes is still a song (`if song:` means "loaded")
+
     def notes_between(self, t0: float, t1: float) -> List[Note]:
         """Notes that overlap the time window [t0, t1), in start order."""
         lo = bisect.bisect_left(self._starts, t0 - self._max_duration)
