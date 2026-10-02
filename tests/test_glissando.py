@@ -47,6 +47,11 @@ def test_glissandos_close_together_are_one_episode():
     assert [len(e) for e in glissando.episodes(runs, notes, 1.0)] == [2, 1]
     chord = [Note(40, 1.6, 1.7, 80, 0, RIGHT)]               # something else to play in the break
     assert [len(e) for e in glissando.episodes(runs, notes + chord, 1.0)] == [1, 1, 1]
+    # starting more than 5 keys from where the last one ended: the hand may go back to rest
+    far = run(WHITE[10:22], t0=1.0) + run(WHITE[30:18:-1], t0=1.8)            # 9 white keys away
+    near = run(WHITE[10:22], t0=1.0) + run(WHITE[26:14:-1], t0=1.8)           # 5 away
+    assert [len(e) for e in glissando.episodes(glissando.detect(far, 0.05, 6), far, 1.0)] == [1, 1]
+    assert [len(e) for e in glissando.episodes(glissando.detect(near, 0.05, 6), near, 1.0)] == [2]
 
 
 def test_the_hand_slides_a_glissando_and_its_notes_keep_their_times(screen):
@@ -66,11 +71,11 @@ def test_the_hand_slides_a_glissando_and_its_notes_keep_their_times(screen):
         assert a._gliss_w(t)[0] == 1.0
         p = a.pose(t, kb)
         assert len(p["bones"]) == len(normal["bones"])                 # the same skeleton, so poses blend
-        assert set(p["struct"]["nail_hide"]) == {2, 3, 4, 5}           # only the thumb's nail shows
+        assert set(p["struct"]["nail_hide"]) >= {2, 3, 4, 5}           # only the thumb's nail could show
         tip = min((c[-1] for c in p["struct"]["chains"].values()), key=lambda q: q[2])
         assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 1.5 * kb.white_w
     half = a.pose(g[0].start - 0.05, kb)                               # blending in
-    assert set(half["struct"]["nail_hide"]) == {2, 3, 4, 5}
+    assert set(half["struct"]["nail_hide"]) >= {2, 3, 4, 5}
     assert not a.pose(0.3, kb)["struct"].get("nail_hide")
     # the pianist can be told not to: only marked glissandos are slid then
     p = pianist.active().copy()
@@ -131,6 +136,7 @@ def test_palm_up_toward_the_little_finger_thumb_method_toward_the_thumb(screen):
         n = g[8]
         s = a.pose(n.start + 0.01, kb)["struct"]
         assert s["palm_up"] == palm_up, (hand, palm_up)
+        assert (s["flush"], s["thumb_edge"]) == ((1.0, 0.0) if palm_up else (0.0, 1.0))
         if palm_up:
             continue
         ch = s["chains"]
@@ -148,3 +154,17 @@ def test_palm_up_toward_the_little_finger_thumb_method_toward_the_thumb(screen):
         assert all(ch[f][2][1] > 0.25 * a.ppi for f in range(2, 6))
         front = kb.rect.h - kb.black_h                      # ...but not into the black keys
         assert max(p[1] for f in range(2, 6) for p in ch[f]) < front - 0.3 * a.ppi
+
+
+def test_flush_fingers_touch_outline_to_outline():
+    import skins
+    sk = skins.normalize({}, bone_color=(200, 200, 200))
+    fw, ppi, gap = sk["finger_width"], 30.0, 1.0
+    # fingers 2-5 straight up the screen, spread wide apart
+    chains = {f: [(x, 0.0, 0.0), (x, -10.0, 0.0), (x, -40.0, 0.0), (x, -60.0, 0.0), (x, -75.0, 0.0)]
+              for f, x in zip((2, 3, 4, 5), (0.0, 40.0, 80.0, 120.0))}
+    skins._flush(chains, fw, gap, ppi, 1.0)
+    for a, b in ((2, 3), (3, 4), (4, 5)):
+        want = (skins.FINGER_W_IN[a] + skins.FINGER_W_IN[b]) * fw * ppi / 2 + gap     # at the knuckles
+        assert abs(chains[b][1][0] - chains[a][1][0] - want) < 1e-6
+        assert chains[b][-1][0] > chains[a][-1][0]                                   # still in order

@@ -212,9 +212,12 @@ class _Hand:
         self.chains = {f: [P(p) for p in c] for f, c in struct["chains"].items()}
         self.nail_hide = set(struct.get("nail_hide", ()))     # nails turned away (fingers curled under)
         self.palm_up = bool(struct.get("palm_up", False))       # turned over: we see the palm
+        self.thumb_edge = float(struct.get("thumb_edge", 0.0))  # the thumb's nail out on its outer edge (thumb glissando)
         self.wr, self.wu = (P(p) for p in struct["wrist"])
         self.arm_end = P(struct["arm_end"])
         fw = skin["finger_width"]
+        if struct.get("flush", 0.0) > 0.0:
+            _flush(self.chains, fw, skin["outline"] * 0.035 * ppi, ppi, struct["flush"])
         # segment radii per finger: (thumb: metacarpal, proximal, distal; others: prox, mid, dist)
         self.radius = {}
         for f, c in self.chains.items():
@@ -385,6 +388,8 @@ def _draw_cartoon(pen, h):
                 else:
                     _web_crease(pen, h, _mix(line, c["skin"], 0.35))
         elif kind == "finger":
+            if f == 1 and h.palm_up:
+                h.fill_finger(pen, f, line, lw)      # tucked across the palm: its own outline over it
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
@@ -449,6 +454,35 @@ def _thumb_out(h, p, nx, ny):
 
 
 THUMB_SIDE = (0.28, 0.32)   # the thumb lies on its side: nail half-width / shift outward (x its radius)
+THUMB_EDGE = (0.26, 0.7)    # ...in a thumb glissando, flush with its outer edge: the nail on the keys
+
+
+def _flush(chains, fw, gap, ppi, w):
+    """
+    Fingers 2-5 moved sideways (by share w) so each lies flush against the
+    next, joint by joint: their outlines touch, just the outline's width
+    apart, with no gap between them (the flat hand of a glissando).
+    """
+    fs = [f for f in (2, 3, 4, 5) if f in chains]
+    if len(fs) < 2:
+        return
+    ux = sum(chains[f][-1][0] - chains[f][1][0] for f in fs)
+    uy = sum(chains[f][-1][1] - chains[f][1][1] for f in fs)
+    ux, uy = _unit(ux, uy)
+    nx, ny = -uy, ux
+    for k in range(1, len(chains[fs[0]])):
+        rad = {f: FINGER_W_IN[f] * fw * ppi / 2 * SEG_TAPER[max(0, min(k - 2, 2))] * _depth(chains[f][k][2], ppi)
+               for f in fs}
+        s = {f: chains[f][k][0] * nx + chains[f][k][1] * ny for f in fs}
+        sign = 1.0 if s[fs[-1]] >= s[fs[0]] else -1.0
+        want = {fs[0]: 0.0}
+        for a, b in zip(fs, fs[1:]):
+            want[b] = want[a] + sign * (rad[a] + rad[b] + gap)
+        off = sum(s.values()) / len(fs) - sum(want.values()) / len(fs)
+        for f in fs:
+            d = (want[f] + off - s[f]) * w
+            p = chains[f][k]
+            chains[f][k] = (p[0] + nx * d, p[1] + ny * d, p[2])
 
 
 def _creases(pen, h, f, color):
@@ -510,7 +544,7 @@ def _nail(pen, h, f, fill, edge):
     half_w, shift = 0.5, 0.0
     if f == 1:
         nx, ny = _thumb_out(h, b, nx, ny)
-        half_w, shift = THUMB_SIDE
+        half_w, shift = (a_ + (b_ - a_) * h.thumb_edge for a_, b_ in zip(THUMB_SIDE, THUMB_EDGE))
     # pitch of the phalanx below the horizontal, capped at straight down
     cos = max(0.0, fwd / L)
     sin = max(0.0, drop / L) if fwd > 0 else 1.0

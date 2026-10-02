@@ -621,7 +621,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Marked glissandos: `Note.gliss`, written as "Rg" / "Lg" markers by the editor's export; always slid, even with
     detection off (`glissando.find`).
   - Episodes (`glissando.episodes`): glissandos less than `gliss_merge` apart with no other note of the hand
-    starting in between - the hand stays in the glissando pose through the break (HR10: 15 episodes).
+    starting in between - the hand stays in the glissando pose through the break - unless the next one starts more
+    than `MERGE_MAX_KEYS` 5 keys of its colour from where the last ended (`keys_between`), when the hand may go
+    back to its rest position on the way (HR10: 17 episodes).
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
     finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
   - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
@@ -640,7 +642,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     hand turned so the thumb lies along the keys, tipped down `GLISS_THUMB_PITCH_DEG` 4°, the thumb's nail on
     the contact point - up to `GLISS_THUMB_IN` 2.0 in up a white key (no further than the black keys' front), so
     the fist's knuckles are over the keys, but pulled back so the fist's furthest knuckle stays `GLISS_FIST_CLEAR`
-    0.45 in short of the black keys' front (it collided with them otherwise). Both are one family
+    0.45 in short of the black keys' front (it collided with them otherwise). The thumb's nail is drawn flush with the thumb's
+    outer edge (`struct["thumb_edge"]`, `skins.THUMB_EDGE`) to show it on the keys.
+    Palm up, the skin packs fingers 2-5 flush side by side, joint by joint, one outline width apart
+    (`struct["flush"]`, `skins._flush`, using the skin's finger widths), and the thumb is tucked across the palm
+    below the knuckles (`GLISS_THUMB_TIP`, bending on the palm's side), drawn with its own outline over the palm,
+    its nail hidden. Both are one family
     (u = smoothed (d+1)/2 of `_gliss_contact`'s direction d), so turning round inside an episode morphs from one
     to the other. Palm up, `struct["palm_up"]` is set and the cartoon skin draws the heart, head and life lines
     (`skins._palm_lines`, quadratic curves in palm coordinates between the index/little knuckles and the wrist

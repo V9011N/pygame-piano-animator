@@ -16,7 +16,9 @@ way the run goes.
 
 Glissandos close together (less than "gliss_merge" apart, with no other
 notes of the hand in between) form one episode: the hand stays in the
-glissando pose through the breaks.
+glissando pose through the breaks - unless the next one starts more than
+MERGE_MAX_KEYS keys from where the last ended, when the hand may go back to
+its rest position on the way.
 """
 from __future__ import annotations
 
@@ -26,6 +28,15 @@ MAX_SKIP = 1            # same-colour keys a detected run may skip at a step
 TAIL_SKIP = 3           # a run's loose ends may skip this many keys of its colour...
 TAIL_GAP = 2.0          # ...and come this many times the gap after (or before) it
 EXPLICIT_GAP_T = 0.5    # s, explicitly marked notes further apart than this are separate glissandos
+MERGE_MAX_KEYS = 5      # glissandos starting further than this many keys (of the new one's colour) from where
+                        # the last ended aren't joined: the hand may go back to its rest position between them
+
+
+def keys_between(a, b, black):
+    """How many keys of that colour from pitch a to pitch b (the one at b counted, not a)."""
+    lo, hi = min(a, b), max(a, b)
+    return sum(1 for q in range(lo + 1, hi + 1) if is_black(q) == black) if a <= b else \
+        sum(1 for q in range(lo, hi) if is_black(q) == black)
 
 
 def is_black(p):
@@ -168,7 +179,8 @@ def episodes(runs, notes, merge_t):
     """
     [[runs]]: glissandos less than merge_t apart, with none of the hand's
     other notes starting in between, are one episode (the hand stays in the
-    glissando pose through the break).
+    glissando pose through the break) - unless the next one starts more than
+    MERGE_MAX_KEYS keys (of its colour) from where the last one ended.
     """
     in_run = {id(n) for r in runs for n in r}
     others = sorted(n.start for n in notes if id(n) not in in_run)
@@ -179,7 +191,8 @@ def episodes(runs, notes, merge_t):
             last = out[-1][-1]
             t0, t1 = last[-1].start, r[0].start
             i = bisect.bisect_right(others, t0)
-            if t1 - t0 < merge_t and (i >= len(others) or others[i] >= t1):
+            near = keys_between(last[-1].pitch, r[0].pitch, is_black(r[0].pitch)) <= MERGE_MAX_KEYS
+            if t1 - t0 < merge_t and near and (i >= len(others) or others[i] >= t1):
                 out[-1].append(r)
                 continue
         out.append([r])

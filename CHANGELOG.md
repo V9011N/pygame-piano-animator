@@ -2,6 +2,14 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0250 - Glissando hands refined
+- Thumb glissandos: the thumb's nail is drawn flush with the thumb's outer edge, on the keys.
+- Palm-up glissandos: the fingers lie flush against each other (each finger's outline still
+  shows), and the thumb is tucked across the palm.
+- Glissandos close together no longer keep the hand in its glissando pose when the next one
+  starts more than 5 keys away from where the last ended: the hand may go back to rest between
+  them.
+
 ## v2026.10.02.0238 - Thumb glissando clear of the black keys
 - The fist in a thumb glissando no longer runs into the black keys: the thumb slides a little
   lower on the white keys, so the knuckles stay just in front of the black ones.

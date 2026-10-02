@@ -227,7 +227,7 @@ GLISS_ROLL_DEG = 180.0      # turned over, palm up: the backs of the fingers (th
 GLISS_PITCH_DEG = 8.0       # ...tipped down a little toward the fingertips
 GLISS_SQUEEZE = 0.8         # the knuckles drawn together: the fingers side by side, touching
 GLISS_FINGER_DIR = (0.0, 1.0, -0.12)   # the fingers straight and parallel, a little down toward the tips
-GLISS_THUMB_TIP = (-1.6, 2.6, -0.4)    # the thumb tucked in beside the index finger (from its knuckle, model units)
+GLISS_THUMB_TIP = (1.8, -1.4, -2.6)    # the thumb tucked into the palm, across it below the knuckles (from the index knuckle, model units)
 # Sliding toward the thumb (RH down, LH up) the thumb does it instead: the hand palm down, fingers 2-5
 # curled right in, the thumb straight out along the keys, its nail on them
 GLISS_CURL = (0.0, 1.4, -3.6)          # a curled fingertip, from its knuckle (model units): a fist, the middle joints down on the keys
@@ -327,7 +327,9 @@ def _blend_pose(a, b, w):
                      # nails hidden in either pose stay hidden once the blend is a third of the way there
                      "nail_hide": tuple(sorted(set(sa.get("nail_hide", ())) |
                                                (set(sb.get("nail_hide", ())) if w > 0.33 else set()))),
-                     "palm_up": (sb if w > 0.5 else sa).get("palm_up", False)}
+                     "palm_up": (sb if w > 0.5 else sa).get("palm_up", False),
+                     "flush": _lerp(sa.get("flush", 0.0), sb.get("flush", 0.0), w),
+                     "thumb_edge": _lerp(sa.get("thumb_edge", 0.0), sb.get("thumb_edge", 0.0), w)}
     return out
 
 
@@ -2194,7 +2196,8 @@ class HandAnimator:
                                     FINGER_COUPLING, FINGER_BEND_MAX)
         tucked = _add(mcps[2], GLISS_THUMB_TIP)
         out = _add(cmc, _mul(unit(GLISS_THUMB_DIR), sum(geo.bones[1]) * 0.98))
-        thumb = solve_chain(cmc, _lerp3(out, tucked, u), list(geo.bones[1]), (-0.85, 0.0, 0.5),
+        # (tucked, it bends across the palm, on the palm's side)
+        thumb = solve_chain(cmc, _lerp3(out, tucked, u), list(geo.bones[1]), _lerp3((-0.85, 0.0, 0.5), (-0.6, 0.0, -0.8), u),
                             THUMB_COUPLING, THUMB_BEND_MAX)
         # what touches the keys: the backs of the index and middle fingertips, or the thumb's nail
         apex = _lerp3(thumb[-1], _lerp3(chains[2][-1], chains[3][-1], 0.5), u)
@@ -2264,15 +2267,17 @@ class HandAnimator:
         # palm up, the fingers' nails are on the keys: of the nails only the thumb's shows
         hide = (2, 3, 4, 5)
         palm_up = math.cos(ro) < 0.0                 # turned over past its side: we see the palm
-        struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror,
-                  "nail_hide": hide, "palm_up": palm_up}
+        # palm up the fingers lie flush side by side; with the thumb its nail is on its outer edge
+        if palm_up:
+            hide = (1, 2, 3, 4, 5)                   # the tucked thumb shows its pad, its nail underneath
+        extra = {"nail_hide": hide, "palm_up": palm_up, "flush": g * u, "thumb_edge": g * (1.0 - u)}
+        struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror, **extra}
         if self.mirror:
             fx = lambda p: (2 * self.axis_x - p[0], p[1], p[2])
             bones = [(fx(a), fx(b), k) for a, b, k in bones]
             joints = [(fx(p), k) for p, k in joints]
             struct = {"chains": {f: [fx(p) for p in c] for f, c in out_chains.items()},
-                      "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True, "nail_hide": hide,
-                      "palm_up": palm_up}
+                      "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True, **extra}
         return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi,
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}
