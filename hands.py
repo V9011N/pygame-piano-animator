@@ -221,13 +221,18 @@ RUN_GLIDE_T = 0.25          # s, in a run the wrist is averaged over +-this (the
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
 GLISS_RAMP_T = 0.15         # s, the hand forms the glissando pose this long before / leaves it after
-GLISS_ROLL_DEG = 78.0       # the hand rolls this far about the forearm: its back faces where it's going
-GLISS_PITCH_DEG = 32.0      # ...and tips down so the fingertips (nails) touch the keys
-GLISS_SQUEEZE = 0.72        # the knuckles drawn together (the fingers pinched to a point)
-GLISS_REACH = 0.97          # each finger straight, at this share of its length, toward the point
-GLISS_APEX = (-0.08, 0.92, -0.38)
+GLISS_YAW_DEG = 60.0        # the hand turns so its fingers trail and its back leads the way it slides...
+GLISS_ARM_SHARE = 0.6       # ...the forearm turning with it this far (the wrist bends the rest)
+GLISS_ROLL_DEG = 15.0       # ...and rolls a little, its back tilted toward where it's going
+GLISS_PITCH_DEG = 10.0      # the hand tipped down a little
+GLISS_SQUEEZE = 0.75        # the knuckles drawn together
+# where the fingertips gather (model units, from the middle knuckle: toward the index, forward, down,
+# as shares of the middle finger's length), and each tip's place in the bunch (model units)
+GLISS_POINT = (-0.24, 0.52, -0.45)
+GLISS_THUMB_FWD = (0.4, 1.4, -0.3)    # the thumb's base comes forward under the palm to meet them (opposed)
+GLISS_BUNCH = {1: (-0.7, 0.3, 1.0), 2: (0.0, 0.7, 0.3), 3: (0.7, 0.1, 0.0), 4: (1.4, -0.8, 0.2), 5: (2.1, -2.0, 0.6)}
 GLISS_WHITE_IN = 0.8        # in, the nails slide this far up the white keys (well clear of the black ones)...
-GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front   # direction from the middle knuckle to where the fingertips meet
+GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
 FLAT_DROP = 0.6             # ...which lowers its knuckles by this share, so stretched fingers reach further
 TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
@@ -314,7 +319,10 @@ def _blend_pose(a, b, w):
     sa, sb = a["struct"], b["struct"]
     out["struct"] = {"chains": {f: [L(p, q) for p, q in zip(sa["chains"][f], sb["chains"][f])] for f in sa["chains"]},
                      "wrist": tuple(L(p, q) for p, q in zip(sa["wrist"], sb["wrist"])),
-                     "arm_end": L(sa["arm_end"], sb["arm_end"]), "mirror": sa["mirror"]}
+                     "arm_end": L(sa["arm_end"], sb["arm_end"]), "mirror": sa["mirror"],
+                     # nails hidden in either pose stay hidden once the blend is a third of the way there
+                     "nail_hide": tuple(sorted(set(sa.get("nail_hide", ())) |
+                                               (set(sb.get("nail_hide", ())) if w > 0.33 else set())))}
     return out
 
 
@@ -2160,28 +2168,26 @@ class HandAnimator:
         sq = lambda p: (m3[0] + (p[0] - m3[0]) * GLISS_SQUEEZE, p[1], p[2])
         mcps = {f: sq(geo.mcp[f]) for f in range(2, 6)}
         bases = {f: (geo.mc_base[f][0] * (0.5 + 0.5 * GLISS_SQUEEZE),) + tuple(geo.mc_base[f][1:]) for f in range(2, 6)}
-        cmc = geo.thumb_cmc
-        dx, dy, dz = GLISS_APEX
-        n_ = math.sqrt(dx * dx + dy * dy + dz * dz)
+        cmc = _add(geo.thumb_cmc, GLISS_THUMB_FWD)
         L3 = sum(geo.bones[3])
-        apex = (m3[0] + dx / n_ * L3, m3[1] + dy / n_ * L3, m3[2] + dz / n_ * L3)
-
-        def toward(base, L):
-            v = _sub(apex, base)
-            return _add(base, _mul(v, GLISS_REACH * L / max(1e-6, _norm(v))))
+        point = (m3[0] + GLISS_POINT[0] * L3, m3[1] + GLISS_POINT[1] * L3, m3[2] + GLISS_POINT[2] * L3)
+        apex = point
+        # every fingertip, the thumb's too, gathers at the point (the fingers bend to get there)
         chains = {}
         for f in range(2, 6):
-            tip = toward(mcps[f], sum(geo.bones[f]))
+            tip = _add(point, GLISS_BUNCH[f])
             chains[f] = solve_chain(mcps[f], tip, list(geo.bones[f]), (0.0, 0.0, 1.0),
                                     FINGER_COUPLING, FINGER_BEND_MAX)
-        ttip = toward(cmc, sum(geo.bones[1]))
-        thumb = solve_chain(cmc, ttip, list(geo.bones[1]), (-0.85, 0.0, 0.5), THUMB_COUPLING, THUMB_BEND_MAX)
+        thumb = solve_chain(cmc, _add(point, GLISS_BUNCH[1]), list(geo.bones[1]), (-0.85, 0.0, 0.5),
+                            THUMB_COUPLING, THUMB_BEND_MAX)
 
-        # roll about the forearm (its back toward the slide), tip down, turn with the forearm
+        # turned so the fingers trail and the back of the hand leads, rolled a
+        # little toward the slide, tipped down a little
         zc = WRIST_Z
         ro, ph = math.radians(GLISS_ROLL_DEG) * d, math.radians(GLISS_PITCH_DEG)
         cr, sr, cp, sp = math.cos(ro), math.sin(ro), math.cos(ph), math.sin(ph)
-        psi = self._yaw(cx)
+        turn = math.radians(GLISS_YAW_DEG) * d
+        psi = self._yaw(cx) + turn
 
         def place(p, roll=True):
             x, y, z = p
@@ -2203,7 +2209,7 @@ class HandAnimator:
         wcmc = world(cmc)
         wb = {f: world(bases[f]) for f in range(2, 6)}
         bones, joints = [], []
-        back = rot(0.0, -1.0, -0.45 * math.atan2(cx - self.shoulder_x, self.forearm_len))
+        back = rot(0.0, -1.0, -0.45 * math.atan2(cx - self.shoulder_x, self.forearm_len) + GLISS_ARM_SHARE * turn)
         fl = 12 * self.ppi
         for p in (wr, wu):
             bones.append((p, (p[0] + back[0] * fl, p[1] + back[1] * fl, p[2] + 0.5 * S), "forearm"))
@@ -2229,13 +2235,16 @@ class HandAnimator:
                    (wr[2] + wu[2]) / 2 + 0.5 * S)
         wx = (wr[0] + wu[0]) / 2
         wy = (wr[1] + wu[1]) / 2
-        struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror}
+        # the fingers are curled under onto the keys: of the nails only the thumb's shows
+        hide = (2, 3, 4, 5)
+        struct = {"chains": out_chains, "wrist": (wr, wu), "arm_end": arm_end, "mirror": self.mirror,
+                  "nail_hide": hide}
         if self.mirror:
             fx = lambda p: (2 * self.axis_x - p[0], p[1], p[2])
             bones = [(fx(a), fx(b), k) for a, b, k in bones]
             joints = [(fx(p), k) for p, k in joints]
             struct = {"chains": {f: [fx(p) for p in c] for f, c in out_chains.items()},
-                      "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True}
+                      "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True, "nail_hide": hide}
         return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi,
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}

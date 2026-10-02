@@ -210,6 +210,7 @@ class _Hand:
         self.col = {k: tuple(v) for k, v in skin["colors"][self.style].items()}
         P = project
         self.chains = {f: [P(p) for p in c] for f, c in struct["chains"].items()}
+        self.nail_hide = set(struct.get("nail_hide", ()))     # nails turned away (fingers curled under)
         self.wr, self.wu = (P(p) for p in struct["wrist"])
         self.arm_end = P(struct["arm_end"])
         fw = skin["finger_width"]
@@ -383,7 +384,8 @@ def _draw_cartoon(pen, h):
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
-                _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
+                if f not in h.nail_hide:
+                    _nail(pen, h, f, c["nail"], _mix(line, c["nail"], 0.3))
 
 
 def _web_crease(pen, h, color):

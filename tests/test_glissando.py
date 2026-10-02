@@ -66,9 +66,12 @@ def test_the_hand_slides_a_glissando_and_its_notes_keep_their_times(screen):
         assert a._gliss_w(t)[0] == 1.0
         p = a.pose(t, kb)
         assert len(p["bones"]) == len(normal["bones"])                 # the same skeleton, so poses blend
+        assert set(p["struct"]["nail_hide"]) == {2, 3, 4, 5}           # only the thumb's nail shows
         tip = min((c[-1] for c in p["struct"]["chains"].values()), key=lambda q: q[2])
         assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 1.5 * kb.white_w
-    a.pose(g[0].start - 0.05, kb)                                      # blending in
+    half = a.pose(g[0].start - 0.05, kb)                               # blending in
+    assert set(half["struct"]["nail_hide"]) == {2, 3, 4, 5}
+    assert not a.pose(0.3, kb)["struct"].get("nail_hide")
     # the pianist can be told not to: only marked glissandos are slid then
     p = pianist.active().copy()
     p.behavior["glissando"] = "off"

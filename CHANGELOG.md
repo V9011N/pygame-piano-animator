@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0211 - Glissando pose, like a real hand
+- The glissando hand now looks like a real one: the back of the hand stays up and leads the way
+  it slides, the hand turned so the fingers trail, all the fingertips and the thumb gathered
+  together at one point on the keys.
+- Only the thumb's nail shows in the glissando pose (the fingers are curled under).
+
 ## v2026.10.02.0159 - Glissandos
 - The hands now play glissandos: a quick string of white keys (or black keys) going one way is
   slid with the fingers pinched together and straight, the back of the hand facing the way it

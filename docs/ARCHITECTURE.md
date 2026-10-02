@@ -624,13 +624,18 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     starting in between - the hand stays in the glissando pose through the break (HR10: 15 episodes).
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
     finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
-  - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s): the knuckles
-    drawn together (`GLISS_SQUEEZE`), every finger straight toward one point (`GLISS_APEX`, `GLISS_REACH`) and the
-    thumb with them; rolled `GLISS_ROLL_DEG` 78° about the forearm so the back of the hand faces the way it slides
-    (+x in the working frame: toward the little finger), tipped down `GLISS_PITCH_DEG` 32° so the nails rest on the
-    keys at the contact point - `GLISS_WHITE_IN` 0.8 in up a white key, `GLISS_BLACK_IN` 0.5 in into a black one -
-    which follows the notes (`_gliss_contact`; through a break it travels and turns round, eased). The bones are
-    in the same order as `_finger_pose`'s, so the two blend point by point.
+  - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo
+    of the author's hand: the back of the hand stays up; the hand turns `GLISS_YAW_DEG` 60° so the fingers trail and
+    the back of the hand leads the way it slides (the forearm turns `GLISS_ARM_SHARE` 0.6 of that, the wrist bends
+    the rest), rolls `GLISS_ROLL_DEG` 15° toward the slide and tips down `GLISS_PITCH_DEG` 10°. The knuckles are
+    drawn together (`GLISS_SQUEEZE`) and every fingertip, the thumb's too, gathers at one point in front of and
+    below the knuckles (`GLISS_POINT`, each tip's place in the bunch `GLISS_BUNCH`; the fingers bend to get there,
+    the thumb's base comes forward `GLISS_THUMB_FWD`, opposed, and lies on top). The bunch rests on the keys at the
+    contact point - `GLISS_WHITE_IN` 0.8 in up a white key, `GLISS_BLACK_IN` 0.5 in into a black one - which follows
+    the notes (`_gliss_contact`; through a break it travels and turns round, eased). Only the thumb's nail is drawn
+    (`struct["nail_hide"]` = fingers 2-5, kept once a blend is a third of the way in; `skins._draw_cartoon`). The
+    bones are in the same order as `_finger_pose`'s, so the two blend point by point. (A first version rolled the
+    hand 78° onto its side with straight fingers - not how it's done.)
   - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
     `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
