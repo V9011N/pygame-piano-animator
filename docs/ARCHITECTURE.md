@@ -116,6 +116,20 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
+  - **Track hands** (2026-10-02): every note goes through the split now, not only notes whose track doesn't say.
+    A hand the track gives (by name, or two tracks in different registers) is a preference (`prefer`): leaving it
+    costs `TRACK_PRIOR` 200 per note - in effect fixed - except within `TRACK_FREE_T` 0.5 s of a move that hand
+    would need to make more than `TOO_FAST_TRACK` 50% over the top speed (`_too_fast`, `_track_weights`); there it
+    costs only `TRACK_PRIOR_SOFT` 1, so the free hand takes the notes. Each group also tries the tracks' split
+    exactly (k = -1), so crossings written into the tracks survive. Only hands from fingering markers are fixed.
+    - Why: the ossia cadenza of Rachmaninoff 3 puts both hands' notes of the alternating passage at 57.5-62.6 s in
+      the LH track (chord low, octave two octaves up, every 0.08 s). Moves > 25% over the top speed: 47 -> 8 (the
+      rest are 30-50% over and were there before); notes struck > 40 ms late in the passage 98 -> 5, in the piece
+      146 -> 53. Nothing else in it changes. Op. 25 No. 10 changes one note (44.67 s, where both hands leap at once);
+      Winter Wind, Dante, Ocean, Concerto No. 1: unchanged.
+    - A lower prior (6, 15, 40 per note) also moved notes where long held basses (pedal notes baked into the MIDI)
+      trip the span/load costs - not the free hand's business; a 25% threshold opened windows around mild excesses
+      where the soft split made things worse (109.5 s: 0.2 s late).
 - Merged-Hanon accuracy: 99.8% (the main error is Exercise 40).
 - Op. 10 No. 4: excursions toward the other hand dropped from 13 to 4. The remaining 4 follow the score (broken-octave drops).
 - Diagnostics:
@@ -128,16 +142,29 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `detect(groups, hand, context, vpitch)` returns {id(note): (finger | frozenset of acceptable fingers, weight)}.
 - The planner pays `W["figure"]·weight` for leaving a suggestion, so physical limits and context still win when necessary.
 - Figures:
-  - **Scales** (single-note stepwise runs whose longest one-way stretch is ≥ 6 notes, so 5-finger patterns are left alone):
+  - **Scales** (single-note stepwise runs whose longest one-way stretch is ≥ 6 notes, so 5-finger patterns are left alone;
+    a harmonic minor's augmented second counts as a step between steps going the same way, `_is_step` - not a run
+    of minor thirds):
     - The key comes from `find_key`: keys whose scale contains the run, scored by Krumhansl-Kessler correlation with the notes ±2 s around, plus a tonic bonus at the start/end. Melodic minor is an option.
     - Standard thumb notes per key and hand (`THUMBS`, `MEL_UP/DOWN`), fingered with `scale_fingering`: count scale steps to the thumb; the RH opening counts 2-3-4.
     - A run that stops at its top (RH) or bottom (LH) and leaps ends on the next finger, not the thumb.
+    - A run that carries on a step from a chord just before it in the same hand isn't an opening (no 2-3-4 / LH
+      5 start): the thumb on an octave's top note leads straight into it.
+    - Weight `W_SCALE` 0.75 for short runs (the PIG pianists finger them freely), `W_SCALE_LONG` 3.0 for a run of
+      `SCALE_LONG` 9+ notes one way: a real scale. The learned weights price 4 over the thumb at 9.6 (3 over: 6.4),
+      so at 0.75 a fast two-octave scale drifted into 3-2-1 crossings (Concerto No. 1's closing E major, LH).
+    - `THUMBS` corrected (2026-10-02): B major and B minor LH 4-3-2-1 with the thumb on E and B (was B and F#, a
+      black key); G# melodic minor descending LH thumbs B and E (was F#).
   - **Chromatic**: ≥ 4 semitone steps in one direction. RH 1/3 with 2 on C,F; LH 2 on E,B; RH top C gets 5.
   - **Arpeggios**: close-position runs (thirds/fourths, plus the step 7th→root) over more than 13 semitones, whose pitch classes form a triad or seventh.
     - Root-position triads use Hanon's ARP table (24 keys).
     - Sevenths starting on the root: 1-2-3-4 (LH 1-4-3-2). Dim7/aug take the starting note as root.
     - Otherwise the best cyclic map (`arpeggio_map`: thumb on a white key, widest gap across the crossing).
     - RH top / LH bottom gets 5.
+    - Weight `W_ARP` 5.0 (was 2.5: the planner took 3 over the thumb instead of the book's 4, or turned the pattern
+      round on the way down).
+    - Not detected: open-position arpeggios (fifths, sixths, an octave+ per hand position - Op. 10 No. 1, Op. 25
+      No. 12); they're left to the planner.
   - **Repeated notes**: 3-2-1 (4-3-2-1 for groups of 4).
   - **Trills** (≥ 6 alternations of neighbouring notes): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
   - **Octaves**: in octave passages, 1-5 with 4 on black keys (LH mirrored). A lone octave allows 4 or 5. Broken octaves are handled too.
@@ -148,8 +175,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - **Trills in sixths/fourths**: (1,4)/(2,5).
   - **Other sixths**: 1-5 (4 on black).
 
+- **Textbook benchmark** (2026-10-02; tests/test_figures.py, and a fuller script in the session scratchpad): scales
+  in all 24 keys, both hands, 2-4 octaves, up and down, from the 2nd degree, with timing jitter, against fingerings
+  written out independently (ABRSM / Hanon); root-position arpeggios against the book's table.
+  - Scales: suggestions 88.4% -> 100%, planned 86.5% -> 99.4% (the rest: a run's opening 2-3-4, its turns and ends,
+    where books differ).
+  - Fast (24 notes/s) uneven, after a chord or over a held bass: suggestions 59.7% -> 93.5%, planned 89.3% -> 99.6%.
+  - Arpeggios: planned 85.7% -> 93.6% (the rest: LH 3 or 4 over the thumb; the RH ending on its starting finger).
+  - Melodic minors and dominant / diminished sevenths: covered by suggestions, no same finger on neighbours.
+  - Real pieces: Winter Wind and the demo unchanged; Dante 24 notes, Ocean 36, Concerto No. 1 208 (its scales).
+
 ## Fingering planner (fingering.py)
 - Right-hand frame (LH mirrored about D4). A beam search (32 candidates) over chords, keeping full history.
+- `group_notes`: onsets within `CHORD_TOL` 30 ms form a chord - except a note a step (1-2 semitones) from a lone
+  note struck `RUN_SPLIT_T` 8+ ms before it, which is the next note of a fast run (24 notes/s played unevenly put
+  neighbours closer than 30 ms, and the "chord" broke the scale). The animator's groups come from here too.
+- Not re-measured on PIG / Hanon for the 2026-10-02 figure changes (the data isn't in the cloud sessions): run
+  `pig_eval.py` locally. The textbook benchmark above covers Hanon 39 and 41's figures.
 - Costs (`W`):
   - Stretch/cramp.
   - `chord_stretch_adj` 1.2: neighbouring long fingers held more than 1.2 keys apart (thirds want 1-3/2-4/3-5).

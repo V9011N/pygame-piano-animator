@@ -685,24 +685,33 @@ def load_midi(path: str, include_drums: bool = False, split_pitch: int = MIDDLE_
 
     notes: List[Note] = []
     tracks: List[TrackInfo] = []
+    marked = set()                             # (start, pitch) of notes whose hand a marker gives
     for i, inst in instruments:
         for n in inst.notes:
             mark_hand, finger = marks.get((round(float(n.start), 4), n.pitch), (None, None))
+            if mark_hand:
+                marked.add((float(n.start), _fit_to_piano(int(n.pitch))))
             notes.append(Note(int(n.pitch), float(n.start), float(n.end), int(n.velocity), i,
                               mark_hand or track_hand.get(i), finger))
         tracks.append(TrackInfo(i, inst.name or f"Track {i}", inst.program, len(inst.notes), track_hand.get(i)))
     notes, r = sanitize_notes(notes, min_duration)
     report += r
 
-    # Notes whose track doesn't say which hand: work it out from the music.
-    loose = [n for n in notes if n.hand is None]
+    # Work out each note's hand from the music. A hand the track says (by
+    # its name or register) is followed unless that hand couldn't keep up
+    # (one track holding both hands' notes in a passage); only the hands
+    # stored with the notes (fingering markers) are taken as they are.
+    loose = [n for n in notes if (n.start, n.pitch) not in marked]
     if loose:
         try:
             from hand_split import split_hands
-            hands = split_hands(loose)
+            hands = split_hands(loose, prefer={id(n): n.hand for n in loose if n.hand})
         except ImportError:
-            hands = {id(n): (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
-        notes = [n if n.hand else replace(n, hand=hands[id(n)]) for n in notes]
+            hands = {id(n): n.hand or (LEFT if n.pitch < split_pitch else RIGHT) for n in loose}
+        moved = sum(1 for n in loose if n.hand and hands[id(n)] != n.hand)
+        if moved:
+            report.append("gave %d note(s) to the other hand than their track's, which couldn't keep up" % moved)
+        notes = [replace(n, hand=hands[id(n)]) if id(n) in hands else n for n in notes]
 
     try:
         bar_times = [float(t) for t in pm.get_downbeats()]

@@ -2,6 +2,20 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0049 - Free hand takes over, textbook scales and arpeggios
+- When a file's tracks give one hand more than it can reach at its top speed, while the other
+  hand is free, the free hand now takes those notes (the alternating passage at 0:57 of the
+  Rachmaninoff 3 ossia cadenza, written all in one track). Everywhere else the tracks' hands are
+  kept exactly, hand crossings included.
+- Long scales and arpeggios keep their standard fingering: a two-octave scale no longer drifts
+  into 3-2-1 crossings (the left hand of Chopin's Concerto No. 1 ending), and arpeggios no longer
+  swap patterns on the way down.
+- Fixed: B major and B minor scales put the left thumb on F#; the standard 4-3-2-1 (thumb on E
+  and B) is used now.
+- Harmonic minor scales are recognised across their augmented second, very fast and uneven
+  runs are no longer mistaken for chords, and a run that starts from a chord in the same hand
+  carries on from it.
+
 ## v2026.10.02.0013 - Equal keys
 - New "Keys" button on the main menu switches between the realistic keyboard and equal keys,
   after PASHKULI's design: every key's back, black or white, has the same width, so every

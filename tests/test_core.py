@@ -537,3 +537,30 @@ def test_hand_split_with_voice_tracks_and_repeated_chords():
         ns += [Note(p, t, t + 0.18, 80, 1, None) for p in (48, 55)]
     split = hand_split.split_hands(ns)
     assert all(split[id(n)] == (RIGHT if n.pitch > 60 else LEFT) for n in ns)
+
+
+def test_track_hands_give_way_only_where_a_hand_cant_keep_up():
+    import hand_split
+    # the ossia cadenza of Rachmaninoff 3 (0:57): one track holds both hands'
+    # notes - a chord low and an octave high, alternating every 0.08 s
+    ns, prefer = [], {}
+    for k in range(16):
+        t = k * 0.082
+        ps = (48, 52, 55) if k % 2 == 0 else (84, 96)
+        for p in ps:
+            n = Note(p - (k // 2) % 3, t, t + 0.07, 80, 1, LEFT)
+            ns.append(n)
+            prefer[id(n)] = LEFT
+    split = hand_split.split_hands(ns, prefer=prefer)
+    high = [n for n in ns if n.pitch > 70]
+    assert sum(split[id(n)] == RIGHT for n in high) >= len(high) - 2      # the free hand takes them
+    # where the tracks are playable they are followed exactly - crossings included
+    ns, prefer = [], {}
+    for k in range(8):
+        t = k * 0.25
+        r = Note(60 + k % 3, t, t + 0.2, 80, 0, RIGHT)
+        lft = Note(64 + k % 3, t + 0.12, t + 0.2, 80, 1, LEFT)          # the left hand crossed above
+        ns += [r, lft]
+        prefer[id(r)], prefer[id(lft)] = RIGHT, LEFT
+    split = hand_split.split_hands(ns, prefer=prefer)
+    assert all(split[id(n)] == prefer[id(n)] for n in ns)
