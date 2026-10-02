@@ -238,6 +238,7 @@ GLISS_BLACK_IN = 0.5        # ...and this far in from the black keys' front
 GLISS_TRAVEL_ACC = 40.0     # m/s^2, to and from a glissando the hand speeds up (and slows down) this fast...
 GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
 GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
+GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
 GLISS_FIST_CLEAR = 0.45     # in, ...but the knuckles' centres this far short of the black keys' front (finger radius + a gap)
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
@@ -2394,7 +2395,10 @@ class HandAnimator:
         wcmc = world(cmc)
         wb = {f: world(bases[f]) for f in range(2, 6)}
         bones, joints = [], []
-        back = rot(0.0, -1.0, -0.45 * math.atan2(cx - self.shoulder_x, self.forearm_len) + GLISS_ARM_SHARE * turn)
+        # with the thumb, the forearm leans the way the hand slides, as if pushing the thumb along the keys
+        push = math.radians(GLISS_THUMB_ARM_DEG) * (1.0 - u)
+        natural = -0.45 * math.atan2(cx - self.shoulder_x, self.forearm_len) * u      # (the lean is from straight up)
+        back = rot(0.0, -1.0, natural + GLISS_ARM_SHARE * turn + push)
         fl = 12 * self.ppi
         for p in (wr, wu):
             bones.append((p, (p[0] + back[0] * fl, p[1] + back[1] * fl, p[2] + 0.5 * S), "forearm"))

@@ -655,7 +655,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     the contact point - up to `GLISS_THUMB_IN` 2.0 in up a white key (no further than the black keys' front), so
     the fist's knuckles are over the keys, but pulled back so the fist's furthest knuckle stays `GLISS_FIST_CLEAR`
     0.45 in short of the black keys' front (it collided with them otherwise). The thumb's nail is drawn flush with the thumb's
-    outer edge (`struct["thumb_edge"]`, `skins.THUMB_EDGE`) to show it on the keys.
+    outer edge (`struct["thumb_edge"]`, `skins.THUMB_EDGE`) to show it on the keys. The forearm
+    leans `GLISS_THUMB_ARM_DEG` 18° from straight up the keys toward the way the hand slides (the elbow trailing,
+    as if pushing the thumb along; replacing the shoulder's natural lean, which put the right arm the other way
+    at the low end).
     Palm up, the skin packs fingers 2-5 flush side by side, joint by joint, one outline width apart
     (`struct["flush"]`, `skins._flush`, using the skin's finger widths), and the thumb is tucked across the palm
     below the knuckles (`GLISS_THUMB_TIP`, bending on the palm's side), drawn with its own outline over the palm;

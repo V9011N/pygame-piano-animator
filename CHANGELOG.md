@@ -2,6 +2,10 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0316 - Thumb glissando arm lean
+- In a thumb glissando the forearm leans toward the way the hand slides, elbow trailing, as if
+  pushing the thumb along the keys.
+
 ## v2026.10.02.0309 - Glissando travel at top speed, thumb nail sliver
 - Fixed: going to or from a glissando the hand could jump across the keyboard (up to 2.5 times
   its top speed, e.g. Liszt's Hungarian Rhapsody No. 10 at 4:23). It now travels there at no more
