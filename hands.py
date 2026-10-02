@@ -2006,7 +2006,7 @@ class HandAnimator:
         p._ensure_layout(self.kb)
         g, span = IDLE_GRID_T, IDLE_SMOOTH_T
         k0, k1 = math.ceil((t - span) / g), math.floor((t + span) / g)
-        sd = sw = 0.0
+        sd = sf = sw = 0.0
         for k in range(k0, k1 + 1):
             w = 1.0 - abs(k * g - t) / span
             if w > 0:
@@ -2014,9 +2014,15 @@ class HandAnimator:
                 if d is None:
                     if len(self._idle_cache) > 4000:
                         self._idle_cache.clear()
-                    d = self._idle_cache[k] = self._idle_shift(k * g)
-                sd, sw = sd + w * d, sw + w
+                    d = self._idle_cache[k] = self._idle_shift_parts(k * g)
+                sd, sf, sw = sd + w * d[0], sf + w * d[1], sw + w
         dx = sd / sw if sw else 0.0
+        f = sf / sw if sw else 0.0
+        if f > 0.0:
+            # drawn to its next notes: smoothed as a share of the way there from where it is now
+            nxt = self._next_strike(t)
+            if nxt < math.inf:
+                dx += f * (self._hand_at(nxt)[0] - wx)
         if abs(dx) < 1e-6:
             return wx, wy, psi
         dx = self._short_of_next(t, wx, dx)          # (the smoothing mustn't carry it past them either)
@@ -2024,14 +2030,27 @@ class HandAnimator:
 
     def _idle_shift(self, t):
         """How far (working-frame x, + = away from the other hand) to move the idle hand at t."""
+        d, f = self._idle_shift_parts(t)
+        if f > 0.0:
+            raw = self._hand_at(t)[0]
+            d += f * (self._hand_at(self._next_strike(t))[0] - raw)
+        return d
+
+    def _idle_shift_parts(self, t):
+        """
+        (shift, share): the idle hand's shift at t, and - moved as far as its
+        next notes - the share (0..1) of the way to them, which _placed_at
+        smooths as a share (the shift is then only a push beyond them).
+        """
         p = self.partner
         p_idle = p.idle_at(t)
         mine, theirs = self._first_t(), p._first_t()
         if t < theirs < mine:
             p_idle = 0.0          # the other hand plays first: from the very start, keep to this side of it
         w = self.idle_at(t) * (1.0 - p_idle)
-        if w <= 0.0:
-            return 0.0
+        rise = self._idle_rise(t)
+        if rise <= 0.0:
+            return 0.0, 0.0
         raw = self._hand_at(t)[0]
         span = self.geo.span_units() * self.S
         i1 = math.floor(t / IDLE_TICK_T)
@@ -2043,20 +2062,40 @@ class HandAnimator:
         if target > raw:                             # stay on the keyboard
             edge = max(self._mx(self.kb.rect.left), self._mx(self.kb.rect.right)) - IDLE_EDGE_IN * self.ppi
             target = min(target, max(raw, edge))
-        # pulled toward the other hand, never past the notes it plays next
-        return self._short_of_next(t, raw, w * (target - raw))
+        # Moved as far as the notes it plays next (either way), the hand stays
+        # there until it plays them - that part doesn't fade with the other
+        # hand's rests or ahead of the notes, or the hand would slide back
+        # across them and on again. Beyond them it may only be pushed out of
+        # the other hand's way (that part fades as usual), never pulled.
+        nxt = self._next_strike(t)
+        if nxt < math.inf and abs(target - raw) > 1e-6:
+            xn = self._hand_at(nxt)[0]
+            if raw < xn <= target:
+                return w * (target - xn), rise
+            if target <= xn < raw:
+                return 0.0, rise
+        if w <= 0.0:
+            return 0.0, 0.0
+        return self._short_of_next(t, raw, w * (target - raw)), 0.0
+
+    def _idle_rise(self, t):
+        """How far into its rest the hand is at t: idle_weight without the ramp down before the next note."""
+        i = bisect.bisect_right(self.span_starts, t) - 1
+        if i >= 0 and t < self.spans[i][1]:
+            return 0.0
+        last = self.spans[i][1] if i >= 0 else -math.inf
+        return _smooth((t - last - IDLE_AFTER_T) / IDLE_RAMP_T)
 
     def _short_of_next(self, t, raw, dx):
         """
-        Shift dx of the hand at raw, cut short where it pulls the hand toward
-        the other one past where it plays next (it would overshoot and jerk
-        back). Getting out of the other hand's way (dx > 0) isn't cut.
+        Shift dx of the hand at raw, as a pull toward the other hand (dx < 0):
+        it may only bring the hand toward where it plays next, never past it -
+        so a hand resting where it plays next stays put (it would drift off and
+        jerk back). Getting out of the other hand's way (dx > 0) isn't cut.
         """
         nxt = self._next_strike(t)
         if dx < 0 and nxt < math.inf:
-            xn = self._hand_at(nxt)[0]
-            if dx * (xn - raw) > 0 and abs(dx) > abs(xn - raw):
-                return xn - raw
+            return max(dx, min(0.0, self._hand_at(nxt)[0] - raw))
         return dx
 
     def _first_t(self):

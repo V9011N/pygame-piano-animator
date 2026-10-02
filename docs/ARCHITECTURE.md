@@ -382,11 +382,17 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Before a hand's first note, when the other hand plays first, the other hand counts as playing from t = 0
     (`_first_t`): the waiting hand is kept on its own side from the start (Dante Sonata's RH used to sit at its first
     notes, below the LH's, crossed until the LH began and then jump aside).
-  - The pull toward the other hand (the 1.5-span follow) never takes the hand past where it plays next
-    (`_short_of_next`, on each shift and again after the ±0.25 s averaging): Op. 25 No. 6 at 16.0-16.8 s, the RH
-    resting between thirds runs was drawn to its next chord, then overshot it by ~1.5 in as it set off for it and
-    jerked back. Getting out of the way (a push away from the other hand) is not limited. Idle-hand reversals
-    (> 3 in/s, idle > 0.1) Op. 25 No. 6 R 15 → 11, L 2 → 1; Dante R 4 → 3, L 2 → 0, crossed 5 → 0 samples.
+  - Never across the notes it plays next (`_idle_shift_parts`, `_short_of_next`): the pull toward the other hand (the
+    1.5-span follow) may only bring the hand toward where it plays next - a hand resting where it plays next stays
+    put (Op. 25 No. 6 at 0:25 the RH, resting high up, was drawn ~8 in down and back) - and never past it (16.0-16.8 s
+    it overshot its next chord by ~1.5 in and jerked back). Moved as far as its next notes, either way, the hand
+    stays there until it plays them: that part is a share of the way there (smoothed as a share in `_placed_at`, so
+    the average of shifts taken from different places can't wobble it), weighted by how far into its rest the hand
+    is (`_idle_rise`) - not by the other hand's rests, nor faded ahead of the notes. Beyond its next notes it may
+    only be pushed out of the other hand's way (that part fades as usual). Before, when both hands rested at once,
+    the push faded and the hand fell back past its next chord - crossing the other hand at Op. 25 No. 6 164.9 s.
+    Idle-hand reversals (> 3 in/s, idle > 0.1) Op. 25 No. 6 R 15 → 3, L 2 → 2; Dante R 4 → 3, L 2 → 0; crossed
+    samples Op. 25 No. 6 1 → 0, Dante 5 → 0.
   - `crossing_episodes` treats a hand with idle weight above 0.5 as out of the way, so a leap by the playing hand past
     the idle one is no longer an episode; a hand playing on the other side still is.
   - Cost: a cold seek into a long idle stretch ~60 ms (memory capped at 8 s, the time to drift across the keyboard);

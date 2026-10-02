@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0551 - Resting hands stay by their next notes
+- A resting hand is no longer drawn toward the other hand when it plays next where it is (Chopin's
+  Op. 25 No. 6 at 0:25: the right hand stays up high between its passages).
+- A resting hand moved to the notes it plays next stays there until it plays them, instead of
+  sliding back across them (and, in Op. 25 No. 6 near the end, across the other hand).
+
 ## v2026.10.02.0534 - Hands start uncrossed, no overshoot when resting
 - The hands no longer start a piece crossed: a hand that comes in later waits on its own side of
   the one that plays first (the beginning of the Dante Sonata).

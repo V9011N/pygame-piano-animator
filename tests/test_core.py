@@ -684,3 +684,19 @@ def test_the_idle_pull_stops_at_the_next_notes(screen):
     xn = r._hand_at(4.0)[0]
     xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
     assert min(xs) > xn - 0.3 * kb.white_w, (min(xs), xn)
+
+
+def test_a_hand_resting_where_it_plays_next_stays_put(screen):
+    # Op. 25 No. 6 at 0:25: the right hand rests high up between two passages
+    # there, while the left plays far below; it isn't drawn down and back
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(p, 0.3 * i, 0.3 * i + 0.25, 70, 1, LEFT) for i in range(30) for p in (44, 51)]
+    ns += [Note(p, 1.0, 1.4, 80, 0, RIGHT) for p in (94, 97)] + [Note(p, 4.0, 4.4, 80, 0, RIGHT) for p in (95, 98)]
+    s = song_of(ns, 9.0)
+    an = {h: hands.HandAnimator(s, h) for h in (RIGHT, LEFT)}
+    hands.pair_hands(an.values())
+    r = an[RIGHT]
+    r._ensure_layout(kb)
+    xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
+    assert min(xs) > r._limited_at(1.45)[0] - 0.3 * kb.white_w, (min(xs), max(xs))   # never drawn down
