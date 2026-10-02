@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0518 - Steady tremolos
+- Tremolos and trills are now recognised as a figure: the hand plays them from one place, the
+  wrist still and each finger staying over its key, instead of swinging toward every note (the
+  left hand's twitching fingers at the start of the Dante Sonata, Hanon 60).
+- When a tremolo moves to a new position the hand moves with it.
+
 ## v2026.10.02.0455 - Knuckle lines, short thumbs curve
 - The cartoon hand shows the knuckles where the fingers meet the hand: a short line across each
   finger and the thumb.

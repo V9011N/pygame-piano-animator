@@ -595,6 +595,25 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     chromatic RH 26 → 2 / 96 → 9 / 81 → 23 / 228 → 0. Concerto No. 1, 690-713 s: reversals R 85 → 49, L 96 → 38;
     pressed tips > 0.1 key off R 86 → 69, L 55 → 52. Arpeggios, Winter Wind (20-30 s) and Ocean: identical.
     Frame cost unchanged (5.7 → 5.8 ms for both hands).
+- **Tremolos: the hand holds still** (2026-10-02; Dante Sonata's opening LH tremolo Eb-A-Eb, 5-3-1, 11.4-16.9 s;
+  Hanon 60): the solved hand followed each strike - the wrist swung ~1.4 in toward every note, 6 times a second, and
+  the idle fingers, keeping their places, flicked ~1 in against it (LH wrist path 24.6 in in 5.3 s, each finger
+  ~28 in more relative to the wrist).
+  - `_find_tremolos` (tremolos and trills, by strike groups): `TREM_MIN_NOTES` 6+ strikes at most `TREM_GAP_T` 0.3 s
+    apart, repeating with one period p of 2-`TREM_PERIOD` 4 strikes - every key or chord is struck again p strikes
+    later or was p before (so a note that moves on, the middle note going up a semitone, keeps it going), at least
+    two different ones. A plain repeated note (p = 1), a scale, an arpeggio, Winter Wind's alternating line and
+    Ocean's figures don't qualify. Pieces split by a stray chord (two notes landing together) within a period are
+    joined; a tremolo whose lowest or highest key jumps by more than `TREM_JUMP` 4 semitones (Hanon 60 moving to a new
+    position) starts again there, so the hold never straddles a move.
+  - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
+    inside it (`_trem_w`, so the hand is free by the next figure).
+  - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's
+    last / next `TREM_PERIOD` strikes, the nearer when they differ) counts as on its key throughout, so the fit
+    doesn't pull the hand toward whichever finger is down at the moment.
+  - Results: Dante LH 11.5-16.8 s wrist path 24.6 → 7.5 in, fingers' lateral path relative to the wrist ~28 → ~11 in;
+    pressed tips > 0.3 key off in the tremolos of Dante, Hanon 60 and Winter Wind: 0 → 0 (max 0.3). Scales,
+    arpeggios, Concerto No. 1, Winter Wind 20-30 s and Ocean: identical.
 - **A real hand's spread** (2026-10-02; from a photo of the author's hand stretched over the keys):
   - The span (`HandGeometry.span_units`, which sets `INCHES_PER_UNIT`) was measured with the thumb 50° and the
     little finger 22° out, so the hand was 27% bigger than its span says and never looked stretched. Now thumb 72°,

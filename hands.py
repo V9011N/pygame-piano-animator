@@ -218,6 +218,11 @@ RUN_MIN_NOTES = 7           # single notes moving by step, at least this many in
 RUN_GAP_T = 0.3             # s, ...none further apart than this
 RUN_RAMP_T = 0.15           # s, the run's hold on the hand eases in and out over this
 RUN_GLIDE_T = 0.25          # s, in a run the wrist is averaged over +-this (the crossings' steps even out)
+TREM_MIN_NOTES = 6          # tremolos (and trills): at least this many strikes, each a repeat of one a few
+TREM_PERIOD = 4             # strikes back (up to this many) - the same key or chord again...
+TREM_GAP_T = 0.3            # s, ...none further apart than this
+TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key jumps further starts again there
+TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
 GLISS_RAMP_T = 0.15         # s, the hand forms the glissando pose this long before / leaves it after
@@ -680,6 +685,9 @@ class HandAnimator:
         self._gliss_starts = [ep[0][0].start for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
+        self.trems = self._find_tremolos()
+        self._group_ts = [t for t, _ in self.groups]
+        self.trem_starts = [a for a, _ in self.trems]
         self._layout_sig = None
 
     # ----- scale runs ------------------------------------------------------------
@@ -710,6 +718,98 @@ class HandAnimator:
             cur.append((t, n.pitch, min(n.end, t + RUN_GAP_T)))
         close()
         return runs
+
+    def _find_tremolos(self):
+        """
+        [(start, end)] of this hand's tremolos and trills: TREM_MIN_NOTES or
+        more strikes in a row, at most TREM_GAP_T apart, repeating with one
+        period p (2 to TREM_PERIOD strikes): every key or chord is struck
+        again p strikes later or was p strikes before (so a key that moves
+        on, the tremolo's middle note going up a semitone, keeps it going),
+        at least two different ones. Played from one place: the wrist holds
+        still and each finger stays over its key.
+        """
+        groups = self.groups
+        n = len(groups)
+        sets = [frozenset(m.pitch for m in ns) for _, ns in groups]
+        spans = []
+        for p in range(2, TREM_PERIOD + 1):
+            ok = [(i >= p and sets[i] == sets[i - p]) or (i + p < n and sets[i] == sets[i + p]) for i in range(n)]
+            lo = None
+            for i in range(n + 1):
+                if i < n and ok[i] and (lo is None or groups[i][0] - groups[i - 1][0] <= TREM_GAP_T):
+                    if lo is None:
+                        lo = i
+                    continue
+                if lo is not None and i - lo >= TREM_MIN_NOTES and len(set(sets[lo:i])) >= 2:
+                    spans.append((lo, i - 1))
+                lo = i if i < n and ok[i] else None
+        merged = []
+        for lo, hi in sorted(spans):
+            if merged and groups[lo][0] - groups[merged[-1][1]][0] <= TREM_GAP_T and lo <= merged[-1][1] + TREM_PERIOD:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], hi))     # pieces of one tremolo (a stray chord between)
+            else:
+                merged.append((lo, hi))
+        # where the tremolo jumps to a new place (its lowest or highest key moves
+        # by more than TREM_JUMP semitones) it is a new tremolo: the hand moves there
+        pieces = []
+        for lo, hi in merged:
+            def rng(i):
+                ps = [p for s_ in sets[max(start, i - TREM_PERIOD + 1):i + 1] for p in s_]
+                return min(ps), max(ps)
+            start = lo
+            for i in range(lo + TREM_PERIOD, hi + 1):          # (once a whole cycle is in)
+                if i - start < TREM_PERIOD:
+                    continue
+                (a0, b0), (a1, b1) = rng(i - 1), rng(i)
+                if abs(a1 - a0) > TREM_JUMP or abs(b1 - b0) > TREM_JUMP:
+                    pieces.append((start, i - 1))
+                    start = i
+            pieces.append((start, hi))
+        out = []
+        for lo, hi in pieces:
+            if hi - lo + 1 < TREM_MIN_NOTES or len(set(sets[lo:hi + 1])) < 2:
+                continue
+            t1, ns = groups[hi]
+            out.append((groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T)))
+        return out
+
+    def _trem_span(self, t):
+        """The tremolo (start, end) covering t, or None."""
+        i = bisect.bisect_right(self.trem_starts, t) - 1
+        if i >= 0 and t < self.trems[i][1]:
+            return self.trems[i]
+        return None
+
+    def _trem_w(self, t):
+        """(0..1 how much t is inside a tremolo, eased in and out over RUN_RAMP_T; that tremolo or None)."""
+        r = self._trem_span(t)
+        if r is None:
+            return 0.0, None
+        a, b = r
+        # eased in and out inside the tremolo: the hand is free again by its end
+        ramp = min(RUN_RAMP_T, (b - a) / 3)
+        return _smooth(min((t - a) / ramp, (b - t) / ramp, 1.0)), r
+
+    def _trem_note(self, f, t, r):
+        """
+        Finger f's key in tremolo r at t: the one it played last, or its next
+        - whichever is nearer in time when they differ (a finger the tremolo
+        moves on to a new key goes with it).
+        """
+        a, b = r
+        # only a key from the current cycle: within the hand's last (next) TREM_PERIOD strikes
+        gts = self._group_ts
+        g = bisect.bisect_right(gts, t)
+        a = max(a, gts[max(0, g - TREM_PERIOD)] if gts else a)
+        b = min(b, gts[min(len(gts) - 1, g + TREM_PERIOD - 1)] if gts else b)
+        starts = self.finger_starts[f]
+        i = bisect.bisect_right(starts, t) - 1
+        last = self.by_finger[f][i] if i >= 0 and starts[i] >= a - 1e-6 else None
+        nxt = self.by_finger[f][i + 1] if i + 1 < len(starts) and starts[i + 1] <= b + 1e-6 else None
+        if last is None or nxt is None or last.pitch == nxt.pitch:
+            return last or nxt
+        return last if t - starts[i] <= starts[i + 1] - t else nxt
 
     def _run_span(self, t):
         """The run (start, end) whose eased reach covers t, or None."""
@@ -1161,8 +1261,14 @@ class HandAnimator:
         """
         cons = []
         comp, low = self._run_w(t), self._low(t)
+        tw, tr = self._trem_w(t)
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
+            if tw > 0.0:
+                # in a tremolo every finger playing in it counts as on its key throughout
+                m = self._trem_note(f, t, tr)
+                if m is not None and (n is None or (n.pitch == m.pitch and w < tw)):
+                    w, n = tw if n is None else max(w, tw), m      # (a finger moving to a new key keeps to it)
             if n is None or not self._has_key(self._pk(n)):
                 continue
             kx, ky = self.key_target(self._pk(n), f, n)
@@ -1860,6 +1966,12 @@ class HandAnimator:
             a, b = self._run_span(t)
             glide = self._hand_avg(t, RUN_GLIDE_T, a - RUN_RAMP_T, b + RUN_RAMP_T)
             q = tuple(_lerp(x, y, w) for x, y in zip(q, glide))
+        w, r = self._trem_w(t)
+        if r is not None:
+            # a tremolo: the wrist holds still, averaged over the tremolo's own notes
+            a, b = r
+            hold = self._hand_avg(t, TREM_HOLD_T, a, b)
+            q = tuple(_lerp(x, y, w) for x, y in zip(q, hold))
         return q
 
     def _hand_avg(self, t, span, lo=-math.inf, hi=math.inf):

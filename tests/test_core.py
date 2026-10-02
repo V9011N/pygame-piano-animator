@@ -634,3 +634,22 @@ def test_a_short_thumb_still_rests_in_a_curve():
         geo = HandGeometry(anatomy)
         th = static_skeleton(geo, "natural")["struct"]["chains"][1]
         assert math.dist(th[0], th[-1]) <= NATURAL_THUMB_REACH * sum(geo.bones[1]) + 1e-6, change
+
+
+def test_a_tremolo_is_played_from_one_place(screen):
+    # Dante Sonata's opening tremolo: Eb-A-Eb (5-3-1) over and over, the left hand
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ps = [27, 33, 39] * 10
+    notes = [Note(p, 1.0 + 0.08 * i, 1.0 + 0.08 * i + 0.07, 80, 1, LEFT) for i, p in enumerate(ps)]
+    tracks = [TrackInfo(0, "Right", 0, 1, RIGHT), TrackInfo(1, "Left", 0, 1, LEFT)]
+    a = hands.HandAnimator(MidiSong(notes, tracks, 5.0, [], []), LEFT)
+    assert len(a.trems) == 1 and a.trems[0][0] == notes[0].start
+    a._ensure_layout(kb)
+    xs = [a._pose_wrist(a.pose(1.4 + 0.01 * i, kb))[0] for i in range(150)]
+    assert (max(xs) - min(xs)) / a.ppi < 0.25, (max(xs) - min(xs)) / a.ppi      # the wrist holds still
+    # and the figures that aren't tremolos aren't: a scale, an arpeggio, a repeated note
+    for ps in (list(range(48, 72)), [48, 52, 55, 60, 64, 67, 72, 67, 64, 60, 55, 52, 48], [60] * 12):
+        ns = [Note(p, 1.0 + 0.08 * i, 1.07 + 0.08 * i, 80, 0, RIGHT) for i, p in enumerate(ps)]
+        b = hands.HandAnimator(MidiSong(ns, tracks, 5.0, [], []), RIGHT)
+        assert b.trems == [], ps
