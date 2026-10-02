@@ -632,10 +632,18 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     the same worked backwards from where the next episode's blend begins. When the way back from one episode
     ends after the way into the next begins, `_gliss_across` moves the whole (blended) pose straight from one to
     the other over the gap (smootherstep, or a speed-capped trapezoid when that would be too fast).
+    The chase has deadlines: back on the finger pose `KEY_FIX_T` before the hand's next fingered strike, and
+    leaving it only once its last key before the glissando is let go (`_next_strike`, `_last_release`). When
+    the chase can't make it (the follower lagged 2.5-6.7 in off the chords at HR10 267.25-271.5 s, "the hand
+    misses its chords"), `_gliss_rush` moves the whole blended pose instead over all the time there is
+    (`_gliss_rush_window`: from the glissando's end to `GLISS_ARRIVE_T` 0.03 s before the strike, or from the
+    last release to the glissando's start), speed-capped where possible (`_travel_u`); when even that window is
+    shorter than the blend, the plain blend is left alone. Straight across (`_gliss_across`) is only for gaps
+    with nothing to play.
     `_gliss_w` also takes the stronger of two overlapping blends (a glissando starting while the last one is
     still fading out used to drop the last one: 20 m/s at 270.9 s). HR10 RH, 257-290 s: frames over 3 m/s 102 →
-    11, all inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
-    the contact follows exactly.
+    13 (two at 3.1 / 3.8 m/s between glissandos with a chord in a tight gap; the rest inside glissandos where the recorded notes jump several keys in ~20 ms (the run's end flicks), which
+    the contact follows exactly); pressed frames off the finger pose: 0.
   - `HandAnimator`: glissando notes are kept out of the fingering and the fingers' timeline (`gliss_ids`; no
     finger, `finger_for` None, `is_gliss`) and added to `performance` at their written times.
   - Pose (`_gliss_pose`, blended with the finger pose by `_blend_pose` over `GLISS_RAMP_T` 0.15 s), after a photo

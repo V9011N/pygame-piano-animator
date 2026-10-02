@@ -194,3 +194,19 @@ def test_to_and_from_a_glissando_the_hand_keeps_to_its_top_speed(screen):
             worst = max(worst, math.hypot(x - prev[0], y - prev[1]) * fps / vmax)
         prev = (x, y)
     assert worst < 1.05, worst
+
+
+def test_a_chord_right_after_a_glissando_is_played_in_place(screen):
+    # HR10 at 4:27: a glissando up to the top, then a chord far below 0.4 s later
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    g = run(WHITE[16:30], t0=1.0)
+    chord = [Note(p, g[-1].start + 0.4, g[-1].start + 0.7, 80, 0, RIGHT) for p in (48, 52, 55)]
+    back = run(WHITE[2:14], t0=chord[0].end + 0.15)                  # and a glissando straight after it
+    a = hands.HandAnimator(song_of(g + chord + back), RIGHT)
+    a._ensure_layout(kb)
+    for t in (chord[0].start + 0.005, chord[0].start + 0.15, chord[0].end - 0.01):
+        x, y = a._pose_wrist(a.pose(t, kb))
+        fx, fy = a._pose_wrist(a._finger_pose(t, kb))
+        assert math.hypot(x - fx, y - fy) < 0.1 * a.ppi, t                # on the finger pose: keys under fingers

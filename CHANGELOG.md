@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0446 - Chords between glissandos
+- Fixed: chords played between glissandos were missed, the hand still travelling from the
+  glissando (Liszt's Hungarian Rhapsody No. 10 at 4:27 and through the glissando section). The
+  hand is now always back in place for the next chord, and leaves for a glissando only once its
+  last keys are let go; when time is short it sets off as soon as the glissando ends.
+
 ## v2026.10.02.0316 - Thumb glissando arm lean
 - In a thumb glissando the forearm leans toward the way the hand slides, elbow trailing, as if
   pushing the thumb along the keys.
