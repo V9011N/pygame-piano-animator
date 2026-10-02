@@ -2656,6 +2656,18 @@ SPAN_SPLAY_DEG = {1: -math.degrees(_THUMB_MAX_ABD), 2: -22.0, 3: 0.0, 4: 8.0,
                   5: math.degrees(_PINKY_MAX_ABD)}
 
 
+NATURAL_THUMB_REACH = 0.93  # the resting thumb's tip at most this share of its length from its base: curved,
+                            # however short the thumb (a short one can't reach the resting spot and went straight)
+
+
+def _within(base, target, reach):
+    """target, pulled in toward base to at most reach away."""
+    d = math.dist(base, target)
+    if d <= reach or d < 1e-9:
+        return target
+    return tuple(b + (t - b) * reach / d for b, t in zip(base, target))
+
+
 def static_skeleton(geo, shape="stretched", curl=1.0):
     """
     A still right hand, in model units (wrist centre at the origin, +x toward
@@ -2702,8 +2714,8 @@ def static_skeleton(geo, shape="stretched", curl=1.0):
         mcp = geo.mcp[f]
         bones.append((base[f], mcp, "metacarpal", f"mc{f}"))
         if shape == "natural":
-            pts = solve_chain(mcp, rest[f], list(geo.bones[f]), (0.0, 0.0, 1.0),
-                              FINGER_COUPLING, FINGER_BEND_MAX)
+            pts = solve_chain(mcp, _within(mcp, rest[f], REACH_COMFORT[f] * sum(geo.bones[f])),
+                              list(geo.bones[f]), (0.0, 0.0, 1.0), FINGER_COUPLING, FINGER_BEND_MAX)
         else:
             pts = straight(mcp, splay[f], geo.bones[f], z_drop=mcp[2] - 0.3)
         for (a, b), kind, bid in zip(zip(pts, pts[1:]), ("proximal", "middle", "distal"),
@@ -2714,7 +2726,8 @@ def static_skeleton(geo, shape="stretched", curl=1.0):
         chains[f] = [base[f]] + list(pts)
     if shape == "natural":
         bulge = (-0.85, 0.0, 0.5)
-        pts = solve_chain(cmc, rest[1], list(geo.bones[1]), bulge, THUMB_COUPLING, THUMB_BEND_MAX)
+        pts = solve_chain(cmc, _within(cmc, rest[1], NATURAL_THUMB_REACH * sum(geo.bones[1])),
+                          list(geo.bones[1]), bulge, THUMB_COUPLING, THUMB_BEND_MAX)
     else:
         pts = straight(cmc, splay[1], geo.bones[1], z_drop=cmc[2] - 0.3)
     for (a, b), kind, bid in zip(zip(pts, pts[1:]), ("metacarpal", "proximal", "distal"),

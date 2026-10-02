@@ -393,6 +393,8 @@ def _draw_cartoon(pen, h):
             h.fill_finger(pen, f, c["skin"])
             if skin["details"]:
                 _creases(pen, h, f, _mix(line, c["skin"], 0.25))
+                if not h.palm_up:
+                    _knuckle(pen, h, f, _mix(line, c["skin"], 0.35))
                 if f == 1 and h.palm_up:
                     _thumb_sliver(pen, h, c["nail"], _mix(line, c["nail"], 0.3))
                 elif f not in h.nail_hide:
@@ -434,6 +436,35 @@ def _palm_lines(pen, h, color):
             pts.append(_palm_at(h, s, d))
         for p, q in zip(pts, pts[1:]):
             pen.line(p, q, color, w)
+
+
+KNUCKLE_ARC = (0.6, 0.22)   # the knuckle line: half-width / bow toward the fingertip (x the finger's radius)
+
+
+def _knuckle(pen, h, f, color):
+    """
+    The knuckle where the metacarpal meets the first phalanx (the MCP joint),
+    on the back of the hand: a short line across the finger there, bowed
+    round the knuckle toward the fingertip.
+    """
+    c = h.chains[f]
+    k, q = (c[1], c[2])
+    segs = h.radius[f]
+    r = segs[1][2] if f == 1 else segs[0][2]
+    dx, dy = q[0] - k[0], q[1] - k[1]
+    if math.hypot(dx, dy) < 0.6 * r:
+        return                              # the phalanx seen end-on: no line to see
+    ux, uy = _unit(dx, dy)
+    nx, ny = -uy, ux
+    hw, bow = KNUCKLE_ARC
+    pts = []
+    for i in range(9):
+        s = -1 + 2 * i / 8
+        along = r * (0.08 + bow * (1 - s * s))
+        pts.append((k[0] + nx * s * hw * r + ux * along, k[1] + ny * s * hw * r + uy * along))
+    w = max(1, 0.03 * h.ppi)
+    for p, p2 in zip(pts, pts[1:]):
+        pen.line(p, p2, color, w)
 
 
 def _web_crease(pen, h, color):

@@ -622,3 +622,15 @@ def test_hand_flattens_for_an_octave_and_spreads_like_a_real_hand():
     # in the air the little finger keeps a comfortable spread, not its full stretch
     lo, hi = a._splay_at(5, 0.0, stretch=0.0)
     assert abs(math.degrees(hi) - hands.SPLAY_COMFORT_DEG[5][1]) < 1e-9
+
+
+def test_a_short_thumb_still_rests_in_a_curve():
+    import math
+    import pianist
+    from hands import HandGeometry, static_skeleton, NATURAL_THUMB_REACH
+    for change in ({}, {"mc1": 3.6, "pp1": 2.5, "dp1": 2.1}):
+        anatomy = dict(pianist.active().anatomy)
+        anatomy.update(change)
+        geo = HandGeometry(anatomy)
+        th = static_skeleton(geo, "natural")["struct"]["chains"][1]
+        assert math.dist(th[0], th[-1]) <= NATURAL_THUMB_REACH * sum(geo.bones[1]) + 1e-6, change

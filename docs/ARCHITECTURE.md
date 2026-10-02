@@ -316,6 +316,8 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - A shadow pass is drawn on a cached SRCALPHA surface, offset by each part's height.
 - **The four styles**:
   - `cartoon`: skin with a warm outline, nails, creases, and a white cuff with a button above a coloured sleeve.
+    The MCP knuckles (metacarpal to first phalanx) get a short line across the finger, bowed toward the tip
+    (`_knuckle`, `KNUCKLE_ARC`; not when the palm is up, nor when the phalanx is seen end-on).
     Nails (`_nail`) follow the distal phalanx's true pitch (its screen length against the height drop): flat, the nail
     sits short of the tip; as the tip curls down it is foreshortened along the finger (to no less than 0.7 r) and its
     free edge slides out to the end of the finger's outline, so the skin in front of it disappears and the squashed
@@ -345,7 +347,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `hands.curl_factor(p) = 1 + 1.1·(0.636 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the fingertips sit. The range runs from 1.7 (flat) to 0.6 (curved).
   - The hand's height offset is `z_off = 0.9·(c − 0.636)` in. It is applied in `world()` and in `base_local`.
   - Flatter settings may extend up to 0.09 more of the finger length than `REACH_COMFORT` allows.
-  - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view.
+  - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view. Its resting targets
+    are pulled in to `REACH_COMFORT` (fingers) and `NATURAL_THUMB_REACH` 0.93 (thumb, the default thumb's own
+    curve) of each chain's length: a short thumb couldn't reach its resting spot and was drawn straight.
   - Measured mean PIP+DIP bend on Prelude 24: 81° at 0 %, 107° at 50 %, 114° at 100 % (the bend limit).
   - Fingertip accuracy on keys is unchanged or better.
 - **Thumb web** (2026-09-27): `skins._Hand._make_web()` builds the first web space (thenar web) as a polygon from the thumb CMC and MCP to the index metacarpal.

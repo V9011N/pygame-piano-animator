@@ -2,6 +2,12 @@
 
 Each version is the UTC date and time of its commit (v20YY.MM.DD.HHMM). Newest first.
 
+## v2026.10.02.0455 - Knuckle lines, short thumbs curve
+- The cartoon hand shows the knuckles where the fingers meet the hand: a short line across each
+  finger and the thumb.
+- Fixed: in the Pianists & hands studio, a short thumb was drawn straight in the natural resting
+  curve; it now curves like any other.
+
 ## v2026.10.02.0446 - Chords between glissandos
 - Fixed: chords played between glissandos were missed, the hand still travelling from the
   glissando (Liszt's Hungarian Rhapsody No. 10 at 4:27 and through the glissando section). The
