@@ -54,6 +54,17 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - The lanes above white keys are a shade lighter (`LANE_WHITE`); a white-key note's finger
   number is white with a dark outline, a black-key note's stays dark.
 - Not done: the "fancy" version's shadows and reflections on the keys.
+- Drawing cost (2026-10-02): equal keys cost ~2-5 ms more a frame than realistic (1600x900, headless; more on a
+  bigger window): 52 full-height lane rects (1.7 ms), the keyboard's extra shapes (+0.7 ms), and every white-key
+  finger number rendered 5 times for its outline. Now, for both styles: the falling-notes background (fill, lane
+  lines, lighter lanes) is drawn once into `Visualizer._lanes` and blitted; finger numbers are rendered once per
+  (text, colour) (`_finger_img`); the keyboard at rest is cached (`Keyboard._base`, keyed by rect, style and the
+  background under it, which shows through the rounded corners) and each frame only the pressed keys are drawn
+  again - over the background colour (gap colour for equal keys), with a realistic white key's black neighbours
+  and the white keys under those (`draw`'s closure, within one C-E / F-B group) so overlaps come out the same,
+  and the felt's shadow re-applied once per redrawn column. Pixel-identical to before (26 player and editor
+  frames, both styles); a drawing surface with a clip set falls back to drawing every key. Without hands:
+  equal 5.0-5.5 → 2.0 ms, realistic 2.8-3.5 → 2.8-3.2 ms; keyboard alone 0.9 / 1.6 → 0.1 ms.
 
 ## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
 - `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
