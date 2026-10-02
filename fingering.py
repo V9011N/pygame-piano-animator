@@ -47,6 +47,8 @@ chords back are respected. Fingers already given in the file are kept.
 """
 from __future__ import annotations
 
+import math
+
 from itertools import combinations, product
 
 MIRROR_SUM = 2 * 62            # reflect about D4: 124 - p
@@ -199,7 +201,139 @@ BASE_W = dict(W)
 BASE_W.update(LEARNED_W)
 W.update(BASE_W)
 BASE_MAX_SPAN = dict(MAX_SPAN)
+BASE_STRENGTH = dict(FINGER_STRENGTH)
+BASE_BLACK_EASE = dict(BLACK_EASE)
 _applied = None
+
+# --------------------------------------------------------------------------- #
+# Fine-tuning: every weight of the model, adjustable per pianist
+# ("Fine tune fingering behavior" in the studio; Pianist.weights holds the
+# changed ones). Ids: a key of W; "fig:NAME" for figures.W_* (how firmly a
+# recognised figure keeps its standard fingering); "strength:f" and
+# "black_ease:f" for the per-finger tables. A weight's default is what the
+# pianist's other settings make it (tuned_defaults).
+# --------------------------------------------------------------------------- #
+FINE_TUNE = [
+    # (id, group, label, description)
+    ("stretch", "Consecutive notes", "Stretch", "Per white key two fingers are spread wider than their natural spacing."),
+    ("cramp", "Consecutive notes", "Cramp", "Per white key two fingers are squeezed narrower than their natural spacing."),
+    ("leap", "Consecutive notes", "Leap", "Going beyond a finger pair's maximum stretch: the hand has to leap."),
+    ("leap_dist", "Consecutive notes", "Leap distance", "Added to a leap per white key travelled."),
+    ("cross", "Consecutive notes", "Crossing", "The thumb passing under, or a finger passing over the thumb."),
+    ("cross_2", "Consecutive notes", "Crossing with 2", "Extra for a crossing with the index finger (3 is the natural one)."),
+    ("cross_4", "Consecutive notes", "Crossing with 4", "Extra for a crossing with the ring finger."),
+    ("cross_wide", "Consecutive notes", "Wide crossing", "Per white key a crossing spans beyond 2."),
+    ("cross_max", "Consecutive notes", "Widest crossing", "White keys: a crossing wider than this counts as a leap."),
+    ("cross_thumb_black", "Consecutive notes", "Thumb crossing onto black", "A crossing that lands the thumb on a black key."),
+    ("awkward", "Consecutive notes", "Awkward crossing", "Any other crossing (e.g. 4 over 5), plus 1 per key."),
+    ("same_finger", "Consecutive notes", "Same finger, new key", "One finger playing two different keys in a row."),
+    ("same_finger_dist", "Consecutive notes", "Same finger distance", "Added per key the repeated finger has to move."),
+    ("same_key_new_finger", "Consecutive notes", "Same key, new finger", "Changing finger on a repeated key."),
+    ("repeat_fast", "Consecutive notes", "Quick re-strike", "The same finger re-striking a key quickly."),
+    ("repeat_t", "Consecutive notes", "Re-strike time", "Seconds: re-striking with the same finger faster than this gets hard..."),
+    ("repeat_very_fast", "Consecutive notes", "Very quick re-strike", "...costing up to this much extra (and changing finger less)."),
+    ("thumb_black", "Fingers", "Thumb on black", "The thumb playing a black key."),
+    ("pinky_black", "Fingers", "Little finger on black", "The little finger playing a black key."),
+    ("finger_4", "Fingers", "Ring finger", "Using the weak ring finger, when fingerings are otherwise equal."),
+    ("finger_5", "Fingers", "Little finger", "Using the weak little finger, when fingerings are otherwise equal."),
+    ("strength:1", "Fingers", "Thumb strength", "How easily the thumb moves far quickly (economy of motion)."),
+    ("strength:2", "Fingers", "Index strength", "How easily the index finger moves far quickly."),
+    ("strength:3", "Fingers", "Middle strength", "How easily the middle finger moves far quickly."),
+    ("strength:4", "Fingers", "Ring strength", "How easily the ring finger moves far quickly."),
+    ("strength:5", "Fingers", "Little strength", "How easily the little finger moves far quickly."),
+    ("black_ease:1", "Fingers", "Thumb black-key ease", "How easily the thumb reaches up onto black keys."),
+    ("black_ease:2", "Fingers", "Index black-key ease", "How easily the index finger reaches up onto black keys."),
+    ("black_ease:3", "Fingers", "Middle black-key ease", "How easily the middle finger reaches up onto black keys."),
+    ("black_ease:4", "Fingers", "Ring black-key ease", "How easily the ring finger reaches up onto black keys."),
+    ("black_ease:5", "Fingers", "Little black-key ease", "How easily the little finger reaches up onto black keys."),
+    ("chord_stretch", "Chords", "Chord stretch", "Per white key a chord spreads two fingers wider than natural."),
+    ("chord_cramp", "Chords", "Chord cramp", "Per white key a chord squeezes two fingers narrower than natural."),
+    ("chord_stretch_adj", "Chords", "Neighbour stretch", "Stretch between neighbouring fingers in a chord."),
+    ("thumb_double", "Chords", "Thumb on two keys", "The thumb covering two neighbouring keys in a chord."),
+    ("pinky_double", "Chords", "Little finger on two keys", "The little finger covering two neighbouring white keys."),
+    ("same_shape", "Chords", "Same shape fingers", "Not keeping the same fingers on a chord shape that moves by step (4-2, 4-2...)."),
+    ("shape_shift", "Chords", "Shape shift", "Moving a whole chord shape with the same fingers."),
+    ("octave_4_white", "Chords", "Octave 4 on white", "An octave's top note taken with 4 on a white key."),
+    ("inner_room", "Chords", "Room for an inner note", "An octave on 1-4 with an inner note held between them (1-5 leaves room)."),
+    ("inner_finger", "Chords", "Inner note finger", "An inner note on another finger than the one lying over it."),
+    ("same_finger_t", "Movement and time", "Finger travel time", "Seconds a finger needs to reach a new key."),
+    ("same_finger_fast", "Movement and time", "Same finger too fast", "The same finger asked to move to a new key in less time than that."),
+    ("shift_base", "Movement and time", "Free hand shift", "White keys the hand may shift between two notes at no cost..."),
+    ("shift_cross", "Movement and time", "Free shift with crossing", "...or through a thumb crossing..."),
+    ("shift_speed", "Movement and time", "Shift per second", "...plus this many white keys per second between the notes."),
+    ("shift_cost", "Movement and time", "Shift cost", "Per white key the hand shifts beyond that."),
+    ("steal", "Movement and time", "Early release", "Letting a held key go early to reuse its finger."),
+    ("held_tol", "Movement and time", "Held tolerance", "Seconds: a key released this soon after a new note isn't counted as held."),
+    ("velocity", "Movement and time", "Economy of motion", "How fast the fingers must travel from a relaxed hand."),
+    ("too_fast", "Movement and time", "Too fast", "Per 100% over the time a move needs at the pianist's top speed."),
+    ("figure", "Figures", "Figure loyalty", "Times each figure's weight below: leaving a recognised figure's standard fingering."),
+    ("fig:W_SCALE", "Figures", "Scales", "Keeping a short scale passage's standard fingering."),
+    ("fig:W_SCALE_LONG", "Figures", "Long scales", "Keeping a long scale's (9+ notes one way) standard fingering."),
+    ("fig:W_CHROM", "Figures", "Chromatic scales", "Keeping the chosen chromatic fingering."),
+    ("fig:W_ARP", "Figures", "Arpeggios", "Keeping an arpeggio's standard fingering."),
+    ("fig:W_OCT", "Figures", "Octaves", "Keeping the chosen octave fingering."),
+    ("fig:W_THIRDS", "Figures", "Thirds", "Keeping the standard fingering of a run in thirds."),
+    ("fig:W_SIXTHS", "Figures", "Sixths and fourths", "Keeping the standard fingering of sixths and fourths."),
+    ("fig:W_REP", "Figures", "Repeated notes", "Changing fingers on quick repeated notes."),
+    ("fig:W_REP_RUN", "Figures", "Repeated runs", "The chosen fingering for runs of 3+ quick repeats."),
+    ("fig:W_REP_LEAP", "Figures", "Repeat then leap", "A quick repeated pair before an outward leap: 2-1, then 5."),
+    ("fig:W_TRILL", "Figures", "Trills", "Keeping the chosen trill fingering."),
+]
+FINE_TUNE_IDS = [t[0] for t in FINE_TUNE]
+TUNE_DEFAULTS = {}               # id -> the value before the pianist's fine-tuning (set by apply_pianist)
+
+
+def _fig_defaults():
+    import figures
+    if not hasattr(figures, "_BASE_W"):
+        figures._BASE_W = {t[0][4:]: getattr(figures, t[0][4:]) for t in FINE_TUNE if t[0].startswith("fig:")}
+    return figures._BASE_W
+
+
+def tune_value(tid):
+    """A fine-tunable weight's current value."""
+    if tid.startswith("fig:"):
+        import figures
+        return float(getattr(figures, tid[4:]))
+    if tid.startswith("strength:"):
+        return float(FINGER_STRENGTH[int(tid[9:])])
+    if tid.startswith("black_ease:"):
+        return float(BLACK_EASE[int(tid[11:])])
+    return float(W[tid])
+
+
+def _set_tune(tid, v):
+    if tid.startswith("fig:"):
+        import figures
+        setattr(figures, tid[4:], v)
+    elif tid.startswith("strength:"):
+        FINGER_STRENGTH[int(tid[9:])] = v
+    elif tid.startswith("black_ease:"):
+        BLACK_EASE[int(tid[11:])] = v
+    else:
+        W[tid] = v
+
+
+def tune_range(tid):
+    """(lo, hi, step) for a weight's slider: 0 to a few times the largest default either model gives it."""
+    if tid.startswith("fig:"):
+        ref = _fig_defaults()[tid[4:]]
+    elif tid.startswith("strength:"):
+        ref = BASE_STRENGTH[int(tid[9:])]
+    elif tid.startswith("black_ease:"):
+        ref = BASE_BLACK_EASE[int(tid[11:])]
+    else:
+        ref = max(W_TEXTBOOK[tid], BASE_W[tid])
+    hi = max(1.0, 3.0 * ref)
+    mag = 10 ** math.floor(math.log10(hi))
+    hi = math.ceil(hi / mag * 2) / 2 * mag                     # a round top: 1, 1.5, 2, ... x 10^n
+    return 0.0, hi, hi / 200.0
+
+
+def tuned_defaults(p):
+    """{id: value} each weight has for pianist p before their fine-tuning."""
+    apply_pianist(p)
+    return dict(TUNE_DEFAULTS)
 
 
 def apply_pianist(p):
@@ -209,7 +343,9 @@ def apply_pianist(p):
     black-key preferences, and their figure fingerings (figures.PREFS).
     """
     global _applied, MAX_SPEED
-    key = None if p is None else (tuple(sorted(p.anatomy.items())), tuple(sorted(p.behavior.items())))
+    tuned = dict(getattr(p, "weights", None) or {}) if p is not None else {}
+    key = None if p is None else (tuple(sorted(p.anatomy.items())), tuple(sorted(p.behavior.items())),
+                                  tuple(sorted(tuned.items())))
     if key == _applied:
         return
     _applied = key
@@ -219,10 +355,27 @@ def apply_pianist(p):
     W.update(base)
     MAX_SPAN.update(BASE_MAX_SPAN)
     figures.PREFS.update(figures.DEFAULT_PREFS)
+    for name, v in _fig_defaults().items():
+        setattr(figures, name, v)
+    FINGER_STRENGTH.update(BASE_STRENGTH)
+    BLACK_EASE.update(BASE_BLACK_EASE)
     RELAXED.update(BASE_RELAXED)
     MAX_SPEED = DEFAULT_MAX_SPEED
     if p is None:
+        TUNE_DEFAULTS.update({tid: tune_value(tid) for tid in FINE_TUNE_IDS})
         return
+    _apply_preferences(p, base)
+    # the pianist's fine-tuning goes on top of everything else
+    TUNE_DEFAULTS.update({tid: tune_value(tid) for tid in FINE_TUNE_IDS})
+    for tid, v in tuned.items():
+        if tid in TUNE_DEFAULTS:
+            _set_tune(tid, max(0.0, float(v)))
+
+
+def _apply_preferences(p, base):
+    """Pianist p's anatomy and behaviour settings on the weights (apply_pianist)."""
+    global MAX_SPEED
+    import figures
     MAX_SPEED = float(p.b("max_speed"))
     from hands import reach_scale, hand_span_inches
     k = hand_span_inches(p.anatomy) / hand_span_inches(None)

@@ -25,6 +25,11 @@ Falling-notes controls
     F               show / hide finger numbers on the falling notes
     Click the top bar to seek.  Esc goes back to the menu.
 
+Playing a file first asks how it should sound (audio_sync.PlaybackSetup):
+the MIDI synth, or a recording synced to the notes - its speed chosen
+first and fixed. With a recording, its waveform runs under the top bar:
+drag it (Shift: finer) or press , / . (Shift: x10) to line it up.
+
 The editor's controls are listed in editor.py (and shown in the editor itself).
 
 Layout of the player, top to bottom: progress bar, falling-notes area,
@@ -36,6 +41,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import time
 
 import pygame
 
@@ -47,9 +53,11 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
 import pianist as pianists
 from hands import HandAnimator, draw_hands, pair_hands
 from midi_loader import LEFT, RIGHT, load_song
+from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
 
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
+WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it this much slower
 SEEK_STEP = 5.0
 
 # What a mode's handle_event can return besides True (carry on) / False (quit)
@@ -60,10 +68,22 @@ TO_MENU = "menu"
 # The falling-notes player
 # --------------------------------------------------------------------------- #
 class Visualizer(Transport):
-    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None):
+    def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None):
         self.screen = screen
         self.fonts = fonts or load_fonts()
         self._init_transport(midi or MidiOut(False), speed)
+        # a synced recording (audio_sync.SyncAudio): heard instead of the synth,
+        # the speed fixed, the song's clock following the audio's (wall clock)
+        self.audio = audio
+        self._synth_muted = self.midi.muted
+        if audio:
+            self.midi.muted = True
+            self.midi.all_off()
+        self.audio_muted = False
+        self._audio_pending = False      # waiting for the recording's start (the song's lead-in)
+        self._anchor = None              # (song time, wall time) the clock runs from while playing
+        self.dragging_wave = None        # (mouse x, offset) when the waveform drag began
+        self._wave_cache = (None, None)
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
         self._glow_cache = {}
@@ -85,7 +105,7 @@ class Visualizer(Transport):
         # what's heard and the keys that go down follow what the hands play
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.t = -LEAD_IN
-        self.paused = False
+        self.paused = bool(self.audio)          # with a recording: paused, to line it up first
         self.sounding = {}
         pygame.display.set_caption(f"Piano Animator {VERSION} - {song.title}")
 
@@ -93,7 +113,10 @@ class Visualizer(Transport):
         w, h = size
         kb_rect, self.hand_rect = bottom_layout(size)
         self.bar_rect = pygame.Rect(0, 0, w, TOP_BAR_H)
-        self.fall_rect = pygame.Rect(0, TOP_BAR_H, w, kb_rect.y - FELT_H - TOP_BAR_H)
+        wave_h = WAVE_H if self.audio else 0
+        self.wave_rect = pygame.Rect(0, TOP_BAR_H, w, wave_h)
+        top = TOP_BAR_H + wave_h
+        self.fall_rect = pygame.Rect(0, top, w, kb_rect.y - FELT_H - top)
         self.felt_rect = pygame.Rect(0, kb_rect.y - FELT_H, w, FELT_H)
         if hasattr(self, "keyboard"):
             self.keyboard.layout(kb_rect)
@@ -110,7 +133,7 @@ class Visualizer(Transport):
             self.screen = pygame.display.get_surface()
             self.layout(self.screen.get_size())
         elif event.type == pygame.DROPFILE:
-            self.open_file(event.file)
+            return ("open", event.file)
         elif event.type == pygame.KEYDOWN:
             k = event.key
             if k == pygame.K_ESCAPE:
@@ -121,18 +144,29 @@ class Visualizer(Transport):
                 self.seek(self.t - SEEK_STEP)
             elif k == pygame.K_RIGHT:
                 self.seek(self.t + SEEK_STEP)
-            elif k == pygame.K_UP:
+            elif k == pygame.K_UP and not self.audio:          # a synced recording fixes the speed
                 self.change_speed(0.1)
-            elif k == pygame.K_DOWN:
+            elif k == pygame.K_DOWN and not self.audio:
                 self.change_speed(-0.1)
             elif k in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
                 self.window_secs = max(0.75, self.window_secs / 1.25)
             elif k in (pygame.K_MINUS, pygame.K_KP_MINUS):
                 self.window_secs = min(12.0, self.window_secs * 1.25)
             elif k == pygame.K_m:
-                self.midi.muted = not self.midi.muted
-                if self.midi.muted:
-                    self.midi.all_off()
+                if self.audio:
+                    self.audio_muted = not self.audio_muted
+                    if self.audio.channel is not None:
+                        self.audio.channel.set_volume(0.0 if self.audio_muted else 1.0)
+                else:
+                    self.midi.muted = not self.midi.muted
+                    if self.midi.muted:
+                        self.midi.all_off()
+            elif k in (pygame.K_COMMA, pygame.K_PERIOD) and self.audio:
+                # nudge the recording: 10 ms, or 100 ms with Shift
+                step = 0.1 if event.mod & pygame.KMOD_SHIFT else 0.01
+                self._nudge_audio(step if k == pygame.K_COMMA else -step)
+                if not self.paused:
+                    self._start_audio()
             elif k == pygame.K_h:
                 self.show_hands = not self.show_hands
             elif k == pygame.K_f:
@@ -142,16 +176,85 @@ class Visualizer(Transport):
             elif k == pygame.K_o:
                 path = pick_file()
                 if path:
-                    self.open_file(path)
+                    return ("open", path)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.bar_rect.collidepoint(event.pos):
                 self.dragging_bar = True
                 self._seek_to_x(event.pos[0])
+            elif self.audio and self.wave_rect.collidepoint(event.pos):
+                self.dragging_wave = event.pos[0]
         elif event.type == pygame.MOUSEMOTION and self.dragging_bar:
             self._seek_to_x(event.pos[0])
+        elif event.type == pygame.MOUSEMOTION and self.dragging_wave:
+            self._drag_wave(event.pos[0])
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_bar = False
+            if self.dragging_wave:
+                self.dragging_wave = None
+                if not self.paused:
+                    self._start_audio()              # carry on from the new alignment
         return True
+
+    # ----- a synced recording ----------------------------------------------------
+    def audio_pos(self, t=None):
+        """Where in the recording the song is at time t (seconds)."""
+        return self.audio.offset + (self.t if t is None else t) / self.speed
+
+    def _drag_wave(self, x):
+        """Dragging the waveform moves the recording against the notes (10x finer with Shift held)."""
+        span = self.song.duration if self.song and self.song.duration > 0 else 1.0
+        # the strip shows song times 0..duration; the recording moves with the mouse
+        fine = WAVE_FINE if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1.0
+        self._nudge_audio(-(x - self.dragging_wave) / max(1, self.wave_rect.w) * span / self.speed * fine)
+        self.dragging_wave = x
+        if not self.paused:
+            self.audio.stop()
+
+    def _nudge_audio(self, d):
+        """Shift the recording d seconds against the notes (+: its waveform moves left), kept overlapping them."""
+        cover = (self.song.duration if self.song else 0.0) / self.speed
+        self.audio.offset = max(-cover, min(self.audio.length, self.audio.offset + d))
+
+    def _start_audio(self):
+        """(Re)start the recording at the song's place, and the clock with it."""
+        self._anchor = (self.t, time.perf_counter())
+        self.audio.stop()
+        pos = self.audio_pos()
+        self._audio_pending = pos < 0           # the song's lead-in comes before the recording
+        if not self._audio_pending:
+            self.audio.play_from(pos)
+            if self.audio.channel is not None and self.audio_muted:
+                self.audio.channel.set_volume(0.0)
+
+    def seek(self, t):
+        Transport.seek(self, t)
+        if self.audio and not self.paused:
+            self._start_audio()
+
+    def toggle_pause(self):
+        Transport.toggle_pause(self)
+        if self.audio:
+            if self.paused:
+                self.audio.stop()
+                self._audio_pending = False
+            else:
+                self._start_audio()
+
+    def update(self, dt):
+        if self.audio and self.song and not self.paused and not self.dragging_wave:
+            # the song follows the recording's (the wall) clock, not the frame clock
+            t_a, wall = self._anchor
+            target = t_a + (time.perf_counter() - wall) * self.speed
+            dt = max(0.0, (target - self.t) / self.speed)
+        elif self.audio and self.dragging_wave:
+            dt = 0.0                                # held while the recording is moved
+        Transport.update(self, dt)
+        if self.audio:
+            if self.paused:
+                self.audio.stop()
+                self._audio_pending = False
+            elif self._audio_pending and self.audio_pos() >= 0:
+                self._start_audio()
 
     def _seek_to_x(self, x):
         if self.song and self.song.duration > 0:
@@ -167,6 +270,9 @@ class Visualizer(Transport):
 
     def leave(self):
         self.midi.all_off()
+        if self.audio:
+            self.audio.stop()
+            self.midi.muted = self._synth_muted
 
     # ----- drawing ----------------------------------------------------------
     def _glow(self, color, w, h):
@@ -279,11 +385,38 @@ class Visualizer(Transport):
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
                            self.sustain_down() if self.song and self.song.controls else None)
         self._draw_top_bar()
+        if self.audio:
+            self._draw_wave()
 
         if not self.song:
             center_text(s, self.fonts, self.fall_rect, "Drop a MIDI file here, or press O to open one")
         elif self.paused:
             center_text(s, self.fonts, self.fall_rect, "Paused  -  Space to play")
+
+    def _draw_wave(self):
+        """The recording's waveform on the song's timeline, a progress fill from the left, draggable."""
+        s, r, a = self.screen, self.wave_rect, self.audio
+        if not self.song or r.h <= 0:
+            return
+        dur = max(1e-6, self.song.duration)
+        key = (a.offset, r.w, r.h, dur, self.speed)
+        if self._wave_cache[0] != key:
+            self._wave_cache = (key, a.strip(r.w, r.h, 0.0, dur, self.speed, dur))
+        s.blit(self._wave_cache[1], r.topleft)
+        frac = min(1.0, max(0.0, self.t / dur))
+        x = int(r.w * frac)
+        if x > 0:
+            shade = pygame.Surface((x, r.h), pygame.SRCALPHA)
+            shade.fill((*BAR_FILL, 46))
+            s.blit(shade, r.topleft)
+        pygame.draw.line(s, BAR_FILL, (r.x + x, r.y), (r.x + x, r.bottom - 1), 2)
+        pygame.draw.line(s, PANEL_EDGE, (r.x, r.bottom - 1), (r.right, r.bottom - 1))
+        font = self.fonts["small"]
+        pos = self.audio_pos()
+        hint = ("drag to line the recording up (Shift: finer),  , .  nudge 10 ms" if self.paused or self.dragging_wave
+                else "")
+        label = f"{a.name}   {fmt_time(max(0.0, pos))} / {fmt_time(a.length)}   offset {a.offset:+.2f}s   {hint}"
+        blit_shadowed(s, font, label, TEXT, (r.x + 8, r.y + 4))
 
     def _draw_top_bar(self):
         s, r = self.screen, self.bar_rect
@@ -298,8 +431,13 @@ class Visualizer(Transport):
         font = self.fonts["normal"]
         blit_shadowed(s, font, left, TEXT, (10, (r.h - font.get_height()) // 2))
 
-        right = (f"speed {int(round(self.speed * 100))}%   view {self.window_secs:.1f}s   "
-                 f"{self.midi.status()}      Space  ←→  ↑↓  +/-  M  O  H  F   Esc menu")
+        if self.audio:
+            sound = "audio muted" if self.audio_muted else "synced audio"
+            right = (f"speed {int(round(self.speed * 100))}% (fixed)   view {self.window_secs:.1f}s   "
+                     f"{sound}      Space  ←→  , .  +/-  M  O  H  F   Esc menu")
+        else:
+            right = (f"speed {int(round(self.speed * 100))}%   view {self.window_secs:.1f}s   "
+                     f"{self.midi.status()}      Space  ←→  ↑↓  +/-  M  O  H  F   Esc menu")
         font = self.fonts["small"]
         blit_shadowed(s, font, right, TEXT_DIM, (r.w - font.size(right)[0] - 10, (r.h - font.get_height()) // 2))
 
@@ -480,7 +618,7 @@ class MainMenu:
         if event.type == pygame.VIDEORESIZE:
             self.layout(event.size if hasattr(event, "size") else self.app.screen.get_size())
         elif event.type == pygame.DROPFILE:
-            self.app.play(event.file)
+            self.app.choose_playback(event.file)
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 return False
@@ -519,7 +657,7 @@ class MainMenu:
         path = pick_file("Open MIDI file" if action == "play" else "Open MIDI file to edit",
                          initialdir=self.app.last_dir)
         if path:
-            (self.app.play if action == "play" else self.app.edit)(path)
+            (self.app.choose_playback if action == "play" else self.app.edit)(path)
         return True
 
     def update(self, dt):
@@ -601,8 +739,8 @@ class App:
         self._fresh = True
 
     def menu(self, message=""):
-        if hasattr(self.mode, "speed"):
-            self.speed = self.mode.speed
+        if isinstance(self.mode, Visualizer) and not self.mode.audio:
+            self.speed = self.mode.speed          # (a synced recording's speed was chosen for it alone)
         self._switch(MainMenu(self))
         self.mode.message = message
 
@@ -618,11 +756,18 @@ class App:
         self.last_dir = os.path.dirname(os.path.abspath(path))
         return song
 
-    def play(self, path_or_song):
+    def choose_playback(self, path_or_song):
+        """A MIDI file chosen to play: first how it should sound (audio_sync.PlaybackSetup)."""
         song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
         if song:
-            self._switch(Visualizer(self.screen, song, midi=self.midi, speed=self.speed,
-                                    fonts=self.fonts))
+            self._switch(PlaybackSetup(self, song))
+
+    def play(self, path_or_song, audio=None, speed=None):
+        """Play straight away: with the synth, or with a synced recording (audio_sync.SyncAudio) at `speed`."""
+        song = self._load(path_or_song) if isinstance(path_or_song, str) else path_or_song
+        if song:
+            self._switch(Visualizer(self.screen, song, midi=self.midi, speed=speed or self.speed,
+                                    fonts=self.fonts, audio=audio))
 
     def edit(self, path_or_song):
         from editor import FingeringEditor
@@ -642,6 +787,9 @@ class App:
         result = self.mode.handle_event(event)
         if result == TO_MENU:
             self.menu()
+            return True
+        if isinstance(result, tuple) and result[0] == "open":      # another MIDI file to play
+            self.choose_playback(result[1])
             return True
         return result
 
@@ -687,13 +835,22 @@ def main():
     parser.add_argument("--speed", type=float, default=1.0, help="playback speed (1.0 = normal)")
     parser.add_argument("--screenshot", metavar="PNG", help="render one frame to this file and exit")
     parser.add_argument("--at", type=float, default=5.0, help="song time for --screenshot (seconds)")
+    parser.add_argument("--audio", metavar="FILE", help="play this recording in sync instead of the synth")
+    parser.add_argument("--audio-speed", type=float, default=1.0, help="MIDI speed with --audio (fixed)")
+    parser.add_argument("--audio-offset", type=float, default=0.0,
+                        help="where in the recording the MIDI starts (seconds), with --audio")
     args = parser.parse_args()
 
     pygame.init()
     screen = pygame.display.set_mode(WINDOW_SIZE, pygame.RESIZABLE)
     pygame.display.set_caption(f"Piano Animator {VERSION}")
     app = App(screen, sound=not args.no_sound and not args.screenshot, speed=args.speed)
-    if args.midi:
+    if args.midi and args.audio and not args.edit:
+        from audio_sync import SyncAudio
+        audio = SyncAudio(args.audio)
+        audio.offset = args.audio_offset
+        app.play(args.midi, audio=audio, speed=args.audio_speed)
+    elif args.midi:
         (app.edit if args.edit else app.play)(args.midi)
 
     if args.screenshot:

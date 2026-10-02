@@ -66,6 +66,29 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   frames, both styles); a drawing surface with a clip set falls back to drawing every key. Without hands:
   equal 5.0-5.5 → 2.0 ms, realistic 2.8-3.5 → 2.8-3.2 ms; keyboard alone 0.9 / 1.6 → 0.1 ms.
 
+## Synced recordings (audio_sync.py, 2026-10-02)
+- Choosing a MIDI file to play (menu, drop, O in the player) opens `PlaybackSetup`: "Default sound" (the
+  MIDI synth, as before) or "Sync an audio file": a speed slider (25-200%, fixed once playing), then the
+  audio file (tkinter dialog). The file must last at least `duration / speed`; a shorter one is refused
+  with its length and the length needed. The command line skips the screen (`--audio`, `--audio-speed`,
+  `--audio-offset`).
+- `SyncAudio` decodes the whole file with `pygame.mixer.Sound` (WAV / OGG / MP3 / FLAC, to the mixer's
+  format) and keeps `peaks`: the loudest sample in each `PEAK_T` 5 ms slice (numpy, which pretty_midi
+  already needs). `play_from(pos)` plays a `Sound` made over a memoryview of the raw samples from that
+  point (no seeking API needed, any format; ~2 ms per start).
+- Timing: song time t runs at `speed`; the audio heard at t is at `offset + t / speed`. While playing,
+  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`), not from the
+  capped frame clock, so the two never drift; the audio restarts on play, seek, a nudge and the end of a
+  drag. A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
+  synth is muted while a recording plays (restored on leaving); M mutes the recording instead; the speed
+  keys do nothing.
+- The waveform strip (`WAVE_H` 56 px, under the top bar, the falling notes below it) is on the same
+  timeline as the top bar (song times 0..duration across the width): bright where the MIDI is, dimmed
+  outside; a translucent progress fill from the left and the playhead. Dragging it moves the recording
+  against the notes (`_drag_wave`, incremental; Shift `WAVE_FINE` 10x finer), `,` / `.` nudge 10 ms (Shift
+  100 ms); the offset is kept so the recording still overlaps the MIDI. The strip is cached per offset.
+- The player starts paused with a recording, so it can be lined up first.
+
 ## Sanitizing MIDI files (midi_loader.py, 2026-09-29)
 - `load_midi` runs every file through three steps; what they changed is in `song.cleanup` (and printed).
 - `read_midi`: the strict pretty_midi parse; if it fails, `repair_smf` rewrites the file's bytes and it is parsed
@@ -222,6 +245,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - What remains is mostly deliberate weak-finger training (27, 32, 36, 45–47 trills with 4-5), which is avoided by design.
 - **Synthetic check** (`v5/synth.py`): D and Bb major RH, F major LH, E harmonic minor, chromatic RH/LH, E minor / C first-inversion / Ab arpeggios, chromatic thirds, D major thirds, E major octaves, trills, repeated notes, Alberti bass. All come out with textbook fingering.
 - **Corpus check** (`v5/corpus_check.py`): all 9 user MIDIs run in 0.1–3 s each. The remaining "impossible" counts are mostly metric artefacts (octave passages, double-third crossings, leaps).
+
+### Fine-tuning the weights (2026-10-02)
+- Studio, behaviour page, bottom left: "Fine Tune Fingering Behavior (ADVANCED)" opens a page with every weight
+  of the model as a slider (`fingering.FINE_TUNE`: 63 - all of `W`, the figure weights `figures.W_*` as
+  `fig:NAME`, and the per-finger `FINGER_STRENGTH` / `BLACK_EASE` as `strength:f` / `black_ease:f`), each
+  with its description, its default and its own Reset; "Reset all" at the top of the side panel. `IMPOSSIBLE`
+  is left out: it is a threshold the code tests against, not a preference.
+- Per pianist: `Pianist.weights` holds only the changed values (saved as `"weights"`, unknown ids dropped,
+  negatives clamped to 0). `apply_pianist` applies them last, over the fingering model and the behaviour
+  settings, and includes them in its cache key; before that it records each weight's value as the pianist's
+  default (`TUNE_DEFAULTS`, `tuned_defaults(p)`), so a reset returns exactly to what the other settings give.
+  `apply_pianist` now also restores the figure weights and finger tables to their base values each time.
+- Slider ranges (`tune_range`): 0 to about three times the larger of the two models' defaults (at least 1),
+  200 steps. `test_finetune` checks every weight is listed - a new weight must be added to `FINE_TUNE`.
+- With no fine-tuning the fingering is unchanged (Op. 25 No. 6, HR10, Dante, Winter Wind: 0 of 13,218 notes).
 
 ## Fingering editor (editor.py)
 - Layout, top to bottom:

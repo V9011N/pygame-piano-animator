@@ -30,6 +30,7 @@ import skins
 from version import VERSION
 
 PANEL_W = 380
+FT_ROW_H = 76                # a weight's row on the fine-tune page
 ROW_H = 56
 KIND_ORDER = ["mc", "pp", "mp", "dp"]
 KIND_SHORT = {"mc": "Metacarpal", "pp": "Proximal", "mp": "Middle", "dp": "Distal"}
@@ -500,6 +501,59 @@ class PianistStudio:
         self.visited.add("behavior")
         self._behavior_controls()
 
+    # ----- fine-tuning the fingering weights ------------------------------------------
+    def _open_finetune(self, keep_scroll=False):
+        """Every weight of the fingering model as a slider (fingering.FINE_TUNE), per pianist."""
+        import fingering
+        self.page = "finetune"
+        self.ft_defaults = fingering.tuned_defaults(self.work)
+        if not keep_scroll:
+            self.ft_scroll = 0
+        self._ft_rows = []
+        self._ft_reset_rects = []
+        for tid, group, label, desc in fingering.FINE_TUNE:
+            lo, hi, step = fingering.tune_range(tid)
+            d = self.ft_defaults[tid]
+            hi = max(hi, d, self.work.weights.get(tid, d))
+
+            def set_(v, k=tid):
+                self.work.weights[k] = round(v, 6)
+                self.dirty = True
+            sl = Slider("", lo, hi, self.work.weights.get(tid, d), set_, fmt=_fmt_w, step=step)
+            self._ft_rows.append({"id": tid, "group": group, "label": label, "desc": desc, "slider": sl})
+
+    def _reset_weight(self, tid):
+        if tid in self.work.weights:
+            del self.work.weights[tid]
+            self.dirty = True
+        for row in self._ft_rows:
+            if row["id"] == tid:
+                row["slider"].value = self.ft_defaults[tid]
+
+    def _ft_view(self):
+        W, H = self.screen.get_size()
+        return pygame.Rect(0, TOP_BAR_H, W - PANEL_W, H - TOP_BAR_H)
+
+    def _ft_layout(self):
+        """Rows laid out at the current scroll: [(kind, item, rect)] (group headers and weights)."""
+        view = self._ft_view()
+        y = view.y + 12 - self.ft_scroll
+        out, group = [], None
+        for row in self._ft_rows:
+            if row["group"] != group:
+                group = row["group"]
+                out.append(("group", group, pygame.Rect(view.x + 20, y + 8, view.w - 40, 26)))
+                y += 36
+            out.append(("row", row, pygame.Rect(view.x + 16, y, view.w - 32, FT_ROW_H - 6)))
+            y += FT_ROW_H
+        self._ft_total = y + self.ft_scroll - view.y + 12
+        return out
+
+    def _ft_scroll(self, d):
+        view = self._ft_view()
+        self._ft_layout()
+        self.ft_scroll = max(0, min(max(0, self._ft_total - view.h), self.ft_scroll + d))
+
     def _behavior_controls(self):
         spec = pianists.BEHAVIOR[self.behavior_sel]
         self.b_slider = None
@@ -569,6 +623,7 @@ class PianistStudio:
         elif self.page == "behavior":
             y = H - 20 - 40
             btn("Done", "done", y)
+            btn("Fine Tune Fingering Behavior (ADVANCED)", "finetune", y, x=20, w=300, font="small")
             lst = self._behavior_list_rects()
             for bid, r in lst:
                 spec = pianists.BEHAVIOR[bid]
@@ -580,6 +635,9 @@ class PianistStudio:
             if spec["kind"] == "slider":
                 btn("Reset to default", "reset_behavior", self._detail_rect().y + 190, h=34,
                     x=self._detail_rect().x + 24, w=200, font="small")
+        elif self.page == "finetune":
+            btn("Reset all", "reset_weights", TOP_BAR_H + 20, enabled=bool(self.work.weights))
+            btn("Done", "done", H - 20 - 40)
         return bs
 
     def _browser_rects(self):
@@ -618,7 +676,7 @@ class PianistStudio:
         W, H = self.screen.get_size()
         n = len(pianists.BEHAVIORS)
         groups = len({b["group"] for b in pianists.BEHAVIORS})
-        step = max(24, min(34, int((H - y - 16 - groups * 26) / n)))
+        step = max(20, min(34, int((H - y - 16 - 56 - groups * 26) / n)))     # (room for the fine-tune button)
         for spec in pianists.BEHAVIORS:
             if spec["group"] != group:
                 group = spec["group"]
@@ -658,6 +716,9 @@ class PianistStudio:
         # typing in the search box
         if page == "browser" and self.search.handle_event(event):
             return True
+        if page == "finetune" and event.type == pygame.MOUSEWHEEL:
+            self._ft_scroll(-event.y * 60)               # (the wheel scrolls; it doesn't move sliders)
+            return True
         for s in self._page_sliders():
             if s.handle_event(event):
                 return True
@@ -693,6 +754,11 @@ class PianistStudio:
                 if bid is not None:
                     self.sel_bone = bid
                     self._anatomy_sliders()
+            if page == "finetune":
+                for tid, r in self._ft_reset_rects:
+                    if r.collidepoint(event.pos):
+                        self._reset_weight(tid)
+                        return True
             if page == "behavior":
                 for value, r in self._opt_rects:
                     if r.collidepoint(event.pos):
@@ -722,6 +788,9 @@ class PianistStudio:
             return [s for s in (self.g_mc, self.g_ph, self.bone_slider) if s]
         if self.page == "behavior" and self.b_slider:
             return [self.b_slider]
+        if self.page == "finetune":
+            view = self._ft_view()
+            return [row["slider"] for row in self._ft_rows if view.colliderect(row["slider"].track.inflate(0, 24))]
         return []
 
     def _back(self):
@@ -730,6 +799,9 @@ class PianistStudio:
                 self.search.set_focus(False)
                 return True
             return "menu"
+        if self.page == "finetune":
+            self._open_behavior()
+            return True
         if self.page in ("anatomy", "behavior"):
             if self.page == "anatomy":
                 self.shape = getattr(self, "shape_before", self.shape)
@@ -765,6 +837,12 @@ class PianistStudio:
             self._open_anatomy()
         elif a == "behavior":
             self._open_behavior()
+        elif a == "finetune":
+            self._open_finetune()
+        elif a == "reset_weights":
+            self.work.weights = {}
+            self.dirty = True
+            self._open_finetune(keep_scroll=True)
         elif a == "rename":
             self.rename_work()
         elif a == "save":
@@ -854,7 +932,8 @@ class PianistStudio:
         titles = {"browser": "Pianists",
                   "overview": (("New pianist: " if self.is_new else "Editing: ") + self.work.name) if self.work else "",
                   "anatomy": f"{self.work.name if self.work else ''} - anatomy",
-                  "behavior": f"{self.work.name if self.work else ''} - behavior"}
+                  "behavior": f"{self.work.name if self.work else ''} - behavior",
+                  "finetune": f"{self.work.name if self.work else ''} - fine-tune fingering (advanced)"}
         title = titles[self.page] + ("  •" if self.work is not None and self.dirty and self.page != "browser" else "")
         img = self.fonts["normal"].render(title, True, TEXT)
         s.blit(img, (130, (TOP_BAR_H - img.get_height()) // 2))
@@ -1171,6 +1250,64 @@ class PianistStudio:
                 self._opt_rects.append((val, r))
                 y += r.h + 8
 
+    def _draw_finetune(self, s):
+        f = self.fonts
+        view = self._ft_view()
+        mouse = pygame.mouse.get_pos()
+        self._ft_reset_rects = []
+        s.set_clip(view)
+        for kind, item, r in self._ft_layout():
+            if r.bottom < view.y or r.y > view.bottom:
+                if kind == "row":
+                    item["slider"].layout(pygame.Rect(-1000, -1000, 10, 10))   # off screen: not clickable
+                continue
+            if kind == "group":
+                s.blit(f["label"].render(item.upper(), True, TEXT_DIM), (r.x, r.y + 6))
+                continue
+            tid, sl = item["id"], item["slider"]
+            changed = tid in self.work.weights
+            pygame.draw.rect(s, (40, 40, 50) if not r.collidepoint(mouse) else (46, 46, 58), r, border_radius=8)
+            if changed:
+                pygame.draw.circle(s, ACCENT, (r.x + 12, r.y + 18), 4)
+            s.blit(f["normal"].render(item["label"], True, TEXT), (r.x + 24, r.y + 8))
+            text_w = int(r.w * 0.46)
+            for k, line in enumerate(_wrap(item["desc"], f["small"], text_w - 30)[:2]):
+                s.blit(f["small"].render(line, True, TEXT_DIM), (r.x + 24, r.y + 32 + 17 * k))
+            reset = pygame.Rect(r.right - 84, r.y + (r.h - 30) // 2, 72, 30)
+            sx = r.x + text_w
+            sl.layout(pygame.Rect(sx, r.y + 4, reset.x - 14 - sx, 60))
+            sl.draw(s, f)
+            dflt = f["label"].render(f"default {_fmt_w(self.ft_defaults[tid])}", True, TEXT_DIM)
+            s.blit(dflt, dflt.get_rect(midtop=(sl.track.centerx, sl.track.bottom + 8)))
+            b = Button("Reset", ("reset_w", tid), font="small")
+            b.rect, b.enabled = reset, changed
+            b.draw(s, f, mouse)
+            if changed:
+                self._ft_reset_rects.append((tid, reset))
+        s.set_clip(None)
+        if self._ft_total > view.h:                      # scroll bar
+            frac = view.h / self._ft_total
+            bh = max(30, int(view.h * frac))
+            by = view.y + int((view.h - bh) * self.ft_scroll / max(1, self._ft_total - view.h))
+            pygame.draw.rect(s, PANEL_EDGE, (view.right - 8, by, 5, bh), border_radius=3)
+        # the side panel
+        W, H = s.get_size()
+        panel = pygame.Rect(W - PANEL_W, TOP_BAR_H, PANEL_W, H - TOP_BAR_H)
+        pygame.draw.rect(s, PANEL, panel)
+        pygame.draw.line(s, PANEL_EDGE, panel.topleft, panel.bottomleft)
+        y = TOP_BAR_H + 20 + 40 + 20
+        n = len(self.work.weights)
+        lines = [f"{n} weight{'s' if n != 1 else ''} changed." if n else "All weights at their defaults.", "",
+                 "Every weight of the fingering planner's cost model: the higher a weight, the more the planner "
+                 "avoids what it describes (times and distances are thresholds, not costs).",
+                 "",
+                 "A weight's default is what this pianist's behaviour settings make it; a changed weight overrides "
+                 "them. Changes apply to this pianist's fingering once saved."]
+        for para in lines:
+            for line in _wrap(para, f["small"], panel.w - 40) or [""]:
+                s.blit(f["small"].render(line, True, TEXT_DIM), (panel.x + 20, y))
+                y += 18
+
     def _draw_chrom_keys(self, s, rect, style):
         """A little keyboard, C4 to D5, with the right hand's fingers going up."""
         import figures
@@ -1194,6 +1331,10 @@ class PianistStudio:
                 pygame.draw.rect(s, (24, 24, 28), r, border_radius=2)
                 img = f.render(str(fs[p]), True, (240, 240, 240))
                 s.blit(img, img.get_rect(midbottom=(r.centerx, r.bottom - 2)))
+
+
+def _fmt_w(v):
+    return f"{v:.3g}" if abs(v) >= 0.01 or v == 0 else f"{v:.2e}"
 
 
 def _wrap(text, font, width):
