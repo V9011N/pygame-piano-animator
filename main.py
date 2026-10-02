@@ -49,7 +49,7 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    MAX_FRAME_DT, run_busy)
+                    MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy)
 import pianist as pianists
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
 from midi_loader import LEFT, RIGHT
@@ -726,7 +726,7 @@ class App:
         self.fonts = load_fonts()
         set_key_style(pianists.app_setting("keys", "realistic"))
         self.midi = MidiOut(sound)
-        self.speed = speed
+        self.speed = min(SPEED_MAX, max(SPEED_MIN, speed))
         self.last_dir = None
         self._fresh = True
         self.mode = MainMenu(self)
@@ -868,7 +868,7 @@ def main():
         from audio_sync import SyncAudio
         audio = SyncAudio(args.audio)
         audio.offset = args.audio_offset
-        app.play(args.midi, audio=audio, speed=args.audio_speed)
+        app.play(args.midi, audio=audio, speed=min(SPEED_MAX, max(SPEED_MIN, args.audio_speed)))
     elif args.midi:
         (app.edit if args.edit else app.play)(args.midi)
 

@@ -731,7 +731,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     arpeggios, Concerto No. 1, Winter Wind 20-30 s and Ocean: identical.
 - **Fingertips on their keys, whole pieces** (v26.1.6): pressed fingertips more than a quarter key off their key at
   each strike (+10 ms), old -> new. Op. 25 No. 6 RH 4 -> 0, Dante LH 10 -> 0, Winter Wind LH 1 -> 0, HR10 LH 4 -> 0,
-  Op. 25 No. 10 RH 4 -> 3, Ocean RH 177 -> 80, LH 14 -> 13; Hanon 60 0 / 1, Ossia 4 / 0 unchanged. Left: Ocean's
+  Op. 25 No. 10 RH 4 -> 4 (worst 2.35 -> 0.63 key), Ocean RH 177 -> 80, LH 14 -> 13; Hanon 60 0 / 1, Ossia 4 / 0 unchanged. Left: Ocean's
   fastest arpeggios (fingerings that don't fit at the file's pace), HR10 RH's 14 fingered notes struck between
   back-to-back glissandos (the hand is in the glissando pose), and a thumb on two keys at once (0.63 off by this
   measure, which takes one of the two keys). A rule in `_solve_hand` letting the less important of two targets

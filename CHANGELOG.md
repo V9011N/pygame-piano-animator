@@ -3,6 +3,10 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.7 - Speed limits from the command line
+- Fixed: `--speed` and `--audio-speed` took any number - 0 froze the song, a negative one ran it
+  backwards. They're now kept between 10% and 200%, like the speed keys.
+
 ## v26.1.6 - Fingers on their keys
 - Fixed: in fast, wide repeated broken chords (Chopin's Ocean Étude) the hand was held still as if
   playing a tremolo, halfway between notes it couldn't reach, so fingers struck beside their keys.

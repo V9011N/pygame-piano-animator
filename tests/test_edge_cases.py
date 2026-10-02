@@ -96,3 +96,10 @@ def test_undo_in_sequential_mode_reaching_the_other_hand(screen):
     assert ed.seq is not None and ed.seq_note() == at          # undone, and still where it was
     assert not ed.undo_stack
     ed.render()
+
+
+def test_the_speed_given_on_the_command_line_is_kept_in_range(screen):
+    from common import SPEED_MAX, SPEED_MIN
+    assert main.App(screen, sound=False, speed=-3).speed == SPEED_MIN
+    assert main.App(screen, sound=False, speed=0).speed == SPEED_MIN
+    assert main.App(screen, sound=False, speed=9).speed == SPEED_MAX
