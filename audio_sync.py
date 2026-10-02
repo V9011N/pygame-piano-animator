@@ -21,7 +21,7 @@ import numpy as np
 import pygame
 
 from common import (ACCENT, BAR_BG, BG, PANEL, PANEL_EDGE, SPEED_MAX, TEXT, TEXT_DIM,
-                    Button, Slider, _after_dialog, _tk_root, fmt_time, run_busy)
+                    Button, Slider, _after_dialog, _tk_root, fmt_time, run_busy, wrap_text)
 
 AUDIO_TYPES = [("Audio files", "*.wav *.ogg *.mp3 *.flac"), ("All files", "*.*")]
 PEAK_T = 0.005               # s, the waveform is kept as the loudest sample in each slice this long
@@ -264,19 +264,7 @@ class PlaybackSetup:
         self.back_button.draw(s, f, mouse)
         if self.message:
             y = self.back_button.rect.bottom + 24
-            for line in _wrap(f["normal"], self.message, min(760, w - 60)):
+            for line in wrap_text(f["normal"], self.message, min(760, w - 60)):
                 img = f["normal"].render(line, True, ACCENT)
                 s.blit(img, img.get_rect(midtop=(w // 2, y)))
                 y += f["normal"].get_linesize()
-
-
-def _wrap(font, text, width):
-    lines, cur = [], ""
-    for word in text.split():
-        trial = f"{cur} {word}" if cur else word
-        if cur and font.size(trial)[0] > width:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = trial
-    return lines + ([cur] if cur else [])

@@ -49,7 +49,7 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy)
+                    MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
 import pianist as pianists
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
 from midi_loader import LEFT, RIGHT
@@ -484,18 +484,6 @@ def changelog_entries(path=CHANGELOG):
         elif entries and entries[-1][1] and line.startswith("  ") and line.strip():
             entries[-1][1][-1] += " " + line.strip()
     return entries
-
-
-def wrap_text(font, text, width):
-    lines, cur = [], ""
-    for word in text.split():
-        trial = f"{cur} {word}" if cur else word
-        if cur and font.size(trial)[0] > width:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = trial
-    return lines + ([cur] if cur else [])
 
 
 class ChangelogView:

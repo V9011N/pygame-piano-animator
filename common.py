@@ -912,6 +912,19 @@ class TextInput:
             pygame.draw.line(surf, TEXT, (cx, r.y + 7), (cx, r.bottom - 8), 2)
 
 
+def wrap_text(font, text, width):
+    """`text` broken into lines no wider than `width` pixels in `font`."""
+    lines, cur = [], ""
+    for word in text.split():
+        trial = f"{cur} {word}" if cur else word
+        if cur and font.size(trial)[0] > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = trial
+    return lines + ([cur] if cur else [])
+
+
 def shade_screen(surf):
     """A copy of what's on `surf`, darkened (behind a notice)."""
     out = surf.copy()
