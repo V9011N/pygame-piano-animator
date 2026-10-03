@@ -214,6 +214,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     95 → 89, Dante Sonata 50 → 32; the files with hand tracks split as before.
   - **Repeats**: a chord struck again within 0.5 s and split differently from the time before costs 4.
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
+  - **Trills stay in one hand** (v26.1.18.SNAPSHOT-02): `figures.find_trills` finds them in all the notes before
+    the split (each pair of neighbouring keys on its own, so the other hand's notes in between don't break one).
+    Every beam path remembers the hand each trill in progress went to (`th`, part of the merge key), and splits
+    giving any of its notes to the other hand are dropped - the costs decide which hand, then the other may not
+    pitch in. Trills shared between the hands before: Ballade 2 of 5 (306.2 s: one A#3 of ten to the LH), Dante
+    1 of 7, Winter Wind 1 of 7; now 0. Late chords unchanged (Ballade, Winter Wind) or moved between hands
+    (Dante 32 -> 32); split time unchanged.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
   - **Track hands** (2026-10-02): every note goes through the split now, not only notes whose track doesn't say.
@@ -266,7 +273,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - Not detected: open-position arpeggios (fifths, sixths, an octave+ per hand position - Op. 10 No. 1, Op. 25
       No. 12); they're left to the planner.
   - **Repeated notes**: 3-2-1 (4-3-2-1 for groups of 4).
-  - **Trills** (≥ 6 alternations of neighbouring notes): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
+  - **Trills** (`TRILL_MIN_NOTES` 6+ strikes alternating between neighbouring keys, 1-2 semitones, each within
+    `TRILL_GAP_T` 0.2 s and after more than `TRILL_CHORD_T` 0.035 s - not seconds struck together; the same
+    definition `find_trills` gives the hand split): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
   - **Octaves**: in octave passages, 1-5 with 4 on black keys (LH mirrored). A lone octave allows 4 or 5. Broken octaves are handled too.
   - **Chromatic thirds** (monotonic semitone steps): Hanon 50's 12-step table by lower-note pitch class.
   - **Scales in thirds** (monotonic stepwise): Hanon 52's four-third + three-third groups per key (`THIRDS_4GROUP`); weight 5.1, because the crossings they need look awkward note by note.

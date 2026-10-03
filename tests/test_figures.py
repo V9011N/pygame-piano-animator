@@ -133,3 +133,32 @@ def test_a_fast_step_is_not_a_chord():
     c = Note(64, 1.02, 1.07, 80, 0, RIGHT)          # a third struck with it: a chord
     assert len(F.group_notes([a, b])) == 2
     assert len(F.group_notes([a, c])) == 1
+
+
+def test_trills_are_found_among_both_hands_notes():
+    from figures import find_trills
+    from midi_loader import Note, RIGHT
+    trill = [Note(60 if i % 2 == 0 else 62, 0.1 * i, 0.1 * i + 0.09, 80, 0, RIGHT) for i in range(10)]
+    others = [Note(p, 0.05 + 0.15 * i, 0.05 + 0.15 * i + 0.1, 70, 0, RIGHT) for i, p in enumerate([48, 55, 52, 67, 72, 64])]
+    found = find_trills(trill + others)
+    assert len(found) == 1 and [id(n) for n in found[0]] == [id(n) for n in trill]
+    # seconds struck together, again and again, aren't a trill; nor is a short shake
+    seconds = [Note(p, 0.15 * i, 0.15 * i + 0.1, 80, 0, RIGHT) for i in range(6) for p in (60, 62)]
+    assert find_trills(seconds) == []
+    assert find_trills(trill[:5]) == []
+
+
+def test_a_trill_is_played_by_one_hand():
+    # a trill on C4-D4 right between the hands (LH up to A3, RH down to E4): the split used
+    # to hand some of its notes to the left hand; now the other hand may not pitch in
+    import hand_split
+    from figures import find_trills
+    from midi_loader import Note, RIGHT
+    ns = [Note(60 if i % 2 == 0 else 62, 0.5 + 0.08 * i, 0.5 + 0.08 * i + 0.07, 80, 0, RIGHT) for i in range(14)]
+    for i in range(10):
+        t = 0.5 + 0.15 * i
+        ns.append(Note([45, 52, 57, 52][i % 4], t + 0.02, t + 0.14, 70, 0, RIGHT))
+        ns.append(Note([64, 67, 72, 67][i % 4], t + 0.07, t + 0.14, 70, 0, RIGHT))
+    (trill,) = find_trills(ns)
+    r = hand_split.split_hands(ns)
+    assert len({r[id(n)] for n in trill}) == 1

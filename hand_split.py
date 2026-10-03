@@ -42,6 +42,7 @@ import bisect
 import math
 
 import progress
+from figures import find_trills
 from fingering import key_pos, travel_time, MOVE_SHARE
 
 LEFT, RIGHT = "L", "R"
@@ -302,7 +303,7 @@ def split_hands(notes, pianist=None, prefer=None):
     if not groups:
         return {}
     weight = _track_weights(groups, prefer) if prefer else {}
-    # beam entries: (cost, right_hand, left_hand, back_pointer, split)
+    # beam entries: (cost, right_hand, left_hand, back_pointer, split, track hands, trill hands)
     # start each hand where the opening music sits (upper / lower quartile)
     first = sorted(n.pitch for _, ns in groups[:40] for n in ns)
     hi_c = first[(3 * len(first)) // 4] if len(first) > 3 else 67.0
@@ -313,7 +314,16 @@ def split_hands(notes, pianist=None, prefer=None):
     # voices), a voice tends to stay in one hand: switching a track's notes to
     # the other hand soon after costs.
     multi = len({getattr(n, "track", 0) for _, ns in groups for n in ns if id(n) not in prefer}) > 1
-    beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, ())]
+    # A trill is played by one hand: the other may not take any of its notes
+    # (figures.find_trills). Each path remembers the hand its trills in
+    # progress went to, and splits that would give a note to the other are
+    # left out (all to one hand is always one of them, so some split fits).
+    trill_of, trill_end = {}, {}
+    for e, run in enumerate(find_trills([n for _, ns in groups for n in ns])):
+        for n in run:
+            trill_of[id(n)] = e
+        trill_end[e] = run[-1].start
+    beam = [(0.0, _Hand(float(hi_c)), _Hand(float(lo_c)), None, None, (), ())]
     history = []
     last_group = None
     for gi, (t, ns) in enumerate(groups):
@@ -330,10 +340,24 @@ def split_hands(notes, pianist=None, prefer=None):
             if ln != ns[:len(ln)]:
                 splits.append((-1, ln, [n for n in ns if prefer[id(n)] != LEFT]))
         parts = [(_Part(rn, RIGHT), _Part(ln, LEFT)) for _, ln, rn in splits]
+        # each split's trill notes: {trill: hand}, or None if it would share one between the hands
+        trill_hands = []
+        for _, ln, rn in splits:
+            d = {}
+            for n, h in [(n, LEFT) for n in ln] + [(n, RIGHT) for n in rn]:
+                e = trill_of.get(id(n))
+                if e is not None:
+                    if d.setdefault(e, h) != h:
+                        d = None
+                        break
+            trill_hands.append(d)
         cand = []
-        for bi, (cost, rh, lh, _, pk, tr) in enumerate(beam):
+        for bi, (cost, rh, lh, _, pk, tr, th) in enumerate(beam):
             last = dict(tr)
-            for (k, ln, rn), (rp, lp) in zip(splits, parts):
+            held = dict(th)
+            for (k, ln, rn), (rp, lp), d in zip(splits, parts, trill_hands):
+                if d is None or any(held.get(e, h) != h for e, h in d.items()):
+                    continue                    # (the other hand has this trill)
                 c = cost + _hand_cost(rh, t, rp, RIGHT, lh) + _hand_cost(lh, t, lp, LEFT, rh)
                 if repeat and k != pk:
                     c += REPEAT_SPLIT
@@ -348,11 +372,15 @@ def split_hands(notes, pianist=None, prefer=None):
                         prev = last.get(getattr(n, "track", 0))
                         if prev and prev[0] != h and t - prev[1] < TRACK_T:
                             c += TRACK_SWITCH
-                cand.append((c, bi, k, ln, rn))
+                cand.append((c, bi, k, ln, rn, d))
         cand.sort(key=lambda x: x[0])
         new, seen = [], set()
-        for c, bi, k, ln, rn in cand:
-            _, rh, lh, _, _, tr = beam[bi]
+        for c, bi, k, ln, rn, d in cand:
+            _, rh, lh, _, _, tr, th = beam[bi]
+            if d or th:
+                held = dict(th)
+                held.update(d)
+                th = tuple(sorted((e, h) for e, h in held.items() if trill_end[e] > t + 1e-9))
             nr, nl = rh.after(t, rn), lh.after(t, ln)
             if multi:
                 d = dict(tr)
@@ -365,11 +393,11 @@ def split_hands(notes, pianist=None, prefer=None):
             else:
                 hands_key = ()
             # merge candidates whose hands are in (almost) the same place
-            key = (round(nr.center), round(nl.center), k, hands_key)
+            key = (round(nr.center), round(nl.center), k, hands_key, th)
             if key in seen:
                 continue
             seen.add(key)
-            new.append((c, nr, nl, bi, k, tr))
+            new.append((c, nr, nl, bi, k, tr, th))
             if len(new) >= BEAM:
                 break
         history.append([(e[3], e[4]) for e in new])

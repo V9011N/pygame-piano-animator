@@ -40,6 +40,13 @@ import math
 LEFT, RIGHT = "L", "R"
 BLACK = {1, 3, 6, 8, 10}
 
+# Trills: two neighbouring keys (1-2 semitones apart) struck in turn, each strike at most
+# TRILL_GAP_T after the last (and more than TRILL_CHORD_T: two struck together are a second,
+# not a trill), TRILL_MIN_NOTES or more. Played by one hand (find_trills, hand_split).
+TRILL_GAP_T = 0.2
+TRILL_CHORD_T = 0.035
+TRILL_MIN_NOTES = 6
+
 # ----------------------------------------------------------------- keys
 PC = {'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7,
       'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11}
@@ -523,6 +530,45 @@ def _inner_note_down(groups, gi, lo, hi):
     return False
 
 
+def find_trills(notes):
+    """
+    [[note, ...]] the trills among `notes` (both hands, before they are split:
+    hand_split keeps each in one hand), each in time order. Each pair of
+    neighbouring keys is looked at on its own, so the other hand's notes in
+    between don't break a trill. A note belongs to one trill at most (the
+    longer one, where two share a key - a trill moving up a step, say).
+    """
+    by_pitch = {}
+    for n in notes:
+        by_pitch.setdefault(n.pitch, []).append(n)
+    found = []
+    for p in sorted(by_pitch):
+        for q in (p + 1, p + 2):
+            if q not in by_pitch:
+                continue
+            seq = sorted(by_pitch[p] + by_pitch[q], key=lambda n: (n.start, n.pitch))
+            run = [seq[0]]
+            for n in seq[1:] + [None]:
+                ok = (n is not None and n.pitch != run[-1].pitch
+                      and TRILL_CHORD_T < n.start - run[-1].start <= TRILL_GAP_T)
+                if ok:
+                    run.append(n)
+                    continue
+                if len(run) >= TRILL_MIN_NOTES:
+                    found.append(run)
+                # a key struck again (or a pause) ends it; the next run may start from here
+                run = [n] if n is not None else []
+    found.sort(key=len, reverse=True)
+    used, out = set(), []
+    for run in found:
+        run = [n for n in run if id(n) not in used]
+        if len(run) >= TRILL_MIN_NOTES:
+            used.update(id(n) for n in run)
+            out.append(run)
+    out.sort(key=lambda r: r[0].start)
+    return out
+
+
 def _repeated_and_trills(notes, ps, ts, hand, put):
     n = len(ps)
     i = 0
@@ -564,15 +610,15 @@ def _repeated_and_trills(notes, ps, ts, hand, put):
             i = j + 1
             continue
         i += 1
-    # trills: two neighbouring notes alternating quickly, 4+ times
+    # trills: two neighbouring notes alternating quickly (TRILL_*)
     i = 0
     while i + 3 < n:
         a, b = ps[i], ps[i + 1]
-        if 1 <= abs(a - b) <= 2 and ts[i + 1] - ts[i] < 0.2:
+        if 1 <= abs(a - b) <= 2 and ts[i + 1] - ts[i] < TRILL_GAP_T:
             j = i + 1
-            while j + 1 < n and ps[j + 1] == ps[j - 1] and ts[j + 1] - ts[j] < 0.2:
+            while j + 1 < n and ps[j + 1] == ps[j - 1] and ts[j + 1] - ts[j] < TRILL_GAP_T:
                 j += 1
-            if j - i + 1 >= 6:                    # shorter shakes belong to the figure around them
+            if j - i + 1 >= TRILL_MIN_NOTES:      # shorter shakes belong to the figure around them
                 lo, hi = min(a, b), max(a, b)
                 style = PREFS.get("trill", "auto")
                 if style == "auto":
