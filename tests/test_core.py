@@ -730,7 +730,8 @@ def test_a_hand_resting_where_it_plays_next_stays_put(screen):
 def test_chromatic_run_fingers_do_not_twitch():
     # 1-3 chromatic scale (1-2-3 at E-F-F#, B-C-C#): a finger heading for its next key
     # waits for the neighbour still on a key in its way instead of being held back by
-    # it and hopping on - no back-and-forth (was 5 or 6 for the index and middle)
+    # it and hopping on, and isn't pushed back off its neighbour as it lets go of a
+    # key next to that one's - no back-and-forth (was 5 or 6 for the index and middle)
     from common import Keyboard, bottom_layout
     fing = [1, 3, 1, 3, 1, 2, 3, 1, 3, 1, 3, 2]
     step = 0.06
@@ -747,7 +748,8 @@ def test_chromatic_run_fingers_do_not_twitch():
         t += 1 / 60
     for f, v in xs.items():
         d = [b - x for x, b in zip(v, v[1:])]
-        back = sum(1 for p, q in zip(d, d[1:]) if p * q < 0 and abs(p) > 3 and abs(q) > 3)
+        d = [x for x in d if abs(x) > 2]                  # (still frames between don't hide a step back)
+        back = sum(1 for p, q in zip(d, d[1:]) if p * q < 0)
         assert back == 0, (f, back)
 
 
@@ -796,3 +798,38 @@ def test_thumb_passing_under_is_hidden_by_the_hand():
                 c0, c1 = shots[0].get_at((int(q[0]), int(q[1]))), shots[1].get_at((int(q[0]), int(q[1])))
                 assert max(abs(u - v) for u, v in zip(c0[:3], c1[:3])) <= 3, (t, c0, c1)
     assert tucked > 0
+
+
+def test_chromatic_octaves_glide_as_a_run():
+    # descending chromatic octaves, 1-4 on black keys and 1-5 on white: a run (the hand
+    # glides, and the key fit moves it rather than turning it for each 4 and 5)
+    import math
+    from common import Keyboard, bottom_layout
+    black = {1, 3, 6, 8, 10}
+    ns = []
+    for i in range(14):
+        p, t = 82 - i, 0.3 + i * 0.12
+        ns += [Note(p - 12, t, t + 0.1, 90, 0, RIGHT, finger=1),
+               Note(p, t, t + 0.1, 90, 0, RIGHT, finger=4 if p % 12 in black else 5)]
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    assert len(a.runs) == 1
+    turns, t = [], 0.5
+    while t < 0.3 + 13 * 0.12:
+        a.pose(t, kb)
+        turns.append(math.degrees(a._limited_at(t)[2]))
+        t += 1 / 60
+    turning = sum(abs(b - x) for x, b in zip(turns, turns[1:]))
+    assert turning < 102, turning              # (112 when each octave was fitted on its own)
+
+
+def test_split_keeps_a_repeated_chord_in_its_hand():
+    # left hand repeating A#3-C#4-E4 under a fast right-hand chromatic scale, once with
+    # F#4 on top: that F#4 stays with its chord, not taken by the scale's thumb mid-run
+    import hand_split
+    ns = [Note(67 + i, i * 0.08, i * 0.08 + 0.075, 80, 0, RIGHT) for i in range(20)]
+    for k, t in enumerate((0.0, 0.16, 0.32, 0.48, 0.64, 0.80, 0.96, 1.12)):
+        for p in (58, 61, 66 if k == 4 else 64):
+            ns.append(Note(p, t + 0.012, t + 0.11, 70, 0, RIGHT))
+    r = hand_split.split_hands(ns)
+    assert all(r[id(n)] == (RIGHT if n.pitch >= 67 else LEFT) for n in ns)

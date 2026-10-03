@@ -62,6 +62,7 @@ TOO_FAST = 60.0
 MOVE_COST = 0.06         # per semitone of any shift (hands prefer to stay put)
 SPEED_COST = 0.25        # per 40 semitones/second of travel the note demands
 CHORD_COST = 0.5         # per extra note in a chord, when chords come quickly
+REPEAT_SHAPE = 0.3       # ... this share of it for keys the hand's last chord was on
 HELD_TOL = 0.03
 TRACK_T = 1.5            # a track's notes played by one hand ...
 TRACK_SWITCH = 12.0       # ... cost this to move to the other hand within TRACK_T
@@ -87,24 +88,25 @@ def _groups(notes):
 
 class _Hand:
     """A hand's recent history along one candidate path (immutable-ish)."""
-    __slots__ = ("center", "last_t", "last_lo", "last_hi", "held")
+    __slots__ = ("center", "last_t", "last_lo", "last_hi", "held", "last_ps")
 
-    def __init__(self, center, last_t=-math.inf, last_lo=None, last_hi=None, held=()):
+    def __init__(self, center, last_t=-math.inf, last_lo=None, last_hi=None, held=(), last_ps=()):
         self.center = center          # where the hand is, in semitones
         self.last_t = last_t          # when it last played
         self.last_lo = last_lo        # range of the last group it played
         self.last_hi = last_hi
         self.held = held              # ((end_time, pitch), ...) still sounding
+        self.last_ps = last_ps        # the keys of the last group it played
 
     def after(self, t, notes):
         held = tuple(h for h in self.held if h[0] > t + HELD_TOL)
         if not notes:
-            return _Hand(self.center, self.last_t, self.last_lo, self.last_hi, held)
+            return _Hand(self.center, self.last_t, self.last_lo, self.last_hi, held, self.last_ps)
         ps = [n.pitch for n in notes]
         m = sum(ps) / len(ps)
         # the hand centres on what it just played, remembering a little of before
         c = m if self.last_lo is None else 0.7 * m + 0.3 * self.center
-        return _Hand(c, t, min(ps), max(ps), held + tuple((n.end, n.pitch) for n in notes))
+        return _Hand(c, t, min(ps), max(ps), held + tuple((n.end, n.pitch) for n in notes), tuple(ps))
 
 
 class _Part:
@@ -164,9 +166,13 @@ def _hand_cost(hand, t, part, side, other):
     # --- chords at speed: a hand playing several notes at once, again and
     # again, is working harder than two hands sharing the load
     # (small shapes - thirds, fourths, sixths - are what one hand is for)
+    # (a chord mostly on the keys of the hand's last one - accompaniment
+    # repeating its shape - is less work: only its new keys count fully; else
+    # a scale in the other hand took the odd new note, mid-run)
     if part.chord is not None:
         dt_h = t - hand.last_t if hand.last_lo is not None else 1.0
-        c += part.chord * min(3.0, 0.4 / max(1e-3, dt_h))
+        new = sum(1 for p in ps if p not in hand.last_ps) / len(ps)
+        c += part.chord * min(3.0, 0.4 / max(1e-3, dt_h)) * (REPEAT_SHAPE + (1.0 - REPEAT_SHAPE) * new)
     if hand.last_lo is None:
         c += MOVE_COST * abs(part.m - hand.center)          # first notes: near where it starts
     # --- movement since the hand last played
