@@ -140,6 +140,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   changes differs from the exported tempo map (which the loader reads exactly - checked against mido). A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
   synth is muted while a recording plays (restored on leaving); M mutes the recording instead; the speed
   keys do nothing.
+- The end (v26.1.17): playback stops at `Transport.end_time()` - the last note plus `END_PAD_T` 0.5 s, or with a
+  recording `Visualizer.end_time()`, no earlier than where the recording ends, `(length - offset) * speed`
+  (+ `END_PAD_T`): a recording that rings on past the MIDI (a final chord's decay, applause) is heard to its end
+  instead of being cut off with the last note. The top bar counts to that end; play from there starts over.
 - The waveform strip (`WAVE_H` 56 px, under the top bar, the falling notes below it) is on the same
   timeline as the top bar (song times 0..duration across the width): bright where the MIDI is, dimmed
   outside; a translucent progress fill from the left and the playhead. Dragging it moves the recording

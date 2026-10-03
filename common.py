@@ -483,6 +483,9 @@ class Performance:
         return self.items[lo:hi]
 
 
+END_PAD_T = 0.5             # s, playback stops this long after the end (Transport.end_time)
+
+
 class Transport:
     """
     Song clock with play/pause, seek and speed, sending to the synth what
@@ -529,7 +532,7 @@ class Transport:
     def toggle_pause(self):
         if not self.song:
             return
-        if self.paused and self.t >= self.song.duration:
+        if self.paused and self.t >= self.end_time() - END_PAD_T:
             self.seek(-LEAD_IN)
         self.paused = not self.paused
         if self.paused:
@@ -541,13 +544,17 @@ class Transport:
     def change_speed(self, delta):
         self.speed = max(SPEED_MIN, min(SPEED_MAX, round(self.speed + delta, 2)))
 
+    def end_time(self):
+        """When playback stops (song time): a moment after the last note."""
+        return self.song.duration + END_PAD_T
+
     def update(self, dt):
         if not self.song or self.paused:
             return
         t0, t1 = self.t, self.t + dt * self.speed
         self.t = t1
-        if t1 >= self.song.duration + 0.5:
-            self.t = self.song.duration
+        if t1 >= self.end_time():
+            self.t = self.end_time() - END_PAD_T
             self.paused = True
             self.midi.pedals_up()
             self.midi.all_off()
