@@ -3,6 +3,16 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.11 - Ready to build as a single .exe
+- Piano Animator can now be built into one `PianoAnimator.exe` with Nuitka (`python build.py`; see the
+  README). It needs no Python, starts quickly after its first run, and has its own icon.
+- The .exe keeps your pianists and settings in your user folder (`%APPDATA%\Piano Animator`), or beside
+  itself if there's a `pianists` folder there.
+- If it ever runs into a problem it says so in a message box and writes the details to a log file,
+  instead of vanishing.
+- `--version` prints the version. A recording given with `--audio` that can't be opened is reported,
+  and the song plays with the synth instead.
+
 ## v26.1.10 - Hands modelled on a real hand
 - The hands now play the way a real pianist's do, measured from a video real hands: long, gently
   arched fingers instead of hooked ones, the fingertips further into the keys and the knuckles nearer

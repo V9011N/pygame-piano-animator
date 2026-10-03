@@ -16,8 +16,9 @@ import re
 import time
 from dataclasses import dataclass, field
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-FOLDER = os.path.join(HERE, "pianists")
+import paths
+
+FOLDER = os.path.join(paths.DATA_DIR, "pianists")      # (next to the code from source; see paths.py when compiled)
 SETTINGS = os.path.join(FOLDER, "settings.json")
 DEFAULT_ID = "default"
 

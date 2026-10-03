@@ -894,3 +894,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - More figure types: broken-chord patterns, tremolos, double-sixth scales, octave scales with legato fingering.
   - Rolled chords wider than the hand (fingering/animation side).
 - Animation: faster reshaping in presto passages.
+
+## The single-file build (build.py, paths.py, v26.1.11)
+- `python build.py` runs Nuitka `--onefile` on `main.py` -> `dist/PianoAnimator.exe` (`.bin` elsewhere). Options:
+  the tk-inter plugin (file dialogs; skipped with a warning when the building Python has no tkinter),
+  `CHANGELOG.md` and `assets/icon.png` as data files, `pig_eval` / `learn_weights` / tests not followed, pytest
+  and setuptools left out, pretty_midi's unused soundfont (`*.sf2`, 6 MB) left out, Windows console disabled
+  (`--console`: forced), the icon from `assets/icon.ico`, product and file versions from `VERSION`
+  (`v26.1.11` -> `26.1.11.0`). `--onefile-tempdir-spec={CACHE_DIR}/PianoAnimator/{VERSION}`: unpacked once per
+  version and reused (a ~1 s start), not to a fresh temp folder each launch.
+- `paths.py`: `COMPILED` (Nuitka's `__compiled__`), `RESOURCE_DIR` (beside the modules: bundled, read-only),
+  `DATA_DIR` (from source the same folder, so `pianists/` is where it always was; compiled, a `pianists` folder
+  beside the .exe if one exists - portable - else `%APPDATA%\Piano Animator`, `$XDG_DATA_HOME/piano-animator`
+  elsewhere). `pianist.FOLDER` and the changelog-seen marker live under `DATA_DIR`.
+- `main.py`: compiled and with no console (stdout missing or not a terminal), output goes to
+  `DATA_DIR/piano_animator.log` (started afresh past 1 MB, a header per launch); an uncaught error is logged with
+  its traceback and shown in a tkinter message box naming the log, exit code 1. The window icon is
+  `assets/icon.png`; `PYGAME_HIDE_SUPPORT_PROMPT` hides pygame's banner; `--version`.
+- Checked by building on Linux (Nuitka 4.2.2, gcc; ~4 min, 27 MB): run from another folder it renders the player
+  (`--screenshot`), unpacks to the cache folder, logs to the data folder, honours a portable `pianists` folder, and
+  logs a forced crash. The Windows build uses the same options plus the icon and console flags.

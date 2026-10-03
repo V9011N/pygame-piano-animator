@@ -77,6 +77,37 @@ Other options: `--no-sound`, `--speed 0.5`, `--screenshot frame.png --at 12.5`, 
 Keyboard controls are listed at the top of `main.py` (player) and `editor.py` (editor), and in
 the app's status lines.
 
+## A single .exe (Windows)
+
+Piano Animator can be built into one self-contained `PianoAnimator.exe` with
+[Nuitka](https://nuitka.net) - no Python needed on the computer that runs it:
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+python build.py                  # -> dist\PianoAnimator.exe (no console window)
+python build.py --console        # the same with a console window, for testing
+```
+
+Nuitka needs a C compiler: it offers to download MinGW64 the first time (accepted automatically),
+or uses Visual Studio's if installed. The first build takes several minutes; later ones reuse
+the compiled parts in `build\`. Build with the Python you develop with (it has tkinter, needed for
+the file dialogs).
+
+Using the .exe:
+
+- Double-click it, drop MIDI files on its window, or open a `.mid` file with it ("Open with").
+  The command-line options above work too.
+- It unpacks itself once per version to `%LOCALAPPDATA%\PianoAnimator\<version>` and starts
+  quickly from then on.
+- Your pianists and settings are kept in `%APPDATA%\Piano Animator\pianists` - or, to keep everything
+  beside the .exe (a USB stick, say), make a folder called `pianists` next to it.
+- If something goes wrong it says so in a message box; the details go to `piano_animator.log` in
+  the same data folder.
+- To move pianists from a source checkout, copy the checkout's `pianists` folder there.
+
+To change the icon, edit `tools/make_icon.py` and run it (it writes `assets/icon.png` and
+`assets/icon.ico`).
+
 ## Fingering in MIDI files
 
 Exported files are byte-for-byte copies of the original with a text event before each note:
