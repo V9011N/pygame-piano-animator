@@ -833,3 +833,12 @@ def test_split_keeps_a_repeated_chord_in_its_hand():
             ns.append(Note(p, t + 0.012, t + 0.11, 70, 0, RIGHT))
     r = hand_split.split_hands(ns)
     assert all(r[id(n)] == (RIGHT if n.pitch >= 67 else LEFT) for n in ns)
+
+
+def test_wide_chord_with_the_thumb_on_two_keys_is_rolled():
+    # LH G1 + A#2-C3, the thumb on both top keys (as in Scriabin's Fantasy Op. 28): too
+    # wide, so rolled - two notes with one finger have no stretch between them (KeyError)
+    ns = [Note(p, 0.0, 1.0, 80, 1, LEFT, finger=f) for p, f in ((31, 5), (46, 1), (48, 1))]
+    a = hands.HandAnimator(song_of(ns), LEFT)
+    assert a.rolled == 1
+    assert [a.fingering[id(n)] for n in ns] == [5, 1, 1]

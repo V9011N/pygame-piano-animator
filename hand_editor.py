@@ -226,7 +226,7 @@ class PianistStudio:
         self._cells = []
         self._opt_rects = []
         self.sliders = []
-        pygame.display.set_caption(f"Piano Animator {VERSION} - pianists")
+        pygame.display.set_caption(f"Hand-thesia {VERSION} - pianists")
 
     # ----- data ---------------------------------------------------------------
     def _refresh(self, reload=False):

@@ -3,6 +3,14 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.16 - Hand-thesia, with pedals
+- Piano Animator is now called Hand-thesia. In the .exe your pianists and settings move along by themselves
+  (from `AppData\Roaming\Piano Animator` to `AppData\Roaming\Hand-thesia`), and the program is `Hand-thesia.exe`.
+- The pedals are drawn in the bottom-left corner: soft, sostenuto and sustain, each lighting up while the music
+  holds it down.
+- Fixed: some MIDI files couldn't be opened - those with a wide chord where the thumb plays two keys at once
+  (Scriabin's Fantasy Op. 28 from the MAESTRO collection, for one).
+
 ## v26.1.15 - Chromatic scales and octaves
 - Chromatic scales: fingers no longer step back as they let go of a key next to their neighbour's and then spring
   forward, and a finger no longer hovers and then jumps when its neighbour holds a key too long.

@@ -1,5 +1,5 @@
 """
-main.py - Piano Animator: falling-notes player and fingering editor, built on Pygame.
+main.py - Hand-thesia: falling-notes player and fingering editor, built on Pygame.
 
     python main.py                  # main menu
     python main.py song.mid         # play a file straight away (falling notes)
@@ -110,7 +110,7 @@ class Visualizer(Transport):
         self.t = -LEAD_IN
         self.paused = bool(self.audio)          # with a recording: paused, to line it up first
         self.sounding = {}
-        pygame.display.set_caption(f"Piano Animator {VERSION} - {song.title}")
+        pygame.display.set_caption(f"Hand-thesia {VERSION} - {song.title}")
 
     def layout(self, size):
         w, h = size
@@ -392,7 +392,7 @@ class Visualizer(Transport):
             draw_hands(s, [a.pose(self.t, kb) for a in self.hands.values()])
             s.set_clip(None)
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
-                           self.sustain_down() if self.song and self.song.controls else None)
+                           self.song.control_state(self.t) if self.song else None)
         self._draw_top_bar()
         if self.audio:
             self._draw_wave()
@@ -589,7 +589,7 @@ class MainMenu:
         self.changelog_new = not changelog_seen()       # glows until opened
         self.changelog = None
         self.layout(app.screen.get_size())
-        pygame.display.set_caption(f"Piano Animator {VERSION}")
+        pygame.display.set_caption(f"Hand-thesia {VERSION}")
 
     def layout(self, size):
         w, h = size
@@ -676,7 +676,7 @@ class MainMenu:
         draw_felt(s, pygame.Rect(0, kb.rect.y - FELT_H, w, FELT_H))
 
         top = self.buttons[0].rect.y
-        title = f["title"].render("Piano Animator", True, TEXT)
+        title = f["title"].render("Hand-thesia", True, TEXT)
         s.blit(title, title.get_rect(midbottom=(w // 2, top - 50)))
         sub = f["normal"].render("MIDI playback with animated hands and fingering", True, TEXT_DIM)
         s.blit(sub, sub.get_rect(midbottom=(w // 2, top - 20)))
@@ -860,7 +860,7 @@ def _log_to_file():
         log = open(path, mode, encoding="utf-8", buffering=1, errors="replace")
     except OSError:
         return
-    log.write(f"\n--- Piano Animator {VERSION}, {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    log.write(f"\n--- Hand-thesia {VERSION}, {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
     sys.stdout = sys.stderr = log
 
 
@@ -877,7 +877,7 @@ def _report_crash():
         from tkinter import messagebox
         from common import _tk_root
         root = _tk_root()
-        messagebox.showerror("Piano Animator", "Piano Animator ran into a problem and has to close.\n\n"
+        messagebox.showerror("Hand-thesia", "Hand-thesia ran into a problem and has to close.\n\n"
                              f"{details.strip().splitlines()[-1]}\n\nThe details are in {paths.log_path()}",
                              parent=root)
         root.destroy()
@@ -893,8 +893,8 @@ def _set_window_icon():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Piano Animator: falling notes and fingering editor")
-    parser.add_argument("--version", action="version", version=f"Piano Animator {VERSION}")
+    parser = argparse.ArgumentParser(description="Hand-thesia: falling notes and fingering editor")
+    parser.add_argument("--version", action="version", version=f"Hand-thesia {VERSION}")
     parser.add_argument("midi", nargs="?", help="MIDI file to open straight away")
     parser.add_argument("--edit", action="store_true", help="open the file in the fingering editor")
     parser.add_argument("--no-sound", action="store_true", help="don't play through the MIDI synth")
@@ -910,7 +910,7 @@ def main():
     pygame.init()
     _set_window_icon()
     screen = pygame.display.set_mode(WINDOW_SIZE, pygame.RESIZABLE)
-    pygame.display.set_caption(f"Piano Animator {VERSION}")
+    pygame.display.set_caption(f"Hand-thesia {VERSION}")
     app = App(screen, sound=not args.no_sound and not args.screenshot, speed=args.speed)
     audio = None
     if args.midi and args.audio and not args.edit:

@@ -79,12 +79,12 @@ the app's status lines.
 
 ## A single .exe (Windows)
 
-Piano Animator can be built into one self-contained `PianoAnimator.exe` with
+Hand-thesia can be built into one self-contained `Hand-thesia.exe` with
 [Nuitka](https://nuitka.net) - no Python needed on the computer that runs it:
 
 ```bash
 pip install -r requirements.txt -r requirements-build.txt
-python build.py                  # -> dist\PianoAnimator.exe (no console window)
+python build.py                  # -> dist\Hand-thesia.exe (no console window)
 python build.py --console        # the same with a console window, for testing
 ```
 
@@ -99,13 +99,13 @@ Using the .exe:
 
 - Double-click it, drop MIDI files on its window, or open a `.mid` file with it ("Open with").
   The command-line options above work too.
-- It unpacks itself once per version to `%LOCALAPPDATA%\PianoAnimator\<version>` and starts
+- It unpacks itself once per version to `%LOCALAPPDATA%\Hand-thesia\<version>` and starts
   quickly from then on.
-- Your pianists and settings are kept in `%APPDATA%\Piano Animator\pianists` (that's
+- Your pianists and settings are kept in `%APPDATA%\Hand-thesia\pianists` (that's
   `C:\Users\<you>\AppData\Roaming\...` - not `AppData\Local`, where the program unpacks itself) - or, to
   keep everything beside the .exe (a USB stick, say), make a folder called `pianists` next to it. The folder
   appears once a pianist is saved or a setting changed; "Open pianists folder" in Pianists & hands opens it.
-- If something goes wrong it says so in a message box; the details go to `piano_animator.log` in
+- If something goes wrong it says so in a message box; the details go to `hand-thesia.log` in
   the same data folder.
 - To move pianists from a source checkout, copy the checkout's `pianists` folder there.
 

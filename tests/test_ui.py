@@ -235,3 +235,24 @@ def test_version_matches_the_changelog():
     with open(path, encoding="utf-8") as fh:
         top = next(line for line in fh if line.startswith("## "))
     assert top.split(" ")[1] == VERSION, top
+
+
+def test_pedals_light_up_and_keep_clear_of_the_version(screen):
+    # soft (left) down, sostenuto (middle) and sustain (right) up: only the left one is red
+    import common
+    import pianist
+    from midi_loader import SOFT, SOSTENUTO, SUSTAIN
+    app = app_on(screen)
+    screen.fill((0, 0, 0))
+    area = pygame.Rect(0, screen.get_height() - 300, screen.get_width(), 300)
+    r = common.draw_pianist_badge(screen, app.fonts, area, pianist.active(), {SOFT: 127, SOSTENUTO: 0, SUSTAIN: 0})
+    scale = r.w / (common.PEDAL_SIZE[0] + 0.7)
+
+    def foot(x, y):
+        return screen.get_at((int(r.x + x * scale), int(r.y + (y - common.PEDAL_TOP) * scale)))[:3]
+    red, mid, right = foot(31, 72), foot(60, 70), foot(89, 70)
+    assert red[0] > red[1] + 80                                   # lit
+    for c in (mid, right):
+        assert c[0] > 150 and c[1] > 130 and c[2] < c[1] - 30      # brass
+    version_top = screen.get_height() - app.fonts["small"].get_height() - 4    # (App.draw_version)
+    assert r.bottom <= version_top
