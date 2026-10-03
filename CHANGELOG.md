@@ -3,6 +3,11 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.13 - Find your pianists
+- New "Open pianists folder" button in Pianists & hands: it opens the folder where your pianists and
+  settings are kept, and shows its full path. In the .exe that's `AppData\Roaming\Piano Animator\pianists`
+  (not `AppData\Local`, which only holds the program itself).
+
 ## v26.1.12 - Building with Python 3.14
 - Fixed: building the .exe with Python 3.14 from python.org stopped with "Could not find Tcl". The
   build now asks Python's Tcl and Tk where their libraries are (and copies them out when they're

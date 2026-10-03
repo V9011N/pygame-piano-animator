@@ -101,8 +101,10 @@ Using the .exe:
   The command-line options above work too.
 - It unpacks itself once per version to `%LOCALAPPDATA%\PianoAnimator\<version>` and starts
   quickly from then on.
-- Your pianists and settings are kept in `%APPDATA%\Piano Animator\pianists` - or, to keep everything
-  beside the .exe (a USB stick, say), make a folder called `pianists` next to it.
+- Your pianists and settings are kept in `%APPDATA%\Piano Animator\pianists` (that's
+  `C:\Users\<you>\AppData\Roaming\...` - not `AppData\Local`, where the program unpacks itself) - or, to
+  keep everything beside the .exe (a USB stick, say), make a folder called `pianists` next to it. The folder
+  appears once a pianist is saved or a setting changed; "Open pianists folder" in Pianists & hands opens it.
 - If something goes wrong it says so in a message box; the details go to `piano_animator.log` in
   the same data folder.
 - To move pianists from a source checkout, copy the checkout's `pianists` folder there.
