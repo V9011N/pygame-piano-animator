@@ -28,9 +28,18 @@ from version import VERSION  # noqa: E402
 NAME = "Hand-thesia"
 
 
-def numeric_version():
-    """'v26.1.10' -> '26.1.10.0' (Windows file versions are four numbers)."""
-    parts = [int(p) for p in VERSION.lstrip("v").split(".") if p.isdigit()][:4]
+def numeric_version(version=VERSION):
+    """
+    'v26.1.10' -> '26.1.10.0', 'v26.1.18.SNAPSHOT-01' -> '26.1.18.1' (Windows
+    file versions are four numbers: a snapshot's number is the fourth).
+    """
+    parts = []
+    for p in version.lstrip("v").split("."):
+        if p.isdigit():
+            parts.append(int(p))
+        elif p.upper().startswith("SNAPSHOT-") and p[9:].isdigit():
+            parts.append(int(p[9:]))
+    parts = parts[:4]
     return ".".join(str(p) for p in parts + [0] * (4 - len(parts)))
 
 

@@ -80,10 +80,12 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - Keep the fingering planner deterministic; check changes against the PIG test split
   (`pig_eval.py`) and Hanon when you have the data - see `docs/ARCHITECTURE.md` for the
   current numbers.
-- Versions are `vYY.MAJOR.MINOR` (from `v26.1.0`; older entries are `vYYYY.MM.DD.HHMM` commit times).
-  Every commit bumps the minor number in `version.py` and adds an entry at the top of `CHANGELOG.md`
-  (shown by the main menu's "What's new" button), headed `## vYY.MAJOR.MINOR - title` with user-facing
-  bullets (a test checks the two match). Stay on the current major version unless told otherwise.
+- Versions and the changelog are the author's call (from `v26.1.18.SNAPSHOT-01`): don't change
+  `version.py` or `CHANGELOG.md` unless the prompt says what to set. **Before committing, if the prompt
+  didn't give the version (and whether to add a changelog entry), ask for it - don't guess.** Formats:
+  `vYY.MAJOR.MINOR` or `vYY.MAJOR.MINOR.SNAPSHOT-NN` (older: `vYYYY.MM.DD.HHMM` commit times); changelog
+  entries `## <version> - title` with user-facing bullets, newest first (the main menu's "What's new";
+  it glows when the top entry changes, not the version).
 - The app is also shipped as one compiled .exe (`build.py`): read bundled files through `paths.resource()` and
   add any new one to `build.py`'s `--include-data-files`; keep the user's files under `paths.DATA_DIR`
   (`pianist.FOLDER`), never beside the modules (compiled, that's a cache folder). No console then: `print`

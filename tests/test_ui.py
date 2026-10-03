@@ -226,15 +226,16 @@ def test_leaving_with_the_pedal_down_silences_the_synth(screen):
             assert (0xB0 | ch, 120, 0) in port.sent                     # ...and all sound off
 
 
-def test_version_matches_the_changelog():
+def test_version_and_changelog_headings_are_well_formed():
+    # versions and the changelog are the author's to set (a snapshot needn't have an entry)
     import os
     import re
     from version import VERSION
-    assert re.fullmatch(r"v\d\d\.\d+\.\d+", VERSION)
+    assert re.fullmatch(r"v\d\d\.\d+\.\d+(\.SNAPSHOT-\d+)?", VERSION)
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
     with open(path, encoding="utf-8") as fh:
         top = next(line for line in fh if line.startswith("## "))
-    assert top.split(" ")[1] == VERSION, top
+    assert re.match(r"## v\d\d\.\d+\.\d+\S* - ", top), top
 
 
 def test_pedals_light_up_and_keep_clear_of_the_version(screen):

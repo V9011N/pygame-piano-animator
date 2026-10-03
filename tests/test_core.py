@@ -842,3 +842,54 @@ def test_wide_chord_with_the_thumb_on_two_keys_is_rolled():
     a = hands.HandAnimator(song_of(ns), LEFT)
     assert a.rolled == 1
     assert [a.fingering[id(n)] for n in ns] == [5, 1, 1]
+
+
+def _tip_heights(ns, link, times):
+    """{finger: [tip height]} at the given times, with the pianist's tendon link set to `link`."""
+    import pianist
+    from common import Keyboard, bottom_layout
+    p = pianist.active()
+    old = p.behavior.get("tendon_link")
+    p.behavior["tendon_link"] = link
+    try:
+        kb = Keyboard(bottom_layout((1600, 900))[0])
+        a = hands.HandAnimator(song_of(ns, 3.0), RIGHT)
+        out = {f: [] for f in range(1, 6)}
+        for t in times:
+            pose = a.pose(t, kb)
+            for f in out:
+                out[f].append(pose["struct"]["chains"][f][-1][2])
+        return out, a
+    finally:
+        if old is None:
+            p.behavior.pop("tendon_link", None)
+        else:
+            p.behavior["tendon_link"] = old
+
+
+def test_linked_tendons_of_3_4_and_5():
+    # 3 curving down takes 4 with it (not 5, not 2); 5 takes 3 and 4
+    times = [0.5 + i / 60 for i in range(150)]
+    for leader, followers, still in ((3, (4,), (2, 5)), (4, (3,), (2, 5)), (5, (3, 4), (2,))):
+        pitch = {3: 64, 4: 65, 5: 67}[leader]
+        ns = [Note(pitch, 0.5 + 0.4 * i, 0.75 + 0.4 * i, 80, 0, RIGHT, finger=leader) for i in range(6)]
+        free, _ = _tip_heights(ns, 0.0, times)
+        linked, a = _tip_heights(ns, 1.0, times)
+        floor = hands.TENDON_FLOOR_IN * a.ppi
+        for f in followers:
+            assert min(linked[f]) < min(free[f]) - 0.2 * a.ppi, (leader, f)      # went down with it...
+            assert min(linked[f]) >= floor - 1.0                                  # ...but not onto the keys
+        for f in still:
+            assert max(abs(x - y) for x, y in zip(linked[f], free[f])) < 0.5, (leader, f)
+
+
+def test_a_finger_reaching_for_its_key_is_not_pulled():
+    # 3 holds a key; 4 strikes its own next to it - from its strike on, the link leaves it alone
+    ns = [Note(64, 0.5, 2.5, 80, 0, RIGHT, finger=3), Note(65, 1.5, 1.8, 80, 0, RIGHT, finger=4)]
+    _, a = _tip_heights(ns, 1.0, [1.0])
+    _, strike_start, _ = a._prep_window(4, -1)
+    times = [strike_start + 0.01, 1.6]
+    free, _ = _tip_heights(ns, 0.0, times)
+    linked, _ = _tip_heights(ns, 1.0, times)
+    assert a._reaching(4, times[0]) == 1.0
+    assert all(abs(x - y) < 1e-6 for x, y in zip(linked[4], free[4]))

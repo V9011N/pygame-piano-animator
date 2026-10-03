@@ -363,6 +363,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
 | antic_hand | `HandAnimator.antic_t` (0.15–0.65 s, 0.4 at the default) / `need_t` (0.06–0.24 s) |
 | antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `prep_max_t` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
+| tendon_link | linked tendons of 3, 4, 5: how far a follower goes down with its leader (`_tendon_pull`), default 0.6 |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
@@ -922,6 +923,14 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     (wrist path / distance 1.32 → 1.15); LH octaves 116° → 64°. Op. 25 No. 6 RH turning -24%, Op. 25 No. 10 LH
     -9%. Synthetic 1-3 chromatic scale: index 6 → 0 (test). Top speed and fingertips on keys unchanged (Concerto,
     Dante, Ballade).
+- **Linked tendons of fingers 3, 4 and 5** (v26.1.18.SNAPSHOT-01; the author's rules): 3 curving down takes 4
+  with it, 4 takes 3, and 5 takes 3 and 4 - unless the follower is reaching for a key of its own. In
+  `_tips_at`, after the targets and before `_limit_tip`, `_tendon_pull` lowers a follower's tip height by
+  `tendon_link` (pianist behaviour, default 0.6) x how far down its leader is (0 at its hover height,
+  `_hover`, 1 at the key tops; the deepest leader counts) x how free it is (1 - `_reaching`: 1 while pressing,
+  rising with its trip to the next key, `_travel`, 1 from the strike on) - toward `TENDON_FLOOR_IN` 0.15 in
+  above the key tops, never onto them. Only heights change. A finger repeating one key at the default: its
+  follower's tip from 0.54 in down to 0.31 in (0.38 on average); 2, and 5 when 3 or 4 leads, untouched (tests).
 - **The thumb under the hand stays hidden** (v26.1.14): drawn lower than the palm, the thumb passing under was
   still seen between the fingers (the palm covers up to the knuckles only). `skins._tuck_zone`: palm down, the
   thumb below the palm and some of it beyond the knuckle line between the index's outer edge and the little

@@ -114,6 +114,11 @@ BEHAVIORS = [
               "a thumb passing under, say. The value is the longest head start; a finger never "
               "leaves before it has let go of its last key, and never so late that it would have "
               "to move faster than the top travel speed."),
+    dict(id="tendon_link", group="Motion", label="Linked fingers (3, 4, 5)", kind="slider",
+         min=0.0, max=1.0, default=0.6, fmt=_pct, lo="Independent", hi="Tightly linked",
+         desc="The tendons of the middle, ring and little fingers are joined: when the middle finger "
+              "curves down the ring finger goes some way with it, and the other way round, and the "
+              "little finger takes both with it - unless they're reaching for keys of their own."),
     dict(id="cross_height", group="Motion", label="Crossing height", kind="slider",
          min=0.0, max=1.0, default=0.33, fmt=_pct, lo="Skim over", hi="Arch high",
          desc="How high a finger arches when it crosses over the thumb."),

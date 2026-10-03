@@ -41,7 +41,9 @@ def test_build_version_is_four_numbers():
     from version import VERSION
     v = build.numeric_version()
     assert len(v.split(".")) == 4 and all(p.isdigit() for p in v.split("."))
-    assert v.startswith(VERSION.lstrip("v"))
+    assert v.startswith(".".join(VERSION.lstrip("v").split(".")[:3]))
+    assert build.numeric_version("v26.1.10") == "26.1.10.0"
+    assert build.numeric_version("v26.1.18.SNAPSHOT-01") == "26.1.18.1"
     cmd, exe = build.command()
     assert "--onefile" in cmd and any(c.startswith("--include-data-files=CHANGELOG.md") for c in cmd)
 
