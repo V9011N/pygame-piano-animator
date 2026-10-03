@@ -567,7 +567,13 @@ def _creases(pen, h, f, color):
                      (q[0] + nx * r * lo, q[1] + ny * r * lo), color, max(1, r * 0.12))
 
 
-NAIL_HIDE_DEG = (95.0, 115.0)   # phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
+NAIL_HIDE_DEG = (95.0, 115.0)   # thumb: phalanx pitch (90 = straight down) over which a tucked nail turns out of sight
+# Fingers 2-5, from a video of the author's hand curling (2026-10-03): the nail
+# shows whole while the last phalanx points down up to ~45 deg (the finger
+# looks ~0.9 of its flat length), only a short cap at the very end by ~57 deg
+# (~0.8), and none from ~75 deg (~0.7 in a curl): it has turned to face
+# forward, under the finger's rounded end.
+NAIL_SHOW_DEG = (45.0, 75.0)
 
 
 # the nail's outline: a superellipse, (cos, sin) of 32 angles to the power 0.7
@@ -605,9 +611,11 @@ def _nail(pen, h, f, fill, edge):
     fwd = dx * px + dy * py
     # past straight down (the tip tucked back) the nail turns away over the end
     pitch = math.degrees(math.atan2(drop, fwd))
-    show = max(0.0, min(1.0, (NAIL_HIDE_DEG[1] - pitch) / (NAIL_HIDE_DEG[1] - NAIL_HIDE_DEG[0])))
+    lo, hi = NAIL_HIDE_DEG if f == 1 else NAIL_SHOW_DEG
+    show = max(0.0, min(1.0, (hi - pitch) / (hi - lo)))
     if show <= 0.0:
         return
+    vis = 1.0 if f == 1 else show * show * (3.0 - 2.0 * show)      # (fingers: the nail shrinks to the end)
     w = max(0.0, min(1.0, (fwd / L - 0.2) / 0.3))
     dux, duy = _unit(dx, dy)
     ux, uy = _unit(px + (dux - px) * w, py + (duy - py) * w)
@@ -629,8 +637,9 @@ def _nail(pen, h, f, fill, edge):
     # shell, so even seen nearly end-on it keeps some depth.
     s0, s1 = -0.5 * L - 0.35 * r, 0.12 * r
     x1 = s1 * cos + (xc + rc - 0.08 * r) * sin
-    x0 = x1 - max((s1 - s0) * cos, 0.7 * r * sin * show)
+    x0 = x1 - max((s1 - s0) * cos, 0.7 * r * sin * show) * vis
     mid, hl = (x0 + x1) / 2, (x1 - x0) / 2
+    half_w *= 0.55 + 0.45 * vis
 
     def shape(grow):
         pts = []

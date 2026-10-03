@@ -50,6 +50,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
 | `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
 | `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
+| `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Piano Animator` or a portable `pianists` folder beside the .exe when compiled) |
+| `build.py` | Nuitka single-file build (`dist/PianoAnimator.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
 | `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 
@@ -82,6 +84,10 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   Every commit bumps the minor number in `version.py` and adds an entry at the top of `CHANGELOG.md`
   (shown by the main menu's "What's new" button), headed `## vYY.MAJOR.MINOR - title` with user-facing
   bullets (a test checks the two match). Stay on the current major version unless told otherwise.
+- The app is also shipped as one compiled .exe (`build.py`): read bundled files through `paths.resource()` and
+  add any new one to `build.py`'s `--include-data-files`; keep the user's files under `paths.DATA_DIR`
+  (`pianist.FOLDER`), never beside the modules (compiled, that's a cache folder). No console then: `print`
+  goes to `paths.log_path()`.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

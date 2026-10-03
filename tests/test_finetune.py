@@ -89,3 +89,20 @@ def test_studio_fine_tune_page(screen):
     st.render()
     st.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode=""))
     assert st.page == "behavior"
+
+
+def test_studio_shows_where_the_pianists_are(screen, monkeypatch):
+    import os
+    import subprocess
+    import main
+    app = main.App(screen, sound=False)
+    app.studio()
+    st = app.mode
+    st.render()
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: None)     # (no file manager in the tests)
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", lambda p: None)
+    assert any(b.action == "folder" for b in st._buttons())
+    st._action("folder")
+    assert os.path.isdir(pianist.FOLDER) and pianist.FOLDER in st.message
+    st.render()

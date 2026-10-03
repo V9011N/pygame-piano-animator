@@ -17,6 +17,9 @@ Pages
 from __future__ import annotations
 
 import math
+import os
+import subprocess
+import sys
 
 import pygame
 
@@ -261,6 +264,21 @@ class PianistStudio:
 
     def say(self, text):
         self.message, self.message_age = text, 0.0
+
+    def open_folder(self):
+        """Show where the pianists are kept (pianist.FOLDER, see paths.py) in the file manager."""
+        folder = pianists.FOLDER
+        try:
+            os.makedirs(folder, exist_ok=True)
+            if sys.platform == "win32":
+                os.startfile(folder)                       # Explorer
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", folder],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            print(f"Couldn't open {folder} ({exc})")
+        self.say(f"Pianists are kept in {folder}")
+        return folder
 
     # ----- actions --------------------------------------------------------------
     def _validate_name(self, name, except_id=None):
@@ -593,6 +611,8 @@ class PianistStudio:
         if self.page == "browser":
             left = self._browser_rects()["left"]
             btn("+  New pianist", "new", left.y + 12, x=left.x + 16, w=left.w - 32, h=40, font="normal")
+            fr = self._browser_rects()["folder"]
+            btn("Open pianists folder", "folder", fr.y, x=fr.x, w=fr.w, h=fr.h, font="small")
             p = self.selected()
             is_active = pianists.active().id == p.id
             y = H - 20 - 44 * 4 - 12 * 3
@@ -646,9 +666,11 @@ class PianistStudio:
         left = pygame.Rect(0, TOP_BAR_H, min(470, W // 2 - 60), H - TOP_BAR_H)
         search = pygame.Rect(left.x + 16, left.y + 64, left.w - 32, 38)
         chips_y = search.bottom + 12
-        list_rect = pygame.Rect(left.x + 8, chips_y + 70, left.w - 16, left.bottom - chips_y - 78)
+        folder = pygame.Rect(left.x + 16, left.bottom - 92, left.w - 32, 36)       # "Open pianists folder" (above the message line)
+        list_rect = pygame.Rect(left.x + 8, chips_y + 70, left.w - 16, folder.y - 8 - chips_y - 70)
         preview = pygame.Rect(left.right, TOP_BAR_H, W - left.right - PANEL_W, H - TOP_BAR_H)
-        return {"left": left, "search": search, "chips_y": chips_y, "list": list_rect, "preview": preview}
+        return {"left": left, "search": search, "chips_y": chips_y, "list": list_rect, "preview": preview,
+                "folder": folder}
 
     def _chips(self):
         r = self._browser_rects()
@@ -820,6 +842,8 @@ class PianistStudio:
             return self._back()
         if a == "new":
             self.new_pianist()
+        elif a == "folder":
+            self.open_folder()
         elif a == "activate":
             self.make_active()
         elif a == "edit":

@@ -12,6 +12,7 @@ pianists/
 Claude outputs/
 *.png
 !docs/**/*.png
+!assets/*.png
 
 # Third-party material that isn't ours to redistribute:
 #   the PIG fingering dataset (research licence), score PDFs, skin reference
@@ -25,6 +26,13 @@ MIDIs/*
 !MIDIs/demo_song.mid
 !MIDIs/right_hand_test.mid
 !MIDIs/right_hand_octaves_test.mid
+
+# Nuitka builds (python build.py)
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
 
 # Editors / OS
 .vscode/

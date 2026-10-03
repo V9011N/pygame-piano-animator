@@ -4,4 +4,4 @@ were the UTC time of their commit, v20YY.MM.DD.HHMM). Each release adds an
 entry headed `## vYY.MAJOR.MINOR - title` at the top of CHANGELOG.md; the
 minor number goes up with every release, the major one only when decided.
 """
-VERSION = "v26.1.8"
+VERSION = "v26.1.13"

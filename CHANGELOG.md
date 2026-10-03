@@ -3,6 +3,45 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.13 - Find your pianists
+- New "Open pianists folder" button in Pianists & hands: it opens the folder where your pianists and
+  settings are kept, and shows its full path. In the .exe that's `AppData\Roaming\Piano Animator\pianists`
+  (not `AppData\Local`, which only holds the program itself).
+
+## v26.1.12 - Building with Python 3.14
+- Fixed: building the .exe with Python 3.14 from python.org stopped with "Could not find Tcl". The
+  build now asks Python's Tcl and Tk where their libraries are (and copies them out when they're
+  built into the program files, as in Tcl/Tk 9), so the file dialogs work in the .exe.
+
+## v26.1.11 - Ready to build as a single .exe
+- Piano Animator can now be built into one `PianoAnimator.exe` with Nuitka (`python build.py`; see the
+  README). It needs no Python, starts quickly after its first run, and has its own icon.
+- The .exe keeps your pianists and settings in your user folder (`%APPDATA%\Piano Animator`), or beside
+  itself if there's a `pianists` folder there.
+- If it ever runs into a problem it says so in a message box and writes the details to a log file,
+  instead of vanishing.
+- `--version` prints the version. A recording given with `--audio` that can't be opened is reported,
+  and the song plays with the synth instead.
+
+## v26.1.10 - Hands modelled on a real hand
+- The hands now play the way a real pianist's do, measured from a video of real hands: long, gently
+  arched fingers instead of hooked ones, the fingertips further into the keys and the knuckles nearer
+  them. The "Finger curvature" slider keeps its meaning (flatter to more curved) around this new shape.
+- Nails show and hide as on a real hand: the whole nail while a finger is fairly flat, a short cap at the
+  very tip as it curls, and none once it's curled further (the thumb, playing on its side, keeps its nail
+  in view).
+
+## v26.1.9 - Recordings stay in sync
+- Fixed: a synced recording slowly ran ahead of the notes. A recording at another sample rate than
+  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time - by
+  the end of Chopin's Ballade No. 1 the final chord was heard 0.58 s early. Recordings are now
+  played at their own sample rate.
+- Fixed: on every play or seek the notes started a moment (up to a third of a second) ahead of the
+  recording. They now start together.
+- Scrubbing the progress bar while a recording plays is smooth: the recording picks up again when
+  you let go.
+- Recordings load faster (the Ballade: 3.6 s to 1.3 s).
+
 ## v26.1.8 - Tidying
 - Internal tidying (one text-wrapping helper instead of three); nothing looks or works
   differently.

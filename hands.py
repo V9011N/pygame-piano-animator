@@ -60,7 +60,7 @@ KEY_TRAVEL_IN = 0.4                      # how far a key goes down
 
 # Where on the key each finger lands, in inches back from the white keys' front
 # edge. The curve of the fingertips puts 3 furthest in and the thumb nearest.
-WHITE_DEPTH_IN = {1: 0.40, 2: 1.20, 3: 1.45, 4: 1.30, 5: 0.90}
+WHITE_DEPTH_IN = {1: 0.35, 2: 1.70, 3: 1.95, 4: 1.80, 5: 0.90}
 BOUNCE_MAX_IN = 1.2                      # wrist bounce height at 100%, for chords 0.3 s+ apart
 ROLL_MAX_DEG = 40.0                      # forearm rotation each way in a tremolo, at 100%
 GESTURE_REPEAT_T = 0.45                  # repeated chords closer than this bounce from the wrist
@@ -120,7 +120,7 @@ HOVER = {1: 0.9, 2: 1.4, 3: 1.4, 4: 1.4, 5: 1.4}      # resting
 PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 
 # Joint behaviour
-FINGER_COUPLING = 0.75      # DIP bends ~3/4 as much as PIP
+FINGER_COUPLING = 0.6       # DIP bends 0.6 as much as PIP (the author's hand playing: ~0.5; 0.75 hooked the tips)
 FINGER_BEND_MAX = 1.7       # rad, PIP limit
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -155,7 +155,7 @@ PRESS_SLACK_DEG = {1: 6, 2: 6, 3: 6, 4: 6, 5: 3}   # extra splay only while hold
 # The fingertip stays between these shares of the finger's length in front of
 # its knuckle (no curling back under the hand, no locking straight).
 REACH_MIN = {1: 0.55, 2: 0.32, 3: 0.32, 4: 0.32, 5: 0.36}
-REACH_COMFORT = {1: 0.97, 2: 0.9, 3: 0.9, 4: 0.9, 5: 0.9}
+REACH_COMFORT = {1: 0.97, 2: 0.98, 3: 0.98, 4: 0.98, 5: 0.98}   # (a playing finger is long, gently arched)
 # How far the hand may turn away from the forearm's natural line (wrist
 # deviation): clockwise (toward the little finger), counter-clockwise.
 WRIST_DEV_DEG = (-26, 8)
@@ -483,11 +483,15 @@ class HandGeometry:
 def curl_factor(pianist=None):
     """
     How far in front of the knuckles the fingertips sit, relative to the
-    original model, from the pianist's "Finger curvature" (1.0 = the original,
-    fairly curved, at 64%; up to 1.7 at 0% - flat - down to 0.6 at 100%).
+    original model, from the pianist's "Finger curvature". Sampled from the
+    author's hand playing scales (video, 2026-10-03): at the default 40% a
+    pressed middle fingertip is 2.4 in in front of its knuckle and 1.8 in
+    below it - the first phalanx sloping down ~25 deg, the middle ~45, the
+    last ~55, a long, gently arched finger. 100% is the original, curved
+    model (1.0); 0% nearly straight (2.16).
     """
-    c = pianist.b("finger_curve") if pianist is not None else 0.636
-    return 1.0 + 1.1 * (0.636 - c)
+    c = pianist.b("finger_curve") if pianist is not None else 0.4
+    return 1.0 + 1.16 * (1.0 - c)
 
 
 def hand_span_inches(anatomy=None):
@@ -1428,8 +1432,8 @@ class HandAnimator:
         self.cross_arc_in = 0.5 + 3.0 * p.b("cross_height")
         self.curl_k = curl_factor(p)
         c = p.b("finger_curve")
-        self.curl_lift_in = 0.9 * (c - 0.636)             # hand height: -0.57 in (flat) .. +0.33 in (curved)
-        self.reach_bonus = 0.09 * max(0.0, 0.636 - c) / 0.636   # flat fingers may extend further
+        self.curl_lift_in = 0.6 * (c - 0.4) - 0.11        # hand height: -0.35 in (flat) .. +0.25 in (curved)
+        self.reach_bonus = 0.09 * max(0.0, 0.4 - c) / 0.4       # flat fingers may extend further
         r = p.b("retraction")
         self.retract_back_in = 1.4 * r                     # idle fingers pull back ...
         self.retract_up_in = 0.7 * r                       # ... and up

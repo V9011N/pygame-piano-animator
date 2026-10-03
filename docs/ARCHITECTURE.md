@@ -118,11 +118,26 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `SyncAudio` decodes the whole file with `pygame.mixer.Sound` (WAV / OGG / MP3 / FLAC, to the mixer's
   format) and keeps `peaks`: the loudest sample in each `PEAK_T` 5 ms slice (numpy, which pretty_midi
   already needs). `play_from(pos)` plays a `Sound` made over a memoryview of the raw samples from that
-  point (no seeking API needed, any format; ~2 ms per start).
+  point (no seeking API needed, any format). That copies the rest of the samples: 3.5 ms near the end of a
+  9-minute 48 kHz recording, 70 ms from its start (380 ms the first time).
+- Decoded at its own rate (v26.1.9). `pygame.mixer.Sound` converts to the mixer's rate, and SDL's conversion
+  loses time: a 48 kHz MP3 (Chopin's Ballade No. 1, 522.46 s per its LAME header) decoded at the default
+  44.1 kHz came out 521.79 s, 0.13% short, so the recording ran steadily ahead of the notes - its final chord
+  0.58 s early (pygame 2.6.1 / SDL 2.28 and pygame-ce 2.5.8 / SDL 2.32 alike). `native_rate(path)` reads the
+  rate from the header (WAV fmt chunk, MP3 frame headers past any ID3 tag, FLAC STREAMINFO, Ogg Vorbis; Opus
+  48 kHz) and `ensure_mixer(rate)` reopens the mixer at it (`allowedchanges=0`: the device converts as it
+  plays, in step), on the main thread before the decoding job. Nothing else uses the mixer. `_peaks` takes
+  each slice's max and min straight from the samples (identical result; the Ballade loads in 1.3 s, was 3.6).
 - Timing: song time t runs at `speed`; the audio heard at t is at `offset + t / speed`. While playing,
-  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`), not from the
-  capped frame clock, so the two never drift; the audio restarts on play, seek, a nudge and the end of a
-  drag. A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
+  `Visualizer.update` sets t from the wall clock since the last (re)start (`_anchor`, taken once
+  `play_from` has returned - before v26.1.9 it was taken first, so the notes ran ahead of the recording by
+  the copy's time at every start), not from the capped frame clock, so the two never drift; the audio
+  restarts on play, seek, a nudge and the end of a drag. Scrubbing the top bar while playing holds the song
+  and restarts the recording once, on release (not a copy per mouse move).
+- Left in the files themselves: rendered from the same MIDI, the Ballade's recording (native rate) is 0 ms off
+  at the start, ~30 ms at 3 min, ~145 ms at 5:30, ~255 ms at 6:40-8:00 and ~90 ms at the final chord
+  (onsets of loud isolated chords). Not a steady rate, so not a clock: the renderer's playback of the tempo
+  changes differs from the exported tempo map (which the loader reads exactly - checked against mido). A lead-in before the recording starts (`offset + t / speed < 0`) waits (`_audio_pending`). The
   synth is muted while a recording plays (restored on leaving); M mutes the recording instead; the speed
   keys do nothing.
 - The waveform strip (`WAVE_H` 56 px, under the top bar, the falling notes below it) is on the same
@@ -421,8 +436,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     knuckle's circle when that reaches further than the tip's.
     The forward direction is the sum of the finger's other segments, not the middle phalanx alone: strongly curved,
     that one points straight down and its screen direction is sub-pixel noise (it flipped the nail onto the knuckle).
-    Past straight down the nail turns out of sight over the end: its minimum length shrinks between 95° and 115° of
-    pitch (`NAIL_HIDE_DEG`), and it isn't drawn beyond that.
+    When it goes out of sight was measured on the author's hand (v26.1.10, a 4K video curling the fingers in and
+    out over the keys, frames every 0.1 s): fingers 2-5 show the whole nail while the finger looks ~0.89 of its
+    flat length (last phalanx ~45° down), a short dim cap at the very end at ~0.81 (~60°), and none from ~0.69
+    (~75°, in a uniform curl). So `NAIL_SHOW_DEG` (45°, 75°): over it the nail shortens toward the end (smoothstep)
+    and narrows to 0.55 of its width, and it isn't drawn beyond. The thumb, played on its side, keeps its nail in
+    view to 95°-115° (`NAIL_HIDE_DEG`), as in the video.
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
@@ -438,10 +457,26 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - The browser preview, the overview and the span view draw with the skin. The anatomy page stays skeleton so bones remain clickable.
 
 - **Palm width** (2026-09-27): the palm hull includes each knuckle widened by ±(its finger's proximal radius) across its metacarpal. For the index and little fingers it uses ×1.12, and those two edges also carry down the metacarpal toward the wrist. The final inflate is 0.08 in.
-- **Finger curvature** behaviour `finger_curve` (Motion; default 40%, where 63.6% is the original look):
-  - `hands.curl_factor(p) = 1 + 1.1·(0.636 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the fingertips sit. The range runs from 1.7 (flat) to 0.6 (curved).
-  - The hand's height offset is `z_off = 0.9·(c − 0.636)` in. It is applied in `world()` and in `base_local`.
-  - Flatter settings may extend up to 0.09 more of the finger length than `REACH_COMFORT` allows.
+- **Finger curvature** behaviour `finger_curve` (Motion; default 40%):
+  - Re-based on the author's hand (v26.1.10, video of scales from above, measured against the keys: ~128 px per
+    inch at the key surface, the black keys' fronts 2.05 in from the white front edge). Playing, the fingers are
+    long and gently arched - first phalanx ~25° down, middle ~45°, last ~55° (the nails show as caps) - the
+    fingertips 2.5-3.4 in into the keys for 2-4, the thumb and little finger ~1-1.6 in nearer the front, the
+    knuckles over the keys' front edge. The old model hooked them: first phalanx level or rising, middle 60-70°,
+    last 65-86°, tips curled back under the last knuckle, the hand hanging in front of the keys.
+  - `hands.curl_factor(p) = 1 + 1.16·(1 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the
+    fingertips sit: 1.7 at 40% (2.4 in for the middle finger), 2.16 at 0%, 1.0 (the original curved model) at 100%.
+  - The hand's height offset is `z_off = 0.6·(c − 0.4) − 0.11` in (knuckles ~1.8 in above a pressed key at 40%).
+    It is applied in `world()` and in `base_local`.
+  - `REACH_COMFORT` 0.98 for fingers 2-5 (was 0.9: it forbade the nearly straight, tilted playing finger); flatter
+    settings may extend up to 0.09 more. `FINGER_COUPLING` 0.6 (was 0.75; ~0.5 measured).
+  - `WHITE_DEPTH_IN` {1: 0.35, 2: 1.70, 3: 1.95, 4: 1.80, 5: 0.90} (was 0.40 / 1.20 / 1.45 / 1.30 / 0.90): the
+    middle fingers deeper; the thumb and little finger where their resting spots stay within their comfortable
+    reach (0.96 / 0.98 of their length) - further in, they pulled the whole hand forward and hooked the others.
+  - Result, pressed middle finger at 40%: alone 22° / 48° / 63°, tip 2.3 in ahead and 1.8 in below the knuckle;
+    with the thumb down 23° / 46° / 59°. The demo song's pressed fingers: last phalanx 62-70° (was 80-86°), looking
+    0.73-0.76 of their length (0.64-0.69). Octave-wide figures (Hanon 60) still curl more: the thumb and little
+    finger spend their reach sideways, so the hand comes forward - as a real one does.
   - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view. Its resting targets
     are pulled in to `REACH_COMFORT` (fingers) and `NATURAL_THUMB_REACH` 0.93 (thumb, the default thumb's own
     curve) of each chain's length: a short thumb couldn't reach its resting spot and was drawn straight.
@@ -859,3 +894,32 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - More figure types: broken-chord patterns, tremolos, double-sixth scales, octave scales with legato fingering.
   - Rolled chords wider than the hand (fingering/animation side).
 - Animation: faster reshaping in presto passages.
+
+## The single-file build (build.py, paths.py, v26.1.11)
+- `python build.py` runs Nuitka `--onefile` on `main.py` -> `dist/PianoAnimator.exe` (`.bin` elsewhere). Options:
+  the tk-inter plugin (file dialogs; skipped with a warning when the building Python has no tkinter),
+  `CHANGELOG.md` and `assets/icon.png` as data files, `pig_eval` / `learn_weights` / tests not followed, pytest
+  and setuptools left out, pretty_midi's unused soundfont (`*.sf2`, 6 MB) left out, Windows console disabled
+  (`--console`: forced), the icon from `assets/icon.ico`, product and file versions from `VERSION`
+  (`v26.1.11` -> `26.1.11.0`). `--onefile-tempdir-spec={CACHE_DIR}/PianoAnimator/{VERSION}`: unpacked once per
+  version and reused (a ~1 s start), not to a fresh temp folder each launch.
+- Tcl/Tk (v26.1.12): Nuitka's tk-inter plugin only looks for the script libraries in the usual folders
+  (`<prefix>\tcl\tcl<version>\init.tcl` or a zip beside it). The python.org Python 3.14.8 for Windows failed
+  with "Could not find Tcl": Tcl/Tk 9 keep the library inside the DLL (`info library` is `//zipfs:/...`).
+  `build.tcl_tk_options()` runs `build.py --probe-tcl-tk` in a subprocess of the building Python: Tcl's
+  `info library` and Tk's `tk_library` (Tk opens a hidden window; with no display, the folder beside Tcl's,
+  `tcl8.6` -> `tk8.6`), a `//zipfs:` one copied out with Tcl's `file copy` to `build/tcl-library/{tcl,tk}`,
+  each passed as `--tcl-library-dir` / `--tk-library-dir` once it holds `init.tcl` / `tk.tcl`. Checked on
+  Linux with Tcl/Tk 8.6 (the plugin bundles 227 + 88 files; the compiled program opens its "Open MIDI file"
+  dialog under Xvfb); the copy-out branch is tested with a stand-in interpreter (no Tcl 9 here).
+- `paths.py`: `COMPILED` (Nuitka's `__compiled__`), `RESOURCE_DIR` (beside the modules: bundled, read-only),
+  `DATA_DIR` (from source the same folder, so `pianists/` is where it always was; compiled, a `pianists` folder
+  beside the .exe if one exists - portable - else `%APPDATA%\Piano Animator`, `$XDG_DATA_HOME/piano-animator`
+  elsewhere). `pianist.FOLDER` and the changelog-seen marker live under `DATA_DIR`.
+- `main.py`: compiled and with no console (stdout missing or not a terminal), output goes to
+  `DATA_DIR/piano_animator.log` (started afresh past 1 MB, a header per launch); an uncaught error is logged with
+  its traceback and shown in a tkinter message box naming the log, exit code 1. The window icon is
+  `assets/icon.png`; `PYGAME_HIDE_SUPPORT_PROMPT` hides pygame's banner; `--version`.
+- Checked by building on Linux (Nuitka 4.2.2, gcc; ~4 min, 27 MB): run from another folder it renders the player
+  (`--screenshot`), unpacks to the cache folder, logs to the data folder, honours a portable `pianists` folder, and
+  logs a forced crash. The Windows build uses the same options plus the icon and console flags.

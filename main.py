@@ -41,15 +41,18 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import sys
 import time
 
-import pygame
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")      # (no banner in the console or the log)
+import pygame  # noqa: E402
 
 from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
+import paths
 import pianist as pianists
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
 from midi_loader import LEFT, RIGHT
@@ -188,6 +191,9 @@ class Visualizer(Transport):
         elif event.type == pygame.MOUSEMOTION and self.dragging_wave is not None:
             self._drag_wave(event.pos[0])
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.dragging_bar and self.audio and not self.paused:
+                self.dragging_bar = False
+                self._start_audio()
             self.dragging_bar = False
             if self.dragging_wave is not None:
                 self.dragging_wave = None
@@ -217,19 +223,23 @@ class Visualizer(Transport):
 
     def _start_audio(self):
         """(Re)start the recording at the song's place, and the clock with it."""
-        self._anchor = (self.t, time.perf_counter())
         self.audio.stop()
         pos = self.audio_pos()
         self._audio_pending = pos < 0           # the song's lead-in comes before the recording
         if not self._audio_pending:
-            self.audio.play_from(pos)
+            self.audio.play_from(pos)           # (copying the rest of the recording takes a moment...)
             if self.audio.channel is not None and self.audio_muted:
                 self.audio.channel.set_volume(0.0)
+        self._anchor = (self.t, time.perf_counter())     # (...so the clock starts once it plays)
 
     def seek(self, t):
         Transport.seek(self, t)
         if self.audio and not self.paused:
-            self._start_audio()
+            if self.dragging_bar:               # scrubbing: the recording restarts once, on release
+                self.audio.stop()
+                self._anchor = (self.t, time.perf_counter())
+            else:
+                self._start_audio()
 
     def toggle_pause(self):
         Transport.toggle_pause(self)
@@ -241,13 +251,14 @@ class Visualizer(Transport):
                 self._start_audio()
 
     def update(self, dt):
-        if self.audio and self.song and not self.paused and self.dragging_wave is None:
+        held = self.dragging_wave is not None or self.dragging_bar
+        if self.audio and self.song and not self.paused and not held:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
             target = t_a + (time.perf_counter() - wall) * self.speed
             dt = max(0.0, (target - self.t) / self.speed)
-        elif self.audio and self.dragging_wave is not None:
-            dt = 0.0                                # held while the recording is moved
+        elif self.audio and held:
+            dt = 0.0                                # held while the recording is moved, or the song scrubbed
         Transport.update(self, dt)
         if self.audio:
             if self.paused:
@@ -443,7 +454,7 @@ class Visualizer(Transport):
 # --------------------------------------------------------------------------- #
 # Main menu
 # --------------------------------------------------------------------------- #
-CHANGELOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CHANGELOG.md")
+CHANGELOG = paths.resource("CHANGELOG.md")
 
 
 def _seen_path():
@@ -834,8 +845,56 @@ class App:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+LOG_MAX_BYTES = 1_000_000   # the log starts afresh past this size
+
+
+def _log_to_file():
+    """
+    Compiled with no console window (build.py), print() and errors would go
+    nowhere: send them to a log file in the user's data folder (paths.log_path).
+    """
+    path = paths.log_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        mode = "w" if os.path.exists(path) and os.path.getsize(path) > LOG_MAX_BYTES else "a"
+        log = open(path, mode, encoding="utf-8", buffering=1, errors="replace")
+    except OSError:
+        return
+    log.write(f"\n--- Piano Animator {VERSION}, {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    sys.stdout = sys.stderr = log
+
+
+def _report_crash():
+    """Log what went wrong and tell the user where the details are (a message box: there's no console)."""
+    import traceback
+    details = traceback.format_exc()
+    try:
+        sys.stderr.write(details)
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        from tkinter import messagebox
+        from common import _tk_root
+        root = _tk_root()
+        messagebox.showerror("Piano Animator", "Piano Animator ran into a problem and has to close.\n\n"
+                             f"{details.strip().splitlines()[-1]}\n\nThe details are in {paths.log_path()}",
+                             parent=root)
+        root.destroy()
+    except Exception:
+        pass
+
+
+def _set_window_icon():
+    try:
+        pygame.display.set_icon(pygame.image.load(paths.resource("assets", "icon.png")))
+    except Exception:                          # (no icon is no reason not to start)
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Piano Animator: falling notes and fingering editor")
+    parser.add_argument("--version", action="version", version=f"Piano Animator {VERSION}")
     parser.add_argument("midi", nargs="?", help="MIDI file to open straight away")
     parser.add_argument("--edit", action="store_true", help="open the file in the fingering editor")
     parser.add_argument("--no-sound", action="store_true", help="don't play through the MIDI synth")
@@ -849,13 +908,19 @@ def main():
     args = parser.parse_args()
 
     pygame.init()
+    _set_window_icon()
     screen = pygame.display.set_mode(WINDOW_SIZE, pygame.RESIZABLE)
     pygame.display.set_caption(f"Piano Animator {VERSION}")
     app = App(screen, sound=not args.no_sound and not args.screenshot, speed=args.speed)
+    audio = None
     if args.midi and args.audio and not args.edit:
         from audio_sync import SyncAudio
-        audio = SyncAudio(args.audio)
-        audio.offset = args.audio_offset
+        try:
+            audio = SyncAudio(args.audio)
+            audio.offset = args.audio_offset
+        except Exception as exc:
+            print(f"Could not open {args.audio}: {exc} - playing with the synth instead")
+    if audio is not None:
         app.play(args.midi, audio=audio, speed=min(SPEED_MAX, max(SPEED_MIN, args.audio_speed)))
     elif args.midi:
         (app.edit if args.edit else app.play)(args.midi)
@@ -876,5 +941,21 @@ def main():
     pygame.quit()
 
 
+def _no_console():
+    """True when output has nowhere to show: no console window (the compiled program, started from Explorer)."""
+    try:
+        return sys.stdout is None or not sys.stdout.isatty()
+    except Exception:
+        return True
+
+
 if __name__ == "__main__":
-    main()
+    if paths.COMPILED and _no_console():
+        _log_to_file()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        _report_crash()
+        sys.exit(1)
