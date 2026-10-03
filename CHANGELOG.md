@@ -3,6 +3,12 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.14 - Smoother chromatic runs, thumb out of sight
+- Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to their
+  next key. A finger now waits beside a neighbour that's still on a key in its way, then goes.
+- The thumb passing under the hand no longer shows between the fingers - it's hidden under the hand, its shadow
+  too, in every skin.
+
 ## v26.1.13 - Find your pianists
 - New "Open pianists folder" button in Pianists & hands: it opens the folder where your pianists and
   settings are kept, and shows its full path. In the .exe that's `AppData\Roaming\Piano Animator\pianists`

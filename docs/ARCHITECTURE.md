@@ -875,6 +875,27 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     pinched to one point - the thumb's occlusion couldn't be drawn well.)
   - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
     `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
+- **Chromatic runs without twitching** (v26.1.14; Chopin Ballade No. 1, RH upward chromatic scale at 7:58,
+  1-3 with 1-2-3 at E-F-F# and B-C-C#): the index (and middle) finger stopped and hopped on, or stepped back,
+  several times. Its smoothed path (`_smooth_tip_grid` looks ahead) ran into the middle finger, still holding the
+  key before, and `_separate` held it back until that key let go - then let it jump in one frame.
+  - `_blocked_until(f, i)` (cached in `_prep_cache`): when a finger 2-5 leaves note i, the latest end of the keys
+    held, in that time, by the fingers on the side it is heading for, short of its next key. `_prep_window` starts
+    the trip no earlier (and still at least `STRIKE_MIN_T` before the note): the finger waits beside its neighbour,
+    then goes.
+  - `_separate` pushes by mobility: a pressing finger or one fixed on its key (`_key_weight`) doesn't give way, a
+    free one does, in proportion, instead of half each.
+  - `_shaped_rests` blends its exceptions (the thumb past the index, a finger the thumb is passing) in over half a
+    white key instead of switching them on and off.
+  - Results (direction reversals > 3 px per frame, at 60 fps): the 7:58 scale index/middle 4/4 → 0/0; a synthetic
+    1-3 chromatic scale at 60 ms a note 5/6 → 0/0 (test); the whole Ballade RH 2: 58 → 49, 3: 30 → 25, LH unchanged.
+- **The thumb under the hand stays hidden** (v26.1.14): drawn lower than the palm, the thumb passing under was
+  still seen between the fingers (the palm covers up to the knuckles only). `skins._tuck_zone`: palm down, the
+  thumb below the palm and some of it beyond the knuckle line between the index's outer edge and the little
+  finger's (a quad reaching 6 in toward the tips). There `_draw_tucked` shows the hand drawn again without its
+  thumb (`_Hand.hide_thumb`) over a copy of what was under the hand (`_Pen` takes an origin; soft edges drawn onto
+  a see-through layer left see-through rings, so the copy is opaque), masked to the zone; outside it the whole
+  hand. The thumb's shadow is left out too (it is in the hand's own). Cost: ~2.6 ms on such frames (1920x1080).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

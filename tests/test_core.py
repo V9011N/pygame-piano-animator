@@ -725,3 +725,74 @@ def test_a_hand_resting_where_it_plays_next_stays_put(screen):
     r._ensure_layout(kb)
     xs = [r._limited_at(1.5 + 0.02 * i)[0] for i in range(125)]
     assert min(xs) > r._limited_at(1.45)[0] - 0.3 * kb.white_w, (min(xs), max(xs))   # never drawn down
+
+
+def test_chromatic_run_fingers_do_not_twitch():
+    # 1-3 chromatic scale (1-2-3 at E-F-F#, B-C-C#): a finger heading for its next key
+    # waits for the neighbour still on a key in its way instead of being held back by
+    # it and hopping on - no back-and-forth (was 5 or 6 for the index and middle)
+    from common import Keyboard, bottom_layout
+    fing = [1, 3, 1, 3, 1, 2, 3, 1, 3, 1, 3, 2]
+    step = 0.06
+    ns = [Note(60 + i, 0.5 + i * step, 0.5 + i * step + step * 0.95, 80, 0, RIGHT,
+               finger=1 if i % 12 == 0 else fing[i % 12]) for i in range(25)]
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    a = hands.HandAnimator(song_of(ns, 2.5), RIGHT)
+    xs = {f: [] for f in (2, 3)}
+    t = 0.0
+    while t < 0.6 + 25 * step:
+        p = a.pose(t, kb)
+        for f in xs:
+            xs[f].append(p["struct"]["chains"][f][-1][0])
+        t += 1 / 60
+    for f, v in xs.items():
+        d = [b - x for x, b in zip(v, v[1:])]
+        back = sum(1 for p, q in zip(d, d[1:]) if p * q < 0 and abs(p) > 3 and abs(q) > 3)
+        assert back == 0, (f, back)
+
+
+def test_thumb_passing_under_is_hidden_by_the_hand():
+    # C major scale, thumb under at F: wherever it would only show between the
+    # fingers, the picture is the hand without its thumb
+    import pygame
+    import skins
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    ns = [Note(p, i * 0.15, i * 0.15 + 0.14, 80, 0, RIGHT, finger=f)
+          for i, (p, f) in enumerate(zip((60, 62, 64, 65, 67, 69, 71, 72), (1, 2, 3, 1, 2, 3, 4, 5)))]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    cartoon = skins.normalize({"style": "cartoon"})
+    tucked = 0
+    t = 0.2
+    while t < 0.6:
+        pose = dict(a.pose(t, kb), skin=cartoon)
+        fy = pose["front_y"]
+        h = skins._Hand(pose["struct"], lambda q: (q[0], fy - q[1], q[2]), pose["ppi"], cartoon)
+        zone = skins._tuck_zone(h)
+        t += 1 / 60
+        if zone is None:
+            continue
+        tucked += 1
+        shots = []
+        for hide in (False, True):
+            surf = pygame.Surface((1600, 900))
+            surf.fill((40, 120, 40))
+            if hide:                                  # the hand without its thumb, drawn plainly
+                old = skins._tuck_zone
+                skins._Hand.hide_thumb, skins._tuck_zone = True, (lambda h: None)
+                try:
+                    skins.draw_poses(surf, [pose])
+                finally:
+                    skins._Hand.hide_thumb = False
+                    skins._tuck_zone = old
+            else:
+                skins.draw_poses(surf, [pose])
+            shots.append(surf)
+        cx = sum(p[0] for p in zone) / 4
+        cy = sum(p[1] for p in zone) / 4
+        for x, y, *_ in h.chains[1][1:]:              # thumb points inside the zone (pulled in off its edge)
+            q = (x + 0.15 * (cx - x), y + 0.15 * (cy - y))
+            if skins._inside((x, y), zone) and skins._inside(q, zone):
+                c0, c1 = shots[0].get_at((int(q[0]), int(q[1]))), shots[1].get_at((int(q[0]), int(q[1])))
+                assert max(abs(u - v) for u, v in zip(c0[:3], c1[:3])) <= 3, (t, c0, c1)
+    assert tucked > 0

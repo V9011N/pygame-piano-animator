@@ -749,6 +749,7 @@ class HandAnimator:
         self._follow_jobs = {}
         self._warm_k = None
         self._strike_list = None
+        self._prep_cache = {}                    # _blocked_until
         self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
@@ -940,27 +941,27 @@ class HandAnimator:
         In a run, fingertips 2-5 that would come closer than TIP_GAP_WK (or
         pass each other) are pushed apart across the hand - a finger on its
         key stays put - blended in by `comp`: compressed, never overlapping.
+        Each of a pair gives way by its mobility: none while on its key, then
+        growing as the key no longer needs reaching (1 - _key_weight: eased
+        out after the release, in before the strike) - not all at once at the
+        release, which made the neighbours jump in chromatic scales.
         """
         if comp <= 0:
             return tips
         rot, gap = self._rot, TIP_GAP_WK * self.kb.white_w
         fs = [f for f in (2, 3, 4, 5) if f in tips]
         loc = {f: list(rot(tips[f][0] - wx, tips[f][1] - wy, -psi)) for f in fs}
-        fixed = {f: self._pressing(f, t) for f in fs}
+        mob = {f: 0.0 if self._pressing(f, t) else 1.0 - self._key_weight(f, t)[0] for f in fs}
         for _ in range(12):
             moved = False
             for a, b in zip(fs, fs[1:]):
                 d = gap - (loc[b][0] - loc[a][0])
-                if d <= 1e-6 or (fixed[a] and fixed[b]):
+                m = mob[a] + mob[b]
+                if d <= 1e-6 or m <= 1e-6:
                     continue
                 moved = True
-                if fixed[a]:
-                    loc[b][0] += d
-                elif fixed[b]:
-                    loc[a][0] -= d
-                else:
-                    loc[a][0] -= d / 2
-                    loc[b][0] += d / 2
+                loc[a][0] -= d * mob[a] / m
+                loc[b][0] += d * mob[b] / m
             if not moved:
                 break
         out = dict(tips)
@@ -2244,6 +2245,37 @@ class HandAnimator:
         return pose
 
     # ----- fingertip timeline -------------------------------------------------
+    def _blocked_until(self, f, i):
+        """
+        When finger f (2-5) can set off from its note i toward note i+1: not
+        before a neighbouring finger still holding a key short of that one,
+        on the side f is heading for, has let go - fingers can't pass each
+        other (in a 1-3 chromatic scale the index waited pressed against the
+        middle finger and then jumped with it). The thumb passes under them.
+        """
+        if f == 1 or i < 0:
+            return -math.inf
+        cache = self._prep_cache
+        key = (f, i)
+        got = cache.get(key)
+        if got is None:
+            notes, starts = self.by_finger[f], self.finger_starts[f]
+            src, dst = key_pos(self.vp(notes[i].pitch)), key_pos(self.vp(notes[i + 1].pitch))
+            up = dst > src
+            got = -math.inf
+            if dst != src:
+                t0, t1 = self.finger_ends[f][i], starts[i + 1]
+                for g in (range(f + 1, 6) if up else range(2, f)):
+                    gs, ge, gn = self.finger_starts[g], self.finger_ends[g], self.by_finger[g]
+                    j = bisect.bisect_right(gs, t1) - 1
+                    while j >= 0 and ge[j] > t0:
+                        p = key_pos(self.vp(gn[j].pitch))
+                        if (p < dst) if up else (p > dst):
+                            got = max(got, ge[j])
+                        j -= 1
+            cache[key] = got
+        return got
+
     def _prep_window(self, f, i):
         """(prep_start, strike_start, strike) for finger f's note i+1 (i = its last note, or -1)."""
         starts, ends = self.finger_starts[f], self.finger_ends[f]
@@ -2252,6 +2284,8 @@ class HandAnimator:
         # when time is short the final drop is cut so the trip keeps to it
         need = self.lead.get(id(self.by_finger[f][i + 1]), 0.0)
         prep_start = max(nxt - max(self.prep_max_t, STRIKE_MIN_T + need), ends[i] if i >= 0 else -math.inf)
+        # (not through a neighbour still on its key)
+        prep_start = max(prep_start, min(self._blocked_until(f, i), nxt - STRIKE_MIN_T))
         window = max(0.0, nxt - prep_start)
         strike = min(STRIKE_T, 0.35 * window)
         if window - strike < need:
@@ -2342,17 +2376,21 @@ class HandAnimator:
         """
         rest = self.rest_local
         disp = {}
+        band = 0.5 * WHITE_KEY_IN * self.ppi
         for g in range(1, 6):
-            if busy[g] <= 0.05:
+            # a thumb tucked under (or a finger crossed over the thumb) says
+            # nothing about where the other fingers belong - fading out over
+            # half a key as it gets there, not all at once: a switch made the
+            # idle fingers jump each time the thumb passed under (chromatic scales)
+            w = busy[g]
+            if g == 1:
+                w *= _smooth(0.5 + (rest[2][0] - local[1][0]) / band)
+            else:
+                w *= 1.0 - min(1.0, busy[1] / 0.1) * _smooth(0.5 + (local[1][0] - local[g][0]) / band)
+            if w <= 1e-3:
                 continue
             dx, dy = local[g][0] - rest[g][0], local[g][1] - rest[g][1]
-            # a thumb tucked under (or a finger crossed over the thumb) says
-            # nothing about where the other fingers belong
-            if g == 1 and local[1][0] > rest[2][0]:
-                continue
-            if g > 1 and busy[1] > 0.05 and local[g][0] < local[1][0]:
-                continue
-            disp[g] = (dx * busy[g], dy * busy[g])
+            disp[g] = (dx * w, dy * w)
         cap_x, cap_y = 0.9 * WHITE_KEY_IN * self.ppi, 0.5 * WHITE_KEY_IN * self.ppi
         out = {}
         for f in range(1, 6):
