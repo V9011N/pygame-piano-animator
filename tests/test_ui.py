@@ -53,38 +53,10 @@ def test_editor_sequential_fingering(screen):
     assert ed.seq is None and ed.dirty
 
 
-def test_nail_slides_to_tip_and_squashes_as_finger_curls():
+def test_nail_shrinks_to_the_tip_and_goes_as_the_finger_curls():
+    # measured on the author's hand: the whole nail shows with the last phalanx
+    # pointing down to ~45 deg, a short cap at the very end by ~60, none from ~75
     import math
-    import skins
-
-    class Pen:
-        def poly(self, pts, color):
-            self.pts = pts
-
-    class Hand:
-        pass
-    r, L = 9.0, 22.0
-    spans = []
-    for deg in (0, 30, 60, 80, 90, 110):
-        t = math.radians(deg)
-        a = (0.0, 0.0, 40.0)                              # last knuckle; the finger points up (-y)
-        b = (0.0, -L * math.cos(t), 40.0 - L * math.sin(t))
-        h = Hand()
-        h.radius = {3: [((0.0, 30.0, 60.0), a, r * 1.2), (a, b, r)]}
-        pen = Pen()
-        skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
-        ys = [p[1] for p in pen.pts]
-        tip_end = min(b[1] - r, a[1] - r * 1.2)            # far end of the finger's outline
-        spans.append((min(ys) - tip_end, max(ys) - min(ys)))
-    gaps, lengths = zip(*spans)
-    # the skin beyond the nail shrinks away, and the nail gets shorter
-    assert gaps[0] > 0.5 * r and all(g < 0.15 * r for g in gaps[3:])
-    assert all(x >= y - 1e-6 for x, y in zip(gaps, gaps[1:4]))
-    assert all(x >= y - 1e-6 for x, y in zip(lengths, lengths[1:4]))
-    assert lengths[3] < 0.5 * lengths[0]
-
-
-def test_no_nail_on_the_knuckle_of_a_tightly_curled_finger():
     import skins
 
     class Pen:
@@ -95,18 +67,54 @@ def test_no_nail_on_the_knuckle_of_a_tightly_curled_finger():
 
     class Hand:
         pass
-    # strongly curved: the middle phalanx points straight down (its direction
-    # on screen a fraction of a pixel, backward) and the tip tucks back under it
+    r, L = 9.0, 22.0
+    spans = []
+    for deg in (0, 30, 45, 60, 75, 90, 110):
+        t = math.radians(deg)
+        a = (0.0, 0.0, 40.0)                              # last knuckle; the finger points up (-y)
+        b = (0.0, -L * math.cos(t), 40.0 - L * math.sin(t))
+        h = Hand()
+        h.radius = {3: [((0.0, 30.0, 60.0), a, r * 1.2), (a, b, r)]}
+        pen = Pen()
+        skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
+        if pen.pts is None:
+            spans.append(None)
+            continue
+        ys = [p[1] for p in pen.pts]
+        xs = [p[0] for p in pen.pts]
+        tip_end = min(b[1] - r, a[1] - r * 1.2)            # far end of the finger's outline
+        spans.append((min(ys) - tip_end, max(ys) - min(ys), max(xs) - min(xs)))
+    assert all(s is not None for s in spans[:4]) and spans[4:] == [None, None, None]
+    gaps, lengths, widths = zip(*spans[:4])
+    # the skin beyond the nail shrinks away, and the nail gets shorter, then narrower too
+    assert gaps[0] > 0.5 * r and gaps[3] < 0.15 * r
+    assert all(x >= y - 1e-6 for x, y in zip(gaps, gaps[1:]))
+    assert all(x >= y - 1e-6 for x, y in zip(lengths, lengths[1:]))
+    assert lengths[3] < 0.3 * lengths[0] and widths[3] < 0.8 * widths[0]
+
+
+def test_no_nail_on_a_curled_finger():
+    import skins
+
+    class Pen:
+        pts = None
+
+        def poly(self, pts, color):
+            self.pts = pts
+
+    class Hand:
+        pass
+    # strongly curved: the middle phalanx points straight down and the tip tucks back under it
     pip, dip = (550.7, 572.2, 57.3), (550.7, 572.3, 26.6)
     h = Hand()
     h.radius = {3: [((557.2, 622.8, 59.8), pip, 13.8), (pip, dip, 12.0), (dip, (553.2, 591.8, 17.7), 9.7)]}
     pen = Pen()
     skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
     assert pen.pts is None
-    # only just past straight down, the nail still caps the end of the finger
+    # pointing straight down: no nail either (it faces forward)
     h.radius[3][-1] = (dip, (550.9, 573.5, 0.0), 9.7)
     skins._nail(pen, h, 3, (255, 255, 255), (0, 0, 0))
-    assert pen.pts and min(p[1] for p in pen.pts) < 572.3 - 9.0
+    assert pen.pts is None
 
 
 def test_finger_thickness_range_and_default():

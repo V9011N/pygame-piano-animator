@@ -171,8 +171,11 @@ def test_fingers_stay_on_their_keys():
                 assert abs(tip[0] - kb.key_rects[n.pitch].centerx) < 0.1 * kb.white_w      # square across the key
                 assert lo <= tip[1] <= kb.rect.h                                            # and on it
         if 1.0 < t < 4.0:
-            xs.append(pose["struct"]["chains"][2][-1][0])
-    assert max(xs) - min(xs) < 0.15 * kb.white_w          # no twitching on the repeated key
+            xs.append((pose["struct"]["chains"][2][-1][0], a._pressing(2, t)))
+    down = [x for x, p in xs if p]
+    assert max(down) - min(down) < 0.1 * kb.white_w       # no twitching on the repeated key...
+    air = [x for x, _ in xs]                              # ...nor lifted between (drawn back along the turned finger)
+    assert max(air) - min(air) < 0.25 * kb.white_w
 
 
 def test_impossible_given_fingering_is_repaired_for_playback():

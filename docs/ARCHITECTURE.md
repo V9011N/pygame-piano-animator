@@ -436,8 +436,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     knuckle's circle when that reaches further than the tip's.
     The forward direction is the sum of the finger's other segments, not the middle phalanx alone: strongly curved,
     that one points straight down and its screen direction is sub-pixel noise (it flipped the nail onto the knuckle).
-    Past straight down the nail turns out of sight over the end: its minimum length shrinks between 95° and 115° of
-    pitch (`NAIL_HIDE_DEG`), and it isn't drawn beyond that.
+    When it goes out of sight was measured on the author's hand (v26.1.10, a 4K video curling the fingers in and
+    out over the keys, frames every 0.1 s): fingers 2-5 show the whole nail while the finger looks ~0.89 of its
+    flat length (last phalanx ~45° down), a short dim cap at the very end at ~0.81 (~60°), and none from ~0.69
+    (~75°, in a uniform curl). So `NAIL_SHOW_DEG` (45°, 75°): over it the nail shortens toward the end (smoothstep)
+    and narrows to 0.55 of its width, and it isn't drawn beyond. The thumb, played on its side, keeps its nail in
+    view to 95°-115° (`NAIL_HIDE_DEG`), as in the video.
   - `gloves`: white glove with a black outline and a light halo so it reads on the dark floor, rim shading, three stitches on the back, a puffy cuff and a thin arm.
   - `robot`: white shell plates with gaps, metal joint cylinders with a chrome highlight, dark fingertip caps, a dark thumb housing, a palm plate with a seam and screws, and a white wrist shell above a black cylinder.
   - `skeleton`: the original bone drawing, through `hands.draw_skeletons`.
@@ -453,10 +457,26 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - The browser preview, the overview and the span view draw with the skin. The anatomy page stays skeleton so bones remain clickable.
 
 - **Palm width** (2026-09-27): the palm hull includes each knuckle widened by ±(its finger's proximal radius) across its metacarpal. For the index and little fingers it uses ×1.12, and those two edges also carry down the metacarpal toward the wrist. The final inflate is 0.08 in.
-- **Finger curvature** behaviour `finger_curve` (Motion; default 40%, where 63.6% is the original look):
-  - `hands.curl_factor(p) = 1 + 1.1·(0.636 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the fingertips sit. The range runs from 1.7 (flat) to 0.6 (curved).
-  - The hand's height offset is `z_off = 0.9·(c − 0.636)` in. It is applied in `world()` and in `base_local`.
-  - Flatter settings may extend up to 0.09 more of the finger length than `REACH_COMFORT` allows.
+- **Finger curvature** behaviour `finger_curve` (Motion; default 40%):
+  - Re-based on the author's hand (v26.1.10, video of scales from above, measured against the keys: ~128 px per
+    inch at the key surface, the black keys' fronts 2.05 in from the white front edge). Playing, the fingers are
+    long and gently arched - first phalanx ~25° down, middle ~45°, last ~55° (the nails show as caps) - the
+    fingertips 2.5-3.4 in into the keys for 2-4, the thumb and little finger ~1-1.6 in nearer the front, the
+    knuckles over the keys' front edge. The old model hooked them: first phalanx level or rising, middle 60-70°,
+    last 65-86°, tips curled back under the last knuckle, the hand hanging in front of the keys.
+  - `hands.curl_factor(p) = 1 + 1.16·(1 − c)` scales `rest_reach`, i.e. how far in front of the knuckles the
+    fingertips sit: 1.7 at 40% (2.4 in for the middle finger), 2.16 at 0%, 1.0 (the original curved model) at 100%.
+  - The hand's height offset is `z_off = 0.6·(c − 0.4) − 0.11` in (knuckles ~1.8 in above a pressed key at 40%).
+    It is applied in `world()` and in `base_local`.
+  - `REACH_COMFORT` 0.98 for fingers 2-5 (was 0.9: it forbade the nearly straight, tilted playing finger); flatter
+    settings may extend up to 0.09 more. `FINGER_COUPLING` 0.6 (was 0.75; ~0.5 measured).
+  - `WHITE_DEPTH_IN` {1: 0.35, 2: 1.70, 3: 1.95, 4: 1.80, 5: 0.90} (was 0.40 / 1.20 / 1.45 / 1.30 / 0.90): the
+    middle fingers deeper; the thumb and little finger where their resting spots stay within their comfortable
+    reach (0.96 / 0.98 of their length) - further in, they pulled the whole hand forward and hooked the others.
+  - Result, pressed middle finger at 40%: alone 22° / 48° / 63°, tip 2.3 in ahead and 1.8 in below the knuckle;
+    with the thumb down 23° / 46° / 59°. The demo song's pressed fingers: last phalanx 62-70° (was 80-86°), looking
+    0.73-0.76 of their length (0.64-0.69). Octave-wide figures (Hanon 60) still curl more: the thumb and little
+    finger spend their reach sideways, so the hand comes forward - as a real one does.
   - `static_skeleton(..., curl)` is passed the same factor for the studio's natural view. Its resting targets
     are pulled in to `REACH_COMFORT` (fingers) and `NATURAL_THUMB_REACH` 0.93 (thumb, the default thumb's own
     curve) of each chain's length: a short thumb couldn't reach its resting spot and was drawn straight.
