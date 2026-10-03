@@ -91,7 +91,9 @@ python build.py --console        # the same with a console window, for testing
 Nuitka needs a C compiler: it offers to download MinGW64 the first time (accepted automatically),
 or uses Visual Studio's if installed. The first build takes several minutes; later ones reuse
 the compiled parts in `build\`. Build with the Python you develop with (it has tkinter, needed for
-the file dialogs).
+the file dialogs). `build.py` asks that Python's Tcl and Tk where their libraries are and hands
+them to Nuitka (it prints `Using --tcl-library-dir=...`); with Tcl/Tk 9, as in the python.org
+Python 3.14, the libraries are built into the DLLs and are copied out to `build\tcl-library` first.
 
 Using the .exe:
 

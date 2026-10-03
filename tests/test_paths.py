@@ -28,3 +28,27 @@ def test_build_version_is_four_numbers():
     assert v.startswith(VERSION.lstrip("v"))
     cmd, exe = build.command()
     assert "--onefile" in cmd and any(c.startswith("--include-data-files=CHANGELOG.md") for c in cmd)
+
+
+def test_tcl_tk_libraries_built_into_the_dll_are_copied_out(tmp_path):
+    # Tcl/Tk 9 (the python.org Python 3.14 on Windows) keep their script library inside the DLL
+    import build
+
+    class Interp:
+        calls = []
+
+        def eval(self, script):
+            self.calls.append(script)
+            return ""
+    dest = str(tmp_path / "tcl")
+    assert build._real_library(Interp(), "/usr/share/tcltk/tcl8.6", dest) == "/usr/share/tcltk/tcl8.6"
+    assert Interp.calls == []                                  # a real folder is used as it is
+    assert build._real_library(Interp(), "//zipfs:/lib/tcl/library", dest) == dest
+    assert Interp.calls == ["file copy -force {//zipfs:/lib/tcl/library} {%s}" % dest.replace(os.sep, "/")]
+
+
+def test_build_passes_the_tcl_and_tk_folders():
+    import build
+    cmd, _ = build.command(tcl_tk=["--tcl-library-dir=/x/tcl9.0", "--tk-library-dir=/x/tk9.0"])
+    if build.have_tkinter():
+        assert "--tcl-library-dir=/x/tcl9.0" in cmd and "--tk-library-dir=/x/tk9.0" in cmd

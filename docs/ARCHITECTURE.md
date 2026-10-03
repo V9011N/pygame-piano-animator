@@ -903,6 +903,15 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   (`--console`: forced), the icon from `assets/icon.ico`, product and file versions from `VERSION`
   (`v26.1.11` -> `26.1.11.0`). `--onefile-tempdir-spec={CACHE_DIR}/PianoAnimator/{VERSION}`: unpacked once per
   version and reused (a ~1 s start), not to a fresh temp folder each launch.
+- Tcl/Tk (v26.1.12): Nuitka's tk-inter plugin only looks for the script libraries in the usual folders
+  (`<prefix>\tcl\tcl<version>\init.tcl` or a zip beside it). The python.org Python 3.14.8 for Windows failed
+  with "Could not find Tcl": Tcl/Tk 9 keep the library inside the DLL (`info library` is `//zipfs:/...`).
+  `build.tcl_tk_options()` runs `build.py --probe-tcl-tk` in a subprocess of the building Python: Tcl's
+  `info library` and Tk's `tk_library` (Tk opens a hidden window; with no display, the folder beside Tcl's,
+  `tcl8.6` -> `tk8.6`), a `//zipfs:` one copied out with Tcl's `file copy` to `build/tcl-library/{tcl,tk}`,
+  each passed as `--tcl-library-dir` / `--tk-library-dir` once it holds `init.tcl` / `tk.tcl`. Checked on
+  Linux with Tcl/Tk 8.6 (the plugin bundles 227 + 88 files; the compiled program opens its "Open MIDI file"
+  dialog under Xvfb); the copy-out branch is tested with a stand-in interpreter (no Tcl 9 here).
 - `paths.py`: `COMPILED` (Nuitka's `__compiled__`), `RESOURCE_DIR` (beside the modules: bundled, read-only),
   `DATA_DIR` (from source the same folder, so `pianists/` is where it always was; compiled, a `pianists` folder
   beside the .exe if one exists - portable - else `%APPDATA%\Piano Animator`, `$XDG_DATA_HOME/piano-animator`

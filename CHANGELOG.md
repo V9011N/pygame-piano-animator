@@ -3,6 +3,11 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.12 - Building with Python 3.14
+- Fixed: building the .exe with Python 3.14 from python.org stopped with "Could not find Tcl". The
+  build now asks Python's Tcl and Tk where their libraries are (and copies them out when they're
+  built into the program files, as in Tcl/Tk 9), so the file dialogs work in the .exe.
+
 ## v26.1.11 - Ready to build as a single .exe
 - Piano Animator can now be built into one `PianoAnimator.exe` with Nuitka (`python build.py`; see the
   README). It needs no Python, starts quickly after its first run, and has its own icon.
