@@ -9,8 +9,6 @@ v20YY.MM.DD.HHMM). Newest first.
 - Chromatic octaves (and other runs in octaves or double notes) now glide like scales: the hand no longer turns
   back and forth for every octave, and the wrist moves steadily instead of zig-zagging.
 - The hand turns less in fast runs overall.
-- Hand split: a chord the left hand keeps repeating keeps its new notes, instead of the right hand grabbing one in
-  the middle of a scale (Chopin's Ballade No. 1 at 7:59).
 
 ## v26.1.14 - Smoother chromatic runs, thumb out of sight
 - Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to their
