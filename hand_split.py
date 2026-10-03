@@ -75,6 +75,8 @@ TRACK_PRIOR = 200.0      # per note played by the other hand than its track says
 TRACK_PRIOR_SOFT = 1.0   # ... near where that hand couldn't keep up with its track:
 TRACK_FREE_T = 0.5       # within this of a move needing more than
 TOO_FAST_TRACK = 0.5     # 50% over the top speed
+WIDE_T = 0.15            # ... or groups this close together spanning more than SPAN_MAX ...
+WIDE_STREAK = 4          # ... this many times in a row
 
 
 def _groups(notes):
@@ -227,20 +229,35 @@ def _track_weights(groups, prefer):
     {id(note): cost per note of playing it with the other hand than `prefer`
     says}: TRACK_PRIOR (in effect fixed) everywhere except within
     TRACK_FREE_T of a moment where a hand following the tracks would have to
-    travel faster than its top speed - there TRACK_PRIOR_SOFT, so the
-    notes can go to the other hand.
+    travel faster than its top speed, or alternate quickly between chords
+    wider than it can span (WIDE_*) - there TRACK_PRIOR_SOFT, so the notes
+    can go to the other hand.
     """
     hands = {RIGHT: _Hand(67.0), LEFT: _Hand(48.0)}
     bad = []
+    wide = {RIGHT: [], LEFT: []}            # the side's streak of quick groups wider than a hand
     for t, ns in groups:
         for side in (RIGHT, LEFT):
             mine = [n for n in ns if prefer.get(id(n)) == side]
             if not mine:
                 continue
             ps = [n.pitch for n in mine]
-            if _too_fast(hands[side], t, min(ps), max(ps)) > TOO_FAST_TRACK:
+            h = hands[side]
+            if _too_fast(h, t, min(ps), max(ps)) > TOO_FAST_TRACK:
                 bad.append(t)
-            hands[side] = hands[side].after(t, mine)
+            # chords alternating faster than WIDE_T over more than a hand spans (SPAN_MAX),
+            # again and again: really both hands in turn, though the file gives them to one
+            # (Ravel, Scarbo, 0:35) - a single wide leap is left to the speed check above
+            if h.last_lo is not None and t - h.last_t < WIDE_T and \
+                    max(h.last_hi, max(ps)) - min(h.last_lo, min(ps)) > SPAN_MAX:
+                wide[side].append(t)
+                if len(wide[side]) >= WIDE_STREAK:
+                    bad.extend(wide[side])
+                    wide[side] = wide[side][-1:]
+            else:
+                wide[side] = []
+            hands[side] = h.after(t, mine)
+    bad.sort()
     out = {}
     for t, ns in groups:
         i = bisect.bisect_left(bad, t - TRACK_FREE_T)

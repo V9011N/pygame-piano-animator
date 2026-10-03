@@ -162,3 +162,30 @@ def test_a_trill_is_played_by_one_hand():
     (trill,) = find_trills(ns)
     r = hand_split.split_hands(ns)
     assert len({r[id(n)] for n in trill}) == 1
+
+
+def test_chord_tones_are_not_trills_but_double_notes_are():
+    from figures import find_trills
+    from midi_loader import Note, RIGHT
+    # chords alternating quickly (Ravel, Scarbo, 0:35) share neighbouring keys - D#6/E6, G6/G#6
+    a, b = (68, 75, 79), (74, 76, 80, 86, 88)
+    chords = [Note(p, 0.07 * i, 0.07 * i + 0.06, 80, 0, RIGHT) for i in range(20) for p in (a if i % 2 == 0 else b)]
+    assert find_trills(chords) == []
+    # a trill in thirds (E-G / F-A): each voice is a trill
+    thirds = [Note(p, 0.1 * i, 0.1 * i + 0.09, 80, 0, RIGHT) for i in range(8) for p in ((64, 67) if i % 2 == 0 else (65, 69))]
+    assert len(find_trills(thirds)) == 2
+
+
+def test_a_track_alternating_chords_wider_than_a_hand_goes_to_both_hands():
+    # the file puts Scarbo's alternating chords (G#5-D#6-G6 / D6-E6-G#6-D7-E7, 70 ms apart, 20
+    # semitones together) all in the right hand's track: the split may give some to the left
+    import hand_split
+    from midi_loader import Note, RIGHT
+    a, b = (68, 75, 79), (74, 76, 80, 86, 88)
+    ns = [Note(p, 0.07 * i, 0.07 * i + 0.06, 80, 0, RIGHT) for i in range(40) for p in (a if i % 2 == 0 else b)]
+    r = hand_split.split_hands(ns, prefer={id(n): RIGHT for n in ns})
+    assert sum(1 for n in ns if r[id(n)] == LEFT) > len(ns) // 5
+    # a single wide leap within the track's reach of time stays with the track
+    leap = [Note(48, 0.0, 0.1, 80, 0, RIGHT), Note(72, 0.12, 0.2, 80, 0, RIGHT), Note(74, 0.6, 0.7, 80, 0, RIGHT)]
+    r = hand_split.split_hands(leap, prefer={id(n): RIGHT for n in leap})
+    assert all(r[id(n)] == RIGHT for n in leap)

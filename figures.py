@@ -35,6 +35,7 @@ the passage around it).
 """
 from __future__ import annotations
 
+import bisect
 import math
 
 LEFT, RIGHT = "L", "R"
@@ -42,10 +43,12 @@ BLACK = {1, 3, 6, 8, 10}
 
 # Trills: two neighbouring keys (1-2 semitones apart) struck in turn, each strike at most
 # TRILL_GAP_T after the last (and more than TRILL_CHORD_T: two struck together are a second,
-# not a trill), TRILL_MIN_NOTES or more. Played by one hand (find_trills, hand_split).
+# not a trill), TRILL_MIN_NOTES or more, none of them a chord tone (TRILL_NEAR). Played by one hand
+# (find_trills, hand_split).
 TRILL_GAP_T = 0.2
 TRILL_CHORD_T = 0.035
 TRILL_MIN_NOTES = 6
+TRILL_NEAR = 7              # semitones: a note struck with two others this near is a chord tone
 
 # ----------------------------------------------------------------- keys
 PC = {'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7,
@@ -535,36 +538,54 @@ def find_trills(notes):
     [[note, ...]] the trills among `notes` (both hands, before they are split:
     hand_split keeps each in one hand), each in time order. Each pair of
     neighbouring keys is looked at on its own, so the other hand's notes in
-    between don't break a trill. A note belongs to one trill at most (the
-    longer one, where two share a key - a trill moving up a step, say).
+    between don't break a trill. Chord tones aren't trill notes: a note struck
+    together with two others within TRILL_NEAR semitones belongs to a chord
+    (chords alternating quickly - between the hands, say - share neighbouring
+    keys); with one, it's a double note (a trill in thirds). A note belongs to one trill at most (the longer one, where two
+    share a key - a trill moving up a step, say).
     """
+    onsets = sorted(notes, key=lambda n: n.start)
+    starts = [n.start for n in onsets]
+
+    def in_chord(n):
+        near = 0
+        i = bisect.bisect_left(starts, n.start - TRILL_CHORD_T)
+        while i < len(onsets) and starts[i] <= n.start + TRILL_CHORD_T:
+            m = onsets[i]
+            if m is not n and abs(m.pitch - n.pitch) <= TRILL_NEAR:
+                near += 1
+            i += 1
+        return near >= 2                        # (one partner: a double note - trills in thirds)
     by_pitch = {}
     for n in notes:
-        by_pitch.setdefault(n.pitch, []).append(n)
+        if not in_chord(n):
+            by_pitch.setdefault(n.pitch, []).append(n)
+
+    def runs(seq):
+        """The alternating runs of TRILL_MIN_NOTES or more in seq (time order)."""
+        out, run = [], []
+        for n in seq + [None]:
+            if n is not None and run and n.pitch != run[-1].pitch and \
+                    TRILL_CHORD_T < n.start - run[-1].start <= TRILL_GAP_T:
+                run.append(n)
+                continue
+            if len(run) >= TRILL_MIN_NOTES:
+                out.append(run)
+            # a key struck again (or a pause) ends it; the next run may start from here
+            run = [n] if n is not None else []
+        return out
     found = []
     for p in sorted(by_pitch):
         for q in (p + 1, p + 2):
-            if q not in by_pitch:
-                continue
-            seq = sorted(by_pitch[p] + by_pitch[q], key=lambda n: (n.start, n.pitch))
-            run = [seq[0]]
-            for n in seq[1:] + [None]:
-                ok = (n is not None and n.pitch != run[-1].pitch
-                      and TRILL_CHORD_T < n.start - run[-1].start <= TRILL_GAP_T)
-                if ok:
-                    run.append(n)
-                    continue
-                if len(run) >= TRILL_MIN_NOTES:
-                    found.append(run)
-                # a key struck again (or a pause) ends it; the next run may start from here
-                run = [n] if n is not None else []
+            if q in by_pitch:
+                found += runs(sorted(by_pitch[p] + by_pitch[q], key=lambda n: (n.start, n.pitch)))
     found.sort(key=len, reverse=True)
     used, out = set(), []
     for run in found:
-        run = [n for n in run if id(n) not in used]
-        if len(run) >= TRILL_MIN_NOTES:
-            used.update(id(n) for n in run)
-            out.append(run)
+        # (what a longer trill took is gone: what's left must still alternate)
+        for r in runs([n for n in run if id(n) not in used]):
+            used.update(id(n) for n in r)
+            out.append(r)
     out.sort(key=lambda r: r[0].start)
     return out
 

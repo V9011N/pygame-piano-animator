@@ -221,6 +221,16 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     pitch in. Trills shared between the hands before: Ballade 2 of 5 (306.2 s: one A#3 of ten to the LH), Dante
     1 of 7, Winter Wind 1 of 7; now 0. Late chords unchanged (Ballade, Winter Wind) or moved between hands
     (Dante 32 -> 32); split time unchanged.
+    Chord tones aren't trill notes (v26.1.18.SNAPSHOT-03): a note struck with two others within `TRILL_NEAR` 7
+    semitones belongs to a chord (one: a double note - trills in thirds stay trills). Chords alternating quickly
+    share neighbouring keys (Scarbo 0:35: D#6/E6, G6/G#6) and were pinned to one hand as "trills". Where a
+    longer trill takes notes, what's left of a shorter one must still alternate (it left "E6/E6" runs).
+  - **Tracks a hand can't follow, alternating**: `_track_weights` also softens the track prior where a track's
+    groups come less than `WIDE_T` 0.15 s apart spanning more than `SPAN_MAX` together, `WIDE_STREAK` 4 times
+    in a row - both hands in turn, though the file gives them to one (Scarbo 35.4-40.9 s, all in the right
+    track: G#5-D#6-G6 / D6-E6-G#6-D7-E7 every 70 ms). The split now gives 127 of its 336 notes to the left hand
+    (each hand a small rotation tremolo: LH G#5 / D6-E6, RH D#6-G6 / G#6-D7-E7 - cheaper than a 5-note chord
+    in one hand every 140 ms). A single wide leap is left to the speed check. Other two-track files unchanged.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
   - **Track hands** (2026-10-02): every note goes through the split now, not only notes whose track doesn't say.
