@@ -4,7 +4,7 @@ Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of
 v20YY.MM.DD.HHMM). Newest first.
 
 ## v26.1.10 - Hands modelled on a real hand
-- The hands now play the way a real pianist's do, measured from a video of the author's hands: long, gently
+- The hands now play the way a real pianist's do, measured from a video real hands: long, gently
   arched fingers instead of hooked ones, the fingertips further into the keys and the knuckles nearer
   them. The "Finger curvature" slider keeps its meaning (flatter to more curved) around this new shape.
 - Nails show and hide as on a real hand: the whole nail while a finger is fairly flat, a short cap at the
