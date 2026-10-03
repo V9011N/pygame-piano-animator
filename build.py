@@ -1,8 +1,8 @@
 """
-build.py - Build Piano Animator as a single executable with Nuitka.
+build.py - Build Hand-thesia as a single executable with Nuitka.
 
     pip install -r requirements.txt -r requirements-build.txt
-    python build.py              # -> dist/PianoAnimator.exe (Windows; no console window)
+    python build.py              # -> dist/Hand-thesia.exe (Windows; no console window)
     python build.py --console    # keep a console window, to see print() output while testing
 
 Windows needs a C compiler: Nuitka offers to download MinGW64 the first time
@@ -11,7 +11,7 @@ if installed. The first build takes several minutes; later ones reuse the
 compiled parts in build/.
 
 The program unpacks itself once per version to the user's cache folder
-({CACHE_DIR}/PianoAnimator/<version>), so it starts quickly after the first
+({CACHE_DIR}/Hand-thesia/<version>), so it starts quickly after the first
 run. The user's pianists, settings and log are kept apart from it - see
 paths.py.
 """
@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 from version import VERSION  # noqa: E402
 
-NAME = "PianoAnimator"
+NAME = "Hand-thesia"
 
 
 def numeric_version():
@@ -109,7 +109,7 @@ def command(console=False, tcl_tk=()):
         "--onefile",
         f"--output-dir={os.path.join(ROOT, 'build')}",
         f"--output-filename={exe}",
-        "--onefile-tempdir-spec={CACHE_DIR}/PianoAnimator/{VERSION}",
+        "--onefile-tempdir-spec={CACHE_DIR}/Hand-thesia/{VERSION}",
         "--include-data-files=CHANGELOG.md=CHANGELOG.md",              # the menu's "What's new"
         "--include-data-files=assets/icon.png=assets/icon.png",        # the window icon
         # tools and tests that the app never imports
@@ -118,12 +118,12 @@ def command(console=False, tcl_tk=()):
         "--noinclude-setuptools-mode=nofollow",
         "--noinclude-data-files=pretty_midi/*.sf2",                   # a soundfont for fluidsynth, unused
         "--assume-yes-for-downloads",
-        "--product-name=Piano Animator",
+        "--product-name=Hand-thesia",
         f"--product-version={numeric_version()}",
         f"--file-version={numeric_version()}",
-        "--file-description=Piano Animator - falling notes, animated hands and a fingering editor",
-        "--company-name=Piano Animator",
-        "--copyright=Piano Animator",
+        "--file-description=Hand-thesia - falling notes, animated hands and a fingering editor",
+        "--company-name=Hand-thesia",
+        "--copyright=Hand-thesia",
     ]
     if have_tkinter():
         cmd.append("--enable-plugin=tk-inter")                         # the file dialogs
@@ -157,7 +157,7 @@ def main():
         print("Warning: this Python has no tkinter - the built program's file dialogs won't open "
               "(files can still be dropped on its window)")
     cmd, exe = command(args.console, tcl_tk)
-    print("Building Piano Animator", VERSION)
+    print("Building Hand-thesia", VERSION)
     print(" ".join(cmd))
     subprocess.run(cmd, cwd=ROOT, check=True)
     os.makedirs(os.path.join(ROOT, "dist"), exist_ok=True)

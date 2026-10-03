@@ -50,8 +50,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
 | `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
 | `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
-| `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Piano Animator` or a portable `pianists` folder beside the .exe when compiled) |
-| `build.py` | Nuitka single-file build (`dist/PianoAnimator.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
+| `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Hand-thesia` or a portable `pianists` folder beside the .exe when compiled) |
+| `build.py` | Nuitka single-file build (`dist/Hand-thesia.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
 | `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 

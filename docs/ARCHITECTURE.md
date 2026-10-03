@@ -1,4 +1,4 @@
-# Pygame Piano Animator - architecture notes
+# Hand-thesia - architecture notes
 
 Detailed design notes, kept up to date as features were added. Start with `CLAUDE.md` / `README.md` for the overview.
 
@@ -385,7 +385,11 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `common.Performance` feeds `Transport`, which sends note on/off events in time order along with the pedal CCs (64/66/67 from `MidiSong.controls`).
   - The keyboard shows the performed keys.
 - The Studio has four pages: browser (search, size chips, sort), overview (RGB sliders, stretched/natural view, Save that stays disabled for a new pianist until Anatomy and Behavior have both been visited), anatomy (clickable bones and table, group sliders, span-over-keys view with the thumb on C4) and behavior.
-- Badges: the active pianist appears in the bottom-right of the hand area (player and editor), in the menu line and in the Studio's top bar. A "Ped." indicator sits bottom-left.
+- Badges: the active pianist appears in the bottom-right of the hand area (player and editor), in the menu line and in the Studio's top bar. The pedals sit bottom-left
+  (v26.1.16, `common.draw_pedals`): a pedal box with soft, sostenuto and sustain pedals (CC 67, 66, 64, from
+  `MidiSong.control_state`), each lit red while down (64+) and dipped a little - drawn 3x and smoothscaled (hard
+  edges onto a see-through surface, so no see-through rings), cached per state and size, scaled with the window
+  (0.9-1.5 at 800 px high), its bottom above the version text in the window's corner.
 
 ## pianoplayer-inspired additions (2026-09-26)
 - **Economy of motion** (`fingering.W["velocity"]` = 0.05):
@@ -545,7 +549,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
   - Costs: `chord_pair_cost` charges `thumb_double` 7 / `pinky_double` 8 for the pair. `shape_cost` and the held-key steal (`held_map` is now finger → set of pitches) accept pairs.
   - The costs are tuned so plain chords stay normal (C-D-F-A: 1-2-3-5; C-E-G-B-C: 1-2-3-4-5). Doubles appear when a normal fingering would overstretch neighbouring fingers or exceed MAX_SPAN, e.g. C#-D#-G#-C#: 1-1-3-5.
-  - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre.
+  - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
   - PIG test 66.23% (up from 66.17%), Hanon unchanged.
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
@@ -942,12 +946,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - Animation: faster reshaping in presto passages.
 
 ## The single-file build (build.py, paths.py, v26.1.11)
-- `python build.py` runs Nuitka `--onefile` on `main.py` -> `dist/PianoAnimator.exe` (`.bin` elsewhere). Options:
+- `python build.py` runs Nuitka `--onefile` on `main.py` -> `dist/Hand-thesia.exe` (`.bin` elsewhere). Options:
   the tk-inter plugin (file dialogs; skipped with a warning when the building Python has no tkinter),
   `CHANGELOG.md` and `assets/icon.png` as data files, `pig_eval` / `learn_weights` / tests not followed, pytest
   and setuptools left out, pretty_midi's unused soundfont (`*.sf2`, 6 MB) left out, Windows console disabled
   (`--console`: forced), the icon from `assets/icon.ico`, product and file versions from `VERSION`
-  (`v26.1.11` -> `26.1.11.0`). `--onefile-tempdir-spec={CACHE_DIR}/PianoAnimator/{VERSION}`: unpacked once per
+  (`v26.1.11` -> `26.1.11.0`). `--onefile-tempdir-spec={CACHE_DIR}/Hand-thesia/{VERSION}`: unpacked once per
   version and reused (a ~1 s start), not to a fresh temp folder each launch.
 - Tcl/Tk (v26.1.12): Nuitka's tk-inter plugin only looks for the script libraries in the usual folders
   (`<prefix>\tcl\tcl<version>\init.tcl` or a zip beside it). The python.org Python 3.14.8 for Windows failed
@@ -960,10 +964,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   dialog under Xvfb); the copy-out branch is tested with a stand-in interpreter (no Tcl 9 here).
 - `paths.py`: `COMPILED` (Nuitka's `__compiled__`), `RESOURCE_DIR` (beside the modules: bundled, read-only),
   `DATA_DIR` (from source the same folder, so `pianists/` is where it always was; compiled, a `pianists` folder
-  beside the .exe if one exists - portable - else `%APPDATA%\Piano Animator`, `$XDG_DATA_HOME/piano-animator`
-  elsewhere). `pianist.FOLDER` and the changelog-seen marker live under `DATA_DIR`.
+  beside the .exe if one exists - portable - else `%APPDATA%\Hand-thesia`, `$XDG_DATA_HOME/hand-thesia`
+  elsewhere). `pianist.FOLDER` and the changelog-seen marker live under `DATA_DIR`. A folder from before the
+  rename to Hand-thesia (v26.1.16; `Piano Animator`, `piano-animator`) is moved to the new name the first time,
+  unless the new one exists; if the move fails, the old folder is used.
 - `main.py`: compiled and with no console (stdout missing or not a terminal), output goes to
-  `DATA_DIR/piano_animator.log` (started afresh past 1 MB, a header per launch); an uncaught error is logged with
+  `DATA_DIR/hand-thesia.log` (started afresh past 1 MB, a header per launch); an uncaught error is logged with
   its traceback and shown in a tkinter message box naming the log, exit code 1. The window icon is
   `assets/icon.png`; `PYGAME_HIDE_SUPPORT_PROMPT` hides pygame's banner; `--version`.
 - Checked by building on Linux (Nuitka 4.2.2, gcc; ~4 min, 27 MB): run from another folder it renders the player

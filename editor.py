@@ -311,7 +311,7 @@ class FingeringEditor(Transport):
         self.paused = True
         self.sounding = {}
         self._fit_rows()
-        pygame.display.set_caption(f"Piano Animator {VERSION} - editing {song.title}")
+        pygame.display.set_caption(f"Hand-thesia {VERSION} - editing {song.title}")
 
     def _rebuild(self):
         """After an edit: a new song object (hands changed) and fresh hand animators."""
@@ -1109,7 +1109,7 @@ class FingeringEditor(Transport):
             draw_hands(s, [a.pose(self.t, self.keyboard) for a in self.hands.values()])
             s.set_clip(None)
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
-                           self.sustain_down() if self.song.controls else None)
+                           self.song.control_state(self.t))
         self._draw_top_bar(s)
         self._draw_info(s)
         if self.menu:

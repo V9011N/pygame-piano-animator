@@ -12,7 +12,7 @@ import threading
 import pygame
 
 import progress
-from midi_loader import HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, is_black_key
+from midi_loader import HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, SOFT, SOSTENUTO, SUSTAIN, is_black_key
 
 # --------------------------------------------------------------------------- #
 # Settings
@@ -742,10 +742,11 @@ class Dialog:
             x += bw + gap
 
 
-def draw_pianist_badge(surf, fonts, area, pianist, pedal=None):
+def draw_pianist_badge(surf, fonts, area, pianist, pedals=None):
     """
-    The active pianist, small, in the bottom-right corner of `area` (and the
-    sustain pedal's state in the bottom-left, when the song uses it).
+    The active pianist, small, in the bottom-right corner of `area` - and the
+    pedals in the bottom-left (draw_pedals), given `pedals` ({controller:
+    value} in force, MidiSong.control_state). Returns where the pedals went.
     """
     name = pianist.name
     img = fonts["small"].render(name, True, TEXT_DIM)
@@ -759,10 +760,91 @@ def draw_pianist_badge(surf, fonts, area, pianist, pedal=None):
     pygame.draw.circle(surf, tuple(pianist.badge_color), (box.x + 12, box.centery), 6)
     pygame.draw.circle(surf, (150, 150, 160), (box.x + 12, box.centery), 6, 1)
     surf.blit(img, (box.x + 24, box.y + 4))
-    if pedal is not None:
-        txt = fonts["small"].render("Ped.", True, ACCENT if pedal else (70, 70, 84))
-        r = txt.get_rect(bottomleft=(area.x + pad + 4, area.bottom - pad - 4))
-        surf.blit(txt, r)
+    if pedals is not None:
+        # above the version in the window's corner (App.draw_version)
+        bottom = min(area.bottom - pad, surf.get_height() - fonts["small"].get_height() - 10)
+        return draw_pedals(surf, (area.x + pad + 4, bottom), pedals, scale=min(1.5, max(0.9, surf.get_height() / 800)))
+    return None
+
+
+# The pedals, as in a grand piano's pedal box seen from the front: soft (left),
+# sostenuto (middle), sustain (right). A pedal that is down is lit red.
+PEDAL_ORDER = (SOFT, SOSTENUTO, SUSTAIN)
+PEDAL_SIZE = (120, 67)                    # unscaled drawing size...
+PEDAL_TOP = 19                            # ...from the box's top down (y in the drawing below)
+_BRASS, _BRASS_EDGE = (214, 192, 130), (150, 126, 74)
+_PEDAL_ON, _PEDAL_ON_EDGE = (222, 88, 74), (140, 46, 38)
+_BOX, _BOX_LIGHT, _BOX_EDGE = (62, 63, 70), (82, 83, 92), (104, 105, 116)   # (lighter than the dark background)
+PEDAL_SUPERSAMPLE = 3                     # drawn this much bigger and scaled down: smooth edges
+_pedal_cache = {}
+
+
+def _bezier(p0, p1, p2, u):
+    a, b, c = (1 - u) ** 2, 2 * (1 - u) * u, u * u
+    return a * p0[0] + b * p1[0] + c * p2[0], a * p0[1] + b * p1[1] + c * p2[1]
+
+
+def _pedal_image(down, scale):
+    """The pedal box and its three pedals (`down`: which are pressed), drawn once per state and size."""
+    key = (down, round(scale, 2))
+    img = _pedal_cache.get(key)
+    if img is not None:
+        return img
+    k = scale * PEDAL_SUPERSAMPLE
+    big = pygame.Surface((int(PEDAL_SIZE[0] * k) + 4, int(PEDAL_SIZE[1] * k) + 4), pygame.SRCALPHA)
+
+    def P(x, y):
+        return round(x * k), round((y - PEDAL_TOP) * k)
+
+    def rect(x, y, w, h, col, r=0.0):
+        pygame.draw.rect(big, col, pygame.Rect(P(x, y), (round(w * k), round(h * k))), border_radius=round(r * k))
+
+    def disc(x, y, r, col):
+        pygame.draw.circle(big, col, P(x, y), max(1, round(r * k)))
+
+    # the box, with a lighter front and a rounded lip
+    rect(5, 19, 110, 14, _BOX_EDGE, 5)
+    rect(6, 20, 108, 12, _BOX, 4)
+    rect(11, 30, 98, 15, _BOX_EDGE, 3)
+    rect(12, 30, 96, 14, _BOX_LIGHT, 2)
+    # the brass rail
+    rect(22, 43, 76, 3, _BRASS)
+    # each pedal: a mount, then a stem curving out to a teardrop foot (the outer ones
+    # turn outward), drawn as a chain of discs - its edge first, then its face
+    paths = {SOFT: ((39, 44), (39, 58), (31, 70)), SOSTENUTO: ((60, 44), (60, 57), (60, 71)),
+             SUSTAIN: ((81, 44), (81, 58), (89, 70))}
+    for c, (p0, p1, p2) in paths.items():
+        on = c in down
+        fill, edge = (_PEDAL_ON, _PEDAL_ON_EDGE) if on else (_BRASS, _BRASS_EDGE)
+        dy = 2.0 if on else 0.0                          # (a pressed pedal dips)
+        mx = p0[0]
+        rect(mx - 7.8, 37.2, 15.6, 8.6, _BRASS_EDGE, 1)
+        rect(mx - 7, 38, 14, 7, _BRASS, 1)
+        n = 40
+        pts = [_bezier(p0, (p1[0], p1[1] + dy), (p2[0], p2[1] + dy), i / (n - 1)) for i in range(n)]
+        radii = [2.6 + 6.0 * (i / (n - 1)) ** 2.2 for i in range(n)]
+        for (x, y), r in zip(pts, radii):
+            disc(x, y, r + 1.0, edge)
+        for (x, y), r in zip(pts, radii):
+            disc(x, y, r, fill)
+        hx, hy = pts[-6]
+        hr = radii[-6]
+        disc(hx - hr * 0.35, hy - hr * 0.3, hr * 0.3, tuple(min(255, v + 30) for v in fill))   # a gleam on the foot
+    size = (big.get_width() // PEDAL_SUPERSAMPLE, big.get_height() // PEDAL_SUPERSAMPLE)
+    img = pygame.transform.smoothscale(big, size)
+    if len(_pedal_cache) > 32:
+        _pedal_cache.clear()
+    _pedal_cache[key] = img
+    return img
+
+
+def draw_pedals(surf, bottomleft, state, scale=1.0):
+    """The pedals clipart with its bottom-left corner at `bottomleft`; `state`: {controller: value} (64+ is down)."""
+    down = frozenset(c for c in PEDAL_ORDER if state.get(c, 0) >= 64)
+    img = _pedal_image(down, scale)
+    r = img.get_rect(bottomleft=bottomleft)
+    surf.blit(img, r)
+    return r
 
 
 class Slider:

@@ -1,5 +1,5 @@
 """
-hands.py - Procedural hand skeletons for the piano animator (both hands).
+hands.py - Procedural hand skeletons for Hand-thesia (both hands).
 
 The model is a right hand. The left hand is the same model on a mirrored
 keyboard: pitches are reflected about D4 (the keyboard is symmetric there),
@@ -1663,8 +1663,10 @@ class HandAnimator:
             latest = max(so[id(top)], (groups[gi + 1][0] - 0.03) if gi + 1 < len(groups) else math.inf)
             for n in order[:-1]:
                 f = self.fingering[id(n)]
+                if f == ft:                     # (one finger on two keys, a thumb on a pair: no stretch between them)
+                    continue
                 over = abs(pt - pos(n)) - reach(f, ft)
-                if f != ft and over > 0:
+                if over > 0:
                     need = fg.travel_time(over, self.max_speed)
                     eo[id(n)] = min(eo[id(n)], max(so[id(n)] + 0.03, so[id(top)] - need))
                     so[id(top)] = min(latest, max(so[id(top)], eo[id(n)] + need))
