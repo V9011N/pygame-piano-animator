@@ -3,6 +3,21 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.15 - Chromatic scales and octaves
+- Chromatic scales: fingers no longer step back as they let go of a key next to their neighbour's and then spring
+  forward, and a finger no longer hovers and then jumps when its neighbour holds a key too long.
+- Chromatic octaves (and other runs in octaves or double notes) now glide like scales: the hand no longer turns
+  back and forth for every octave, and the wrist moves steadily instead of zig-zagging.
+- The hand turns less in fast runs overall.
+- Hand split: a chord the left hand keeps repeating keeps its new notes, instead of the right hand grabbing one in
+  the middle of a scale (Chopin's Ballade No. 1 at 7:59).
+
+## v26.1.14 - Smoother chromatic runs, thumb out of sight
+- Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to their
+  next key. A finger now waits beside a neighbour that's still on a key in its way, then goes.
+- The thumb passing under the hand no longer shows between the fingers - it's hidden under the hand, its shadow
+  too, in every skin.
+
 ## v26.1.13 - Find your pianists
 - New "Open pianists folder" button in Pianists & hands: it opens the folder where your pianists and
   settings are kept, and shows its full path. In the .exe that's `AppData\Roaming\Piano Animator\pianists`

@@ -204,6 +204,10 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - A small shift cost.
   - **Chords at speed**: `CHORD_COST·size·(n−1)^1.5·min(3, 0.4/dt)`, `CHORD_COST` 0.5 (was 1.5, which split fast
     repeated chords between the hands). `size` is 0 for shapes of ≤ 5 semitones, 0.5 for ≤ 9 and 1 above.
+    Keys the hand's last group was on (`_Hand.last_ps`) count only `REPEAT_SHAPE` 0.3 (v26.1.15): accompaniment
+    repeating its shape is little work. Before, Ballade No. 1's LH A#3-C#4 + F#4 at 7:59.7 went 2 + 1, the F#4 to
+    the RH thumb in the middle of its chromatic scale. Chords struck late to keep to the top speed: Ballade
+    95 → 89, Dante Sonata 50 → 32; the files with hand tracks split as before.
   - **Repeats**: a chord struck again within 0.5 s and split differently from the time before costs 4.
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
@@ -875,6 +879,48 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     pinched to one point - the thumb's occlusion couldn't be drawn well.)
   - Player and editor show "g" for a glissando note; the editor marks / unmarks a selection that passes
     `glissando.is_string` (right-click "Glissando" / "Not a glissando", or G).
+- **Chromatic runs without twitching** (v26.1.14; Chopin Ballade No. 1, RH upward chromatic scale at 7:58,
+  1-3 with 1-2-3 at E-F-F# and B-C-C#): the index (and middle) finger stopped and hopped on, or stepped back,
+  several times. Its smoothed path (`_smooth_tip_grid` looks ahead) ran into the middle finger, still holding the
+  key before, and `_separate` held it back until that key let go - then let it jump in one frame.
+  - `_blocked_until(f, i)` (cached in `_prep_cache`): when a finger 2-5 leaves note i, the latest end of the keys
+    held, in that time, by the fingers on the side it is heading for, short of its next key. `_prep_window` starts
+    the trip no earlier (and still at least `STRIKE_MIN_T` before the note): the finger waits beside its neighbour,
+    then goes.
+  - `_separate` pushes by mobility: a pressing finger or one fixed on its key (`_key_weight`) doesn't give way, a
+    free one does, in proportion, instead of half each.
+  - `_shaped_rests` blends its exceptions (the thumb past the index, a finger the thumb is passing) in over half a
+    white key instead of switching them on and off.
+  - Results (direction reversals > 3 px per frame, at 60 fps): the 7:58 scale index/middle 4/4 → 0/0; a synthetic
+    1-3 chromatic scale at 60 ms a note 5/6 → 0/0 (test); the whole Ballade RH 2: 58 → 49, 3: 30 → 25, LH unchanged.
+- **Chromatic scales, octaves and runs that join** (v26.1.15; Ballade No. 1: RH chromatic scales at 5:25, 5:29
+  and 7:58, chromatic octaves in both hands at 8:30):
+  - The index still stepped back each time it let go of a key next to the middle finger's (C next to C#): `_separate`
+    wanted `TIP_GAP_WK` between them, more than the keys are apart, so it pushed the freed finger back, and let
+    it spring forward when the middle finger lifted. Next to a finger on its key, a free one now keeps no further off
+    than its own last or next key does (`_near_keys_x`; keys on the far side ignored - played before the hand moved
+    on), never nearer than `TIP_GAP_MIN_WK` 0.4.
+  - Fingers' first keys too: `_blocked_until` covers a finger's first note (neighbours' keys up to
+    `PREP_LOOKBACK_T` 2 s back, any neighbour on the target's far side in the way).
+  - A held key that a later chord's finger has to cross (`(g > f) != (vm > vn)`, or out of reach) is let go early
+    for every chord struck while it is held, not only the next one: in a 1-3 scale the middle finger's legato G#
+    overlapped the index's A# after the thumb's A (2 over 3); with no time left it hovered, then jumped 45 px.
+  - `_find_runs` also takes octaves and double notes: groups of the same size (up to two notes) whose notes all
+    move together by the same step. Chromatic octaves 1-4 / 1-5 turned the hand ~11° every octave (one fit per
+    shape) and stepped the wrist back.
+  - In a run `_key_fix` weighs a turn `RUN_TURN_STIFF` 3 times as much: it reaches the keys by moving the hand.
+  - Results (fingertip direction changes over 2-3 px per frame, still frames between ignored; total turning; v26.1.14
+    → now): 7:58-8:01 26 → 0, 108° → 49°; 5:25 4 → 3, 25° → 17°; 5:29 13 → 8, 49° → 38°; RH octaves 162° → 99°
+    (wrist path / distance 1.32 → 1.15); LH octaves 116° → 64°. Op. 25 No. 6 RH turning -24%, Op. 25 No. 10 LH
+    -9%. Synthetic 1-3 chromatic scale: index 6 → 0 (test). Top speed and fingertips on keys unchanged (Concerto,
+    Dante, Ballade).
+- **The thumb under the hand stays hidden** (v26.1.14): drawn lower than the palm, the thumb passing under was
+  still seen between the fingers (the palm covers up to the knuckles only). `skins._tuck_zone`: palm down, the
+  thumb below the palm and some of it beyond the knuckle line between the index's outer edge and the little
+  finger's (a quad reaching 6 in toward the tips). There `_draw_tucked` shows the hand drawn again without its
+  thumb (`_Hand.hide_thumb`) over a copy of what was under the hand (`_Pen` takes an origin; soft edges drawn onto
+  a see-through layer left see-through rings, so the copy is opaque), masked to the zone; outside it the whole
+  hand. The thumb's shadow is left out too (it is in the hand's own). Cost: ~2.6 ms on such frames (1920x1080).
 - Checks: Hanon off-key ≈ 0.1%. Presto Chopin RH ≈ 10% off-centre frames: an animation speed limit, not fingering.
 
 ## Tests

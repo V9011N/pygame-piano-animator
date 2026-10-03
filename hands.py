@@ -212,10 +212,11 @@ LIMIT_SMOOTH_HAND = 3       # grid steps each side the limited hand is averaged 
 LIMIT_SMOOTH_HAND_ON = 1    # ...and while its fingers are on keys
 LIMIT_SMOOTH_TIPS = 3       # ...and the fingertips
 # Scale runs: the wrist glides and the fingers do the crossing
-RUN_MIN_NOTES = 7           # single notes moving by step, at least this many in a row...
+RUN_MIN_NOTES = 7           # single notes (or octaves, double notes) moving by step, at least this many in a row...
 RUN_GAP_T = 0.3             # s, ...none further apart than this
 RUN_RAMP_T = 0.15           # s, the run's hold on the hand eases in and out over this
 RUN_GLIDE_T = 0.25          # s, in a run the wrist is averaged over +-this (the crossings' steps even out)
+RUN_TURN_STIFF = 3.0        # in a run the key fit turns the hand this much less readily, moving it instead
 TREM_MIN_NOTES = 6          # tremolos (and trills): at least this many strikes, each a repeat of one a few
 TREM_PERIOD = 4             # strikes back (up to this many) - the same key or chord again...
 TREM_GAP_T = 0.3            # s, ...none further apart than this
@@ -252,6 +253,8 @@ GLISS_FIST_CLEAR = 0.45     # in, ...but the knuckles' centres this far short of
 FLAT_SPAN_WK = (4.5, 6.5)   # keys held this wide (white keys, outermost) start / fully flatten the hand...
 FLAT_DROP = 0.6             # ...which lowers its knuckles by this share, so stretched fingers reach further
 TIP_GAP_WK = 0.6            # neighbouring fingertips (2-5) keep at least this far apart in a run
+TIP_GAP_MIN_WK = 0.4        # ...or as near as their keys are (one on its key), but never nearer than this
+PREP_LOOKBACK_T = 2.0       # s, a finger's first key: neighbours' keys this far back may be in its way
 SHAPE_FALLOFF = 0.6         # idle fingers follow a busy neighbour by this much per finger
 
 
@@ -708,29 +711,32 @@ class HandAnimator:
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
                 s0 = so[id(n)]
+                # every chord struck while it is held, not just the next one
+                # (1-3 chromatic scales, legato: 3 still on G# when 2 comes
+                # to A# after the thumb's A - 2 over 3)
                 gi = bisect.bisect_right(starts, n.start + 1e-6)
-                if gi >= len(self.groups) or starts[gi] > self.finger_ends[f][i] + 0.1:
-                    continue
-                for m in self.groups[gi][1]:
-                    g = self.fingering[id(m)]
-                    if g == f or m.pitch == n.pitch:
-                        continue
-                    vn, vm = self.vp(n.pitch), self.vp(m.pitch)
-                    if abs(key_pos(vm) - key_pos(vn)) > MAX_SPAN[(min(f, g), max(f, g))] + 0.5:
-                        lift = self.early_lift
-                    elif 1 in (f, g):
-                        # a wide thumb-under / finger-over: not quite legato
-                        if is_crossing(vn, f, vm, g) and abs(key_pos(vm) - key_pos(vn)) > 2.0:
-                            lift = CROSS_LIFT_T
+                while gi < len(self.groups) and starts[gi] <= self.finger_ends[f][i] + 0.1:
+                    for m in self.groups[gi][1]:
+                        g = self.fingering[id(m)]
+                        if g == f or m.pitch == n.pitch:
+                            continue
+                        vn, vm = self.vp(n.pitch), self.vp(m.pitch)
+                        if abs(key_pos(vm) - key_pos(vn)) > MAX_SPAN[(min(f, g), max(f, g))] + 0.5:
+                            lift = self.early_lift
+                        elif 1 in (f, g):
+                            # a wide thumb-under / finger-over: not quite legato
+                            if is_crossing(vn, f, vm, g) and abs(key_pos(vm) - key_pos(vn)) > 2.0:
+                                lift = CROSS_LIFT_T
+                            else:
+                                continue
+                        elif (g > f) != (vm > vn):
+                            lift = self.early_lift
                         else:
                             continue
-                    elif (g > f) != (vm > vn):
-                        lift = self.early_lift
-                    else:
-                        continue
-                    sm = so[id(m)]
-                    e = max(s0 + 0.5 * (sm - s0), sm - lift)
-                    self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
+                        sm = so[id(m)]
+                        e = max(s0 + 0.5 * (sm - s0), sm - lift)
+                        self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
+                    gi += 1
         # Nothing travels faster than the pianist's top speed: keys are let
         # go early enough to get to the next ones, or those are struck late.
         self._speed_schedule()
@@ -749,6 +755,7 @@ class HandAnimator:
         self._follow_jobs = {}
         self._warm_k = None
         self._strike_list = None
+        self._prep_cache = {}                    # _blocked_until
         self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
@@ -763,7 +770,10 @@ class HandAnimator:
         [(start, end)] of this hand's scale runs: RUN_MIN_NOTES or more single
         notes in a row, each a step (1-2 semitones, or a harmonic minor's
         augmented second after a step) from the one before and at most
-        RUN_GAP_T after it. Arpeggios (thirds and wider) never qualify.
+        RUN_GAP_T after it - or as many octaves (or other double notes) in a
+        row, all their notes moving together by the same step (chromatic
+        octaves: the hand glides, not turning for each 4 and 5). Arpeggios
+        (thirds and wider) never qualify.
         """
         runs, cur = [], []
 
@@ -771,18 +781,24 @@ class HandAnimator:
             if len(cur) >= RUN_MIN_NOTES:
                 runs.append((cur[0][0], cur[-1][2]))
         for t, ns in self.groups:
-            if len(ns) != 1:
-                close()
-                cur = []
-                continue
-            n = ns[0]
+            ps = sorted(n.pitch for n in ns)
             if cur:
-                d = abs(n.pitch - cur[-1][1])
-                step = 1 <= d <= 2 or (d == 3 and len(cur) > 1 and 1 <= abs(cur[-1][1] - cur[-2][1]) <= 2)
+                prev = cur[-1][1]
+                if len(ps) == 1 and len(prev) == 1:
+                    d = abs(ps[0] - prev[0])
+                    step = 1 <= d <= 2 or (d == 3 and len(cur) > 1 and len(cur[-2][1]) == 1 and
+                                           1 <= abs(prev[0] - cur[-2][1][0]) <= 2)
+                else:
+                    ds = {a - b for a, b in zip(ps, prev)} if len(ps) == len(prev) else set()
+                    step = len(ds) == 1 and 1 <= abs(next(iter(ds))) <= 2
                 if not step or t - cur[-1][0] > RUN_GAP_T:
                     close()
                     cur = []
-            cur.append((t, n.pitch, min(n.end, t + RUN_GAP_T)))
+            if len(ps) > 2:                     # (chords: not a run, but may start nothing either)
+                close()
+                cur = []
+                continue
+            cur.append((t, ps, min(max(n.end for n in ns), t + RUN_GAP_T)))
         close()
         return runs
 
@@ -940,27 +956,46 @@ class HandAnimator:
         In a run, fingertips 2-5 that would come closer than TIP_GAP_WK (or
         pass each other) are pushed apart across the hand - a finger on its
         key stays put - blended in by `comp`: compressed, never overlapping.
+        Each of a pair gives way by its mobility: none while on its key, then
+        growing as the key no longer needs reaching (1 - _key_weight: eased
+        out after the release, in before the strike) - not all at once at the
+        release, which made the neighbours jump in chromatic scales.
         """
         if comp <= 0:
             return tips
         rot, gap = self._rot, TIP_GAP_WK * self.kb.white_w
         fs = [f for f in (2, 3, 4, 5) if f in tips]
         loc = {f: list(rot(tips[f][0] - wx, tips[f][1] - wy, -psi)) for f in fs}
-        fixed = {f: self._pressing(f, t) for f in fs}
+        mob = {f: 0.0 if self._pressing(f, t) else 1.0 - self._key_weight(f, t)[0] for f in fs}
+        # next to a finger on its key, a free one keeps no further off than
+        # its own last or next key does (adjacent keys are nearer than the
+        # gap): pushed further, it stepped back as it let go and jumped on
+        # when the neighbour did (1-3 chromatic scales)
+        pair_gap = {}
+        for a, b in zip(fs, fs[1:]):
+            g_ab = gap
+            for fixed, free in ((a, b), (b, a)):
+                if mob[fixed] > 1e-3 or mob[free] <= 1e-3:
+                    continue
+                held = self._key_weight(fixed, t)[1]
+                if held is None:
+                    continue
+                k = self._key_x_across(held, fixed, tips[fixed][1], wx, wy, psi)
+                for fx in self._near_keys_x(free, t, tips[free][1], wx, wy, psi):
+                    apart = (fx - k) if free == b else (k - fx)
+                    if apart > 0:               # (a key on the far side was played before the hand moved on)
+                        g_ab = min(g_ab, max(TIP_GAP_MIN_WK * self.kb.white_w, apart))
+            pair_gap[a] = g_ab
         for _ in range(12):
             moved = False
             for a, b in zip(fs, fs[1:]):
-                d = gap - (loc[b][0] - loc[a][0])
-                if d <= 1e-6 or (fixed[a] and fixed[b]):
+                d = pair_gap[a] - (loc[b][0] - loc[a][0])
+                m = mob[a] + mob[b]
+                if d <= 1e-6 or m <= 1e-3:
                     continue
                 moved = True
-                if fixed[a]:
-                    loc[b][0] += d
-                elif fixed[b]:
-                    loc[a][0] -= d
-                else:
-                    loc[a][0] -= d / 2
-                    loc[b][0] += d / 2
+                loc[a][0] -= d * mob[a] / m
+                loc[b][0] += d * mob[b] / m
             if not moved:
                 break
         out = dict(tips)
@@ -970,6 +1005,17 @@ class HandAnimator:
             ox, oy, oz = tips[f]
             out[f] = (_lerp(ox, wx + x, k), _lerp(oy, wy + y, k), oz)
         return out
+
+    def _near_keys_x(self, f, t, y, wx, wy, psi):
+        """Across the hand (as _separate measures), finger f's keys: the one it is on or last left, and its next."""
+        starts = self.finger_starts[f]
+        i = bisect.bisect_right(starts, t) - 1
+        return [self._key_x_across(self.by_finger[f][j], f, y, wx, wy, psi)
+                for j in (i, i + 1) if 0 <= j < len(starts)]
+
+    def _key_x_across(self, n, f, y, wx, wy, psi):
+        x, _ = self.key_target(n.pitch, f, n)
+        return self._rot(x - wx, y - wy, -psi)[0]
 
     # ----- wrist gestures ------------------------------------------------------
     def _find_gestures(self):
@@ -1359,6 +1405,7 @@ class HandAnimator:
         if not cons:
             return wx, wy, psi
         arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
+        arm *= 1.0 + (RUN_TURN_STIFF - 1.0) * comp     # (in a run the hand keeps its turn: chromatic octaves)
 
         def residuals(q):
             x, y, p = q
@@ -2244,6 +2291,40 @@ class HandAnimator:
         return pose
 
     # ----- fingertip timeline -------------------------------------------------
+    def _blocked_until(self, f, i):
+        """
+        When finger f (2-5) can set off from its note i (or from where it
+        rests, i = -1) toward note i+1: not before every neighbouring finger
+        holding a key short of that one - a finger on f's far side of it,
+        in the way - has let go: fingers can't pass each other (in a 1-3
+        chromatic scale the index waited pressed against the middle finger
+        and then jumped with it). The thumb passes under them.
+        """
+        if f == 1:
+            return -math.inf
+        cache = self._prep_cache
+        key = (f, i)
+        got = cache.get(key)
+        if got is None:
+            notes, starts = self.by_finger[f], self.finger_starts[f]
+            dst = key_pos(self.vp(notes[i + 1].pitch))
+            got = -math.inf
+            if i < 0 or key_pos(self.vp(notes[i].pitch)) != dst:
+                t1 = starts[i + 1]
+                t0 = self.finger_ends[f][i] if i >= 0 else t1 - PREP_LOOKBACK_T
+                for g in range(2, 6):
+                    if g == f:
+                        continue
+                    gs, ge, gn = self.finger_starts[g], self.finger_ends[g], self.by_finger[g]
+                    j = bisect.bisect_right(gs, t1) - 1
+                    while j >= 0 and ge[j] > t0:
+                        p = key_pos(self.vp(gn[j].pitch))
+                        if (p < dst) if g > f else (p > dst):
+                            got = max(got, ge[j])
+                        j -= 1
+            cache[key] = got
+        return got
+
     def _prep_window(self, f, i):
         """(prep_start, strike_start, strike) for finger f's note i+1 (i = its last note, or -1)."""
         starts, ends = self.finger_starts[f], self.finger_ends[f]
@@ -2252,6 +2333,8 @@ class HandAnimator:
         # when time is short the final drop is cut so the trip keeps to it
         need = self.lead.get(id(self.by_finger[f][i + 1]), 0.0)
         prep_start = max(nxt - max(self.prep_max_t, STRIKE_MIN_T + need), ends[i] if i >= 0 else -math.inf)
+        # (not through a neighbour still on its key)
+        prep_start = max(prep_start, min(self._blocked_until(f, i), nxt - STRIKE_MIN_T))
         window = max(0.0, nxt - prep_start)
         strike = min(STRIKE_T, 0.35 * window)
         if window - strike < need:
@@ -2342,17 +2425,21 @@ class HandAnimator:
         """
         rest = self.rest_local
         disp = {}
+        band = 0.5 * WHITE_KEY_IN * self.ppi
         for g in range(1, 6):
-            if busy[g] <= 0.05:
+            # a thumb tucked under (or a finger crossed over the thumb) says
+            # nothing about where the other fingers belong - fading out over
+            # half a key as it gets there, not all at once: a switch made the
+            # idle fingers jump each time the thumb passed under (chromatic scales)
+            w = busy[g]
+            if g == 1:
+                w *= _smooth(0.5 + (rest[2][0] - local[1][0]) / band)
+            else:
+                w *= 1.0 - min(1.0, busy[1] / 0.1) * _smooth(0.5 + (local[1][0] - local[g][0]) / band)
+            if w <= 1e-3:
                 continue
             dx, dy = local[g][0] - rest[g][0], local[g][1] - rest[g][1]
-            # a thumb tucked under (or a finger crossed over the thumb) says
-            # nothing about where the other fingers belong
-            if g == 1 and local[1][0] > rest[2][0]:
-                continue
-            if g > 1 and busy[1] > 0.05 and local[g][0] < local[1][0]:
-                continue
-            disp[g] = (dx * busy[g], dy * busy[g])
+            disp[g] = (dx * w, dy * w)
         cap_x, cap_y = 0.9 * WHITE_KEY_IN * self.ppi, 0.5 * WHITE_KEY_IN * self.ppi
         out = {}
         for f in range(1, 6):

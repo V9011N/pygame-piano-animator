@@ -141,10 +141,11 @@ def _inflate(poly, d):
 class _Pen:
     """Anti-aliased filled shapes where pygame.gfxdraw is available."""
 
-    def __init__(self, surf):
+    def __init__(self, surf, origin=(0, 0)):
         import pygame
         self.pg = pygame
         self.surf = surf
+        self.ox, self.oy = origin           # where the surface's top left is on the screen
         try:
             import pygame.gfxdraw as gfx
             self.gfx = gfx
@@ -152,7 +153,7 @@ class _Pen:
             self.gfx = None
 
     def circle(self, c, r, color):
-        x, y, r = int(round(c[0])), int(round(c[1])), max(1, int(round(r)))
+        x, y, r = int(round(c[0] - self.ox)), int(round(c[1] - self.oy)), max(1, int(round(r)))
         if self.gfx:
             self.gfx.filled_circle(self.surf, x, y, r, color)
             self.gfx.aacircle(self.surf, x, y, r, color)
@@ -160,7 +161,7 @@ class _Pen:
             self.pg.draw.circle(self.surf, color, (x, y), r)
 
     def poly(self, pts, color):
-        pts = [(int(round(x)), int(round(y))) for x, y in pts]
+        pts = [(int(round(x - self.ox)), int(round(y - self.oy))) for x, y in pts]
         if len(pts) < 3:
             return
         if self.gfx:
@@ -181,13 +182,14 @@ class _Pen:
 
     def line(self, a, b, color, w=1):
         w = max(1, int(round(w)))
+        a, b = (a[0] - self.ox, a[1] - self.oy), (b[0] - self.ox, b[1] - self.oy)
         if w == 1 and self.gfx:
             self.pg.draw.aaline(self.surf, color, a, b)
         else:
             self.pg.draw.line(self.surf, color, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), w)
             if w >= 3:
-                self.circle(a, w / 2, color)
-                self.circle(b, w / 2, color)
+                self.circle((a[0] + self.ox, a[1] + self.oy), w / 2, color)
+                self.circle((b[0] + self.ox, b[1] + self.oy), w / 2, color)
 
     def band(self, c, u, half_len, half_w, color):
         """A rectangle centred on c, long side along u (unit vector)."""
@@ -203,6 +205,8 @@ class _Pen:
 # A hand in screen space
 # --------------------------------------------------------------------------- #
 class _Hand:
+    hide_thumb = False          # (drawn without its thumb: see _draw_tucked)
+
     def __init__(self, struct, project, ppi, skin):
         self.ppi = ppi
         self.skin = skin
@@ -307,9 +311,11 @@ class _Hand:
         return (self.wc[0] + self.arm_u[0] * d, self.wc[1] + self.arm_u[1] * d)
 
     def parts(self):
-        """[(z, kind, finger)] in drawing order (lowest first)."""
+        """[(z, kind, finger)] in drawing order (lowest first); not the thumb while `hide_thumb` (see _tuck_zone)."""
         items = [(-1e9, "arm", None), (self.palm_z, "palm", None)]
         for f, segs in self.radius.items():
+            if f == 1 and self.hide_thumb:
+                continue
             z = sum((a[2] + b[2]) / 2 for a, b, _ in segs) / len(segs)
             items.append((z + (0.0 if f == 1 else 1.0), "finger", f))
         return sorted(items, key=lambda it: it[0])
@@ -338,6 +344,8 @@ class _Hand:
             pen.poly([(x + 0.28 * dz, y + 0.42 * dz) for x, y in self.palm], color)
             pen.poly([(x + 0.28 * dz, y + 0.42 * dz) for x, y in self.web], color)
         for f in self.radius:
+            if f == 1 and self.hide_thumb:
+                continue
             for a, b, r in self.radius[f]:
                 pen.capsule(off(a), off(b), r, color)
 
@@ -843,6 +851,74 @@ def _shadow_surface(size):
     return s
 
 
+def _inside(pt, poly):
+    """Is the point inside the (convex or not) polygon? (even-odd rule)"""
+    x, y = pt[0], pt[1]
+    inside = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
+def _tuck_zone(h):
+    """
+    Where a thumb tucked under the hand would only peek out between the
+    fingers: beyond the knuckle line, from the index finger's outer edge to
+    the little finger's (screen polygon) - or None if the thumb isn't there:
+    palm down, lower than the palm, and some of it inside.
+    """
+    if h.palm_up or 1 not in h.radius or any(f not in h.chains for f in (2, 5)):
+        return None
+    thumb_z = sum((a[2] + b[2]) / 2 for a, b, _ in h.radius[1]) / len(h.radius[1])
+    if thumb_z >= h.palm_z:
+        return None
+    k2, k5 = h.chains[2][1], h.chains[5][1]
+    ax, ay = _unit(k5[0] - k2[0], k5[1] - k2[1])                    # across, toward the little finger
+    dx, dy = _unit((k2[0] + k5[0]) / 2 - h.wc[0], (k2[1] + k5[1]) / 2 - h.wc[1])   # toward the fingertips
+    r2, r5 = h.radius[2][0][2], h.radius[5][0][2]
+    far = 6.0 * h.ppi
+    p0 = (k2[0] - ax * r2, k2[1] - ay * r2)
+    p1 = (k5[0] + ax * r5, k5[1] + ay * r5)
+    zone = [p0, p1, (p1[0] + dx * far, p1[1] + dy * far), (p0[0] + dx * far, p0[1] + dy * far)]
+    pts = h.chains[1][1:]
+    if not any(_inside(p, zone) for p in pts):
+        return None
+    return zone
+
+
+def _draw_tucked(surf, h, zone):
+    """
+    The hand with its thumb tucked under: drawn whole, then, inside the zone
+    under the fingers, again without the thumb over what was there before -
+    so the thumb never shows between the fingers (it is under the hand).
+    The second drawing goes onto an opaque copy of the background (soft
+    edges drawn onto a see-through layer would leave see-through rings).
+    """
+    import pygame
+    pts = [(int(round(x)), int(round(y))) for x, y in zone]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    box = pygame.Rect(min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+    box = box.clip(surf.get_clip() or surf.get_rect())
+    if box.w <= 0 or box.h <= 0:
+        _STYLES[h.style](_Pen(surf), h)
+        return
+    under = pygame.Surface(box.size, pygame.SRCALPHA)
+    under.blit(surf, (0, 0), box)                          # the background, before the hand
+    under.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MAX)    # (opaque)
+    _STYLES[h.style](_Pen(surf), h)
+    was, h.hide_thumb = h.hide_thumb, True
+    try:
+        _STYLES[h.style](_Pen(under, box.topleft), h)
+    finally:
+        h.hide_thumb = was
+    under.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MAX)    # (soft edges lower the alpha)
+    mask = pygame.Surface(box.size, pygame.SRCALPHA)
+    pygame.draw.polygon(mask, (255, 255, 255, 255), [(x - box.x, y - box.y) for x, y in pts])
+    under.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(under, box.topleft)
+
+
 def draw_skinned(surf, items):
     """
     items: [(struct, project, ppi, skin)] - project maps a struct point to
@@ -853,6 +929,7 @@ def draw_skinned(surf, items):
     for it in items:
         h = _Hand(*it[:4])
         h.layer = it[4] if len(it) > 4 else 0
+        h.tuck = _tuck_zone(h)                  # (thumb tucked under: see _draw_tucked)
         hands.append(h)
     pen = _Pen(surf)
     # layer by layer (a hand crossing over the other is a layer above it, and
@@ -864,12 +941,18 @@ def draw_skinned(surf, items):
             spen = _Pen(sh)
             for h in group:
                 if h.skin["shadow"]:
+                    was = h.hide_thumb
+                    h.hide_thumb = was or h.tuck is not None    # (in the hand's own shadow)
                     h.shadow(spen, (0, 0, 0, 70))
+                    h.hide_thumb = was
             clip = surf.get_clip()
             surf.blit(sh, (0, 0))
             surf.set_clip(clip)
         for h in sorted(group, key=lambda h: h.palm_z):
-            _STYLES[h.style](pen, h)
+            if h.tuck is not None:
+                _draw_tucked(surf, h, h.tuck)
+            else:
+                _STYLES[h.style](pen, h)
 
 
 def draw_webs(surf, items):
