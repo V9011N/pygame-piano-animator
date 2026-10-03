@@ -51,7 +51,7 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
+                    END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
 import paths
 import pianist as pianists
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
@@ -202,6 +202,13 @@ class Visualizer(Transport):
         return True
 
     # ----- a synced recording ----------------------------------------------------
+    def end_time(self):
+        """With a recording, playback goes on to its end, past the last note if need be."""
+        end = Transport.end_time(self)
+        if self.audio:
+            end = max(end, (self.audio.length - self.audio.offset) * self.speed + END_PAD_T)
+        return end
+
     def audio_pos(self, t=None):
         """Where in the recording the song is at time t (seconds)."""
         return self.audio.offset + (self.t if t is None else t) / self.speed
@@ -434,7 +441,8 @@ class Visualizer(Transport):
             frac = min(1.0, max(0.0, self.t / self.song.duration))
             pygame.draw.rect(s, mix(BAR_FILL, BAR_BG, 0.35), (0, 0, int(r.w * frac), r.h))
             pygame.draw.line(s, BAR_FILL, (int(r.w * frac), 0), (int(r.w * frac), r.h), 2)
-            left = f"{self.song.title}    {fmt_time(self.t)} / {fmt_time(self.song.duration)}"
+            total = self.end_time() - END_PAD_T if self.audio else self.song.duration
+            left = f"{self.song.title}    {fmt_time(self.t)} / {fmt_time(total)}"
         else:
             left = "No song loaded"
         font = self.fonts["normal"]

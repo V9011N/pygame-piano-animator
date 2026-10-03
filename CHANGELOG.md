@@ -3,6 +3,10 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.17 - The whole recording
+- With a synced recording, playback no longer stops when the MIDI ends: the recording plays on to its own end
+  (the last chord's ring, the applause), and the time in the top bar counts to it.
+
 ## v26.1.16 - Hand-thesia, with pedals
 - Piano Animator is now called Hand-thesia. In the .exe your pianists and settings move along by themselves
   (from `AppData\Roaming\Piano Animator` to `AppData\Roaming\Hand-thesia`), and the program is `Hand-thesia.exe`.

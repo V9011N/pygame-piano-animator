@@ -156,3 +156,32 @@ def test_the_clock_starts_when_the_recording_does(screen, tmp_path):
     v.toggle_pause()
     v.update(0.0)
     assert abs(v.t - 3.0) < 0.03                            # not 0.2 s ahead of the recording
+
+
+def test_the_recording_plays_to_its_end_after_the_last_note(screen, tmp_path):
+    # a 10 s song with a 14 s recording: playback goes on until the recording ends
+    import main
+    from audio_sync import SyncAudio
+    app = main.App(screen, sound=False)
+    app.play(song_of(10.0), audio=SyncAudio(write_wav(tmp_path / "a.wav", 14.0)), speed=1.0)
+    v = app.mode
+    v.toggle_pause()
+    assert not v.paused
+
+    def at(seconds):                                     # (as if that long had passed on the wall clock)
+        v._anchor = (0.0, time.perf_counter() - seconds)
+        v.update(0.0)
+    at(12.0)
+    assert not v.paused and v.t > 11.5                   # past the last note (10 s), still playing
+    v.render()                                           # ("0:12 / 0:14")
+    at(15.0)
+    assert v.paused and abs(v.t - 14.0) < 1e-6           # stopped where the recording ends
+    v.toggle_pause()                                     # ...and played again from the start
+    assert v.t < 0.0
+    # without a recording, playback stops at the song's end as before
+    app.play(song_of(10.0), speed=1.0)
+    w = app.mode
+    w.paused = False
+    for _ in range(14):                                  # (from the 2 s lead-in)
+        w.update(1.0)
+    assert w.paused and abs(w.t - 10.0) < 1e-6
