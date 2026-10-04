@@ -3,6 +3,17 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.18 - Linked fingers, trills in one hand
+- The middle, ring and little fingers are linked like real tendons: when the middle finger curves down the ring
+  finger goes some way with it (and the other way round), and the little finger takes both with it - unless
+  they're reaching for keys of their own. How tightly is a new setting in each pianist's Motion page,
+  "Linked fingers (3, 4, 5)".
+- Trills are played by one hand from start to finish: the other hand no longer takes a note or two of them.
+- Quick alternating chords too wide for one hand are shared between the hands even when the MIDI file puts
+  them all in one hand's track (Ravel's Scarbo at 0:35).
+- Notes in chords are no longer mistaken for trills, and trills in thirds are still recognised.
+- "What's new" now lights up only when there's a new entry here.
+
 ## v26.1.17 - The whole recording
 - With a synced recording, playback no longer stops when the MIDI ends: the recording plays on to its own end
   (the last chord's ring, the applause), and the time in the top bar counts to it.
