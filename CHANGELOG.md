@@ -20,22 +20,22 @@ v20YY.MM.DD.HHMM). Newest first.
 
 ## v26.1.16 - Hand-thesia, with pedals
 - Piano Animator is now called Hand-thesia. In the .exe your pianists and settings move along by themselves
-  (from `AppData\Roaming\Piano Animator` to `AppData\Roaming\Hand-thesia`), and the program is `Hand-thesia.exe`.
+  (from `AppData\Roaming\Piano Animator` to `AppData\Roaming\Hand-thesia`), and the program is
+  `Hand-thesia.exe`.
 - The pedals are drawn in the bottom-left corner: soft, sostenuto and sustain, each lighting up while the music
   holds it down.
-- Fixed: some MIDI files couldn't be opened - those with a wide chord where the thumb plays two keys at once
-  (Scriabin's Fantasy Op. 28 from the MAESTRO collection, for one).
+- Fixed: some MIDI files couldn't be opened - those with a wide chord where the thumb plays two keys at once.
 
 ## v26.1.15 - Chromatic scales and octaves
-- Chromatic scales: fingers no longer step back as they let go of a key next to their neighbour's and then spring
-  forward, and a finger no longer hovers and then jumps when its neighbour holds a key too long.
+- Chromatic scales: fingers no longer step back as they let go of a key next to their neighbour's and then
+  spring forward, and a finger no longer hovers and then jumps when its neighbour holds a key too long.
 - Chromatic octaves (and other runs in octaves or double notes) now glide like scales: the hand no longer turns
   back and forth for every octave, and the wrist moves steadily instead of zig-zagging.
 - The hand turns less in fast runs overall.
 
 ## v26.1.14 - Smoother chromatic runs, thumb out of sight
-- Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to their
-  next key. A finger now waits beside a neighbour that's still on a key in its way, then goes.
+- Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to
+  their next key. A finger now waits beside a neighbour that's still on a key in its way, then goes.
 - The thumb passing under the hand no longer shows between the fingers - it's hidden under the hand, its shadow
   too, in every skin.
 
@@ -60,9 +60,9 @@ v20YY.MM.DD.HHMM). Newest first.
   and the song plays with the synth instead.
 
 ## v26.1.10 - Hands modelled on a real hand
-- The hands now play the way a real pianist's do, measured from a video of real hands: long, gently
-  arched fingers instead of hooked ones, the fingertips further into the keys and the knuckles nearer
-  them. The "Finger curvature" slider keeps its meaning (flatter to more curved) around this new shape.
+- The hands now play the way a real pianist's do: long, gently arched fingers instead of hooked ones, the
+  fingertips further into the keys and the knuckles nearer them. The "Finger curvature" slider keeps its
+  meaning (flatter to more curved) around this new shape.
 - Nails show and hide as on a real hand: the whole nail while a finger is fairly flat, a short cap at the
   very tip as it curls, and none once it's curled further (the thumb, playing on its side, keeps its nail
   in view).
@@ -85,8 +85,8 @@ v20YY.MM.DD.HHMM). Newest first.
   backwards. They're now kept between 10% and 200%, like the speed keys.
 
 ## v26.1.6 - Fingers on their keys
-- Fixed: in fast, wide repeated broken chords (Chopin's Ocean Étude) the hand was held still as if
-  playing a tremolo, halfway between notes it couldn't reach, so fingers struck beside their keys.
+- Fixed: in fast, wide repeated broken chords the hand was held still as if playing a tremolo,
+  halfway between notes it couldn't reach, so fingers struck beside their keys.
   Only figures the hand can cover from one place are played as tremolos now.
 - Fixed: a rolled chord too wide to hold let go of its lower notes only after the top one was
   struck, so the hand never reached it; they're now let go in time.
@@ -122,7 +122,7 @@ v20YY.MM.DD.HHMM). Newest first.
 - Fixed: opening another file from the fingering editor ("Open…") crashed the app.
 
 ## v26.1.1 - Faster loading and smoother playback
-- Unfingered MIDI files load about a third faster (Chopin's 12-minute Concerto No. 1: 7.5 s to 5 s).
+- Unfingered MIDI files load about a third faster.
 - Smoother playback: the hands' motion is worked out ahead in each frame's spare time, so far
   fewer frames run late, and the stalls around glissandos (up to half a second) are gone.
 - Everything looks and plays exactly as before.
@@ -163,21 +163,21 @@ v20YY.MM.DD.HHMM). Newest first.
   look exactly the same.
 
 ## v2026.10.02.0551 - Resting hands stay by their next notes
-- A resting hand is no longer drawn toward the other hand when it plays next where it is (Chopin's
-  Op. 25 No. 6 at 0:25: the right hand stays up high between its passages).
+- A resting hand is no longer drawn toward the other hand when it plays next where it is (a right
+  hand stays up high between its passages, say).
 - A resting hand moved to the notes it plays next stays there until it plays them, instead of
-  sliding back across them (and, in Op. 25 No. 6 near the end, across the other hand).
+  sliding back across them (or across the other hand).
 
 ## v2026.10.02.0534 - Hands start uncrossed, no overshoot when resting
 - The hands no longer start a piece crossed: a hand that comes in later waits on its own side of
-  the one that plays first (the beginning of the Dante Sonata).
+  the one that plays first.
 - A resting hand drawn toward the playing one no longer goes past the notes it plays next and
-  jerks back (Chopin's Op. 25 No. 6 after the rising chromatic thirds).
+  jerks back.
 
 ## v2026.10.02.0518 - Steady tremolos
 - Tremolos and trills are now recognised as a figure: the hand plays them from one place, the
-  wrist still and each finger staying over its key, instead of swinging toward every note (the
-  left hand's twitching fingers at the start of the Dante Sonata, Hanon 60).
+  wrist still and each finger staying over its key, instead of swinging toward every note (and
+  twitching the fingers).
 - When a tremolo moves to a new position the hand moves with it.
 
 ## v2026.10.02.0455 - Knuckle lines, short thumbs curve
@@ -188,8 +188,7 @@ v20YY.MM.DD.HHMM). Newest first.
 
 ## v2026.10.02.0446 - Chords between glissandos
 - Fixed: chords played between glissandos were missed, the hand still travelling from the
-  glissando (Liszt's Hungarian Rhapsody No. 10 at 4:27 and through the glissando section). The
-  hand is now always back in place for the next chord, and leaves for a glissando only once its
+  glissando. The hand is now always back in place for the next chord, and leaves for a glissando only once its
   last keys are let go; when time is short it sets off as soon as the glissando ends.
 
 ## v2026.10.02.0316 - Thumb glissando arm lean
@@ -197,10 +196,9 @@ v20YY.MM.DD.HHMM). Newest first.
   pushing the thumb along the keys.
 
 ## v2026.10.02.0309 - Glissando travel at top speed, thumb nail sliver
-- Fixed: going to or from a glissando the hand could jump across the keyboard (up to 2.5 times
-  its top speed, e.g. Liszt's Hungarian Rhapsody No. 10 at 4:23). It now travels there at no more
-  than its top speed, easing in and out; between two glissandos close together it glides straight
-  from one to the next.
+- Fixed: going to or from a glissando the hand could jump across the keyboard (up to 2.5 times its top speed).
+  It now travels there at no more than its top speed, easing in and out; between two glissandos close together
+  it glides straight from one to the next.
 - Fixed: a glissando starting while the last one was still fading out made the hand snap away.
 - Palm-up glissandos show a sliver of the thumb's nail along its edge toward the fingers.
 
@@ -265,12 +263,11 @@ v20YY.MM.DD.HHMM). Newest first.
 
 ## v2026.10.02.0049 - Free hand takes over, textbook scales and arpeggios
 - When a file's tracks give one hand more than it can reach at its top speed, while the other
-  hand is free, the free hand now takes those notes (the alternating passage at 0:57 of the
-  Rachmaninoff 3 ossia cadenza, written all in one track). Everywhere else the tracks' hands are
+  hand is free, the free hand now takes those notes (an alternating passage written all in one
+  track, say). Everywhere else the tracks' hands are
   kept exactly, hand crossings included.
 - Long scales and arpeggios keep their standard fingering: a two-octave scale no longer drifts
-  into 3-2-1 crossings (the left hand of Chopin's Concerto No. 1 ending), and arpeggios no longer
-  swap patterns on the way down.
+  into 3-2-1 crossings, and arpeggios no longer swap patterns on the way down.
 - Fixed: B major and B minor scales put the left thumb on F#; the standard 4-3-2-1 (thumb on E
   and B) is used now.
 - Harmonic minor scales are recognised across their augmented second, very fast and uneven
@@ -278,8 +275,8 @@ v20YY.MM.DD.HHMM). Newest first.
   carries on from it.
 
 ## v2026.10.02.0013 - Equal keys
-- New "Keys" button on the main menu switches between the realistic keyboard and equal keys,
-  after PASHKULI's design: every key's back, black or white, has the same width, so every
+- New "Keys" button on the main menu switches between the realistic keyboard and equal keys: every
+  key's back, black or white, has the same width, so every
   falling note does too, and the white key fronts share the rest evenly.
 - With equal keys the lanes above white keys are shaded a little lighter, and white-key notes
   show their finger number in white (black-key notes in black).
@@ -302,7 +299,7 @@ v20YY.MM.DD.HHMM). Newest first.
   once.
 
 ## v2026.09.29.1914 - MIDI files cleaned on load
-- Fixed: files with several unlabelled tracks (e.g. Chopin Op. 25 No. 12) failed to load with
+- Fixed: files with several unlabelled tracks failed to load with
   "unsupported operand type(s) for -: 'float' and 'str'".
 - Damaged files are repaired when they can't be read: out-of-range data bytes are clipped, a
   cut-off track keeps what it has, and broken meta events and system-exclusive messages are
@@ -317,8 +314,7 @@ v20YY.MM.DD.HHMM). Newest first.
 - The finger thickness slider runs from 50% to 120% (was 70-135%); new pianists start at 75%.
 
 ## v2026.09.28.2339 - Reaching held inner notes
-- Wider middle and ring finger splay, so the hand can hold an inner note under an octave
-  (Op. 25 No. 10's middle voice).
+- Wider middle and ring finger splay, so the hand can hold an inner note under an octave.
 - Less smoothing of the hand while its fingers are on keys, so pressed fingertips stay on
   their keys in fast chord passages.
 
