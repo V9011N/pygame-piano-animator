@@ -85,7 +85,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   didn't give the version (and whether to add a changelog entry), ask for it - don't guess.** Formats:
   `vYY.MAJOR.MINOR` or `vYY.MAJOR.MINOR.SNAPSHOT-NN` (older: `vYYYY.MM.DD.HHMM` commit times); changelog
   entries `## <version> - title` with user-facing bullets, newest first (the main menu's "What's new";
-  it glows when the top entry changes, not the version).
+  it glows when the top entry changes, not the version). Keep entries as general as possible: never name
+  the pieces, files, recordings, datasets or other media used to find or develop a fix or feature (no
+  titles, timestamps or per-piece numbers - those belong in `docs/ARCHITECTURE.md`).
 - The app is also shipped as one compiled .exe (`build.py`): read bundled files through `paths.resource()` and
   add any new one to `build.py`'s `--include-data-files`; keep the user's files under `paths.DATA_DIR`
   (`pianist.FOLDER`), never beside the modules (compiled, that's a cache folder). No console then: `print`
