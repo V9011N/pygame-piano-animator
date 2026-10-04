@@ -10,7 +10,7 @@ v20YY.MM.DD.HHMM). Newest first.
   "Linked fingers (3, 4, 5)".
 - Trills are played by one hand from start to finish: the other hand no longer takes a note or two of them.
 - Quick alternating chords too wide for one hand are shared between the hands even when the MIDI file puts
-  them all in one hand's track (Ravel's Scarbo at 0:35).
+  them all in one hand's track.
 - Notes in chords are no longer mistaken for trills, and trills in thirds are still recognised.
 - "What's new" now lights up only when there's a new entry here.
 
@@ -69,14 +69,12 @@ v20YY.MM.DD.HHMM). Newest first.
 
 ## v26.1.9 - Recordings stay in sync
 - Fixed: a synced recording slowly ran ahead of the notes. A recording at another sample rate than
-  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time - by
-  the end of Chopin's Ballade No. 1 the final chord was heard 0.58 s early. Recordings are now
-  played at their own sample rate.
+  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time.
 - Fixed: on every play or seek the notes started a moment (up to a third of a second) ahead of the
   recording. They now start together.
 - Scrubbing the progress bar while a recording plays is smooth: the recording picks up again when
   you let go.
-- Recordings load faster (the Ballade: 3.6 s to 1.3 s).
+- Recordings load faster.
 
 ## v26.1.8 - Tidying
 - Internal tidying (one text-wrapping helper instead of three); nothing looks or works
@@ -96,8 +94,7 @@ v20YY.MM.DD.HHMM). Newest first.
   note of the other hand.
 
 ## v26.1.5 - Glissandos keep to the top speed
-- Fixed: in Liszt's Hungarian Rhapsody No. 10 at 4:21 the hand jumped across four keys in one
-  frame at the end of a glissando. A glissando key further on than the hand can slide in time is
+- Fixed: A glissando key further on than the hand can slide in time is
   now struck a moment late instead.
 - Fixed: a chord far away straight after a glissando made the hand fly there at up to three times
   the pianist's top speed; it's now struck a little late, as the hand gets there.
