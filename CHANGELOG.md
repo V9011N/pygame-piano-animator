@@ -32,8 +32,6 @@ v20YY.MM.DD.HHMM). Newest first.
 - Chromatic octaves (and other runs in octaves or double notes) now glide like scales: the hand no longer turns
   back and forth for every octave, and the wrist moves steadily instead of zig-zagging.
 - The hand turns less in fast runs overall.
-- Hand split: a chord the left hand keeps repeating keeps its new notes, instead of the right hand grabbing
-  one in the middle of a scale.
 
 ## v26.1.14 - Smoother chromatic runs, thumb out of sight
 - Chromatic scales: the index and middle fingers no longer twitch (stop, hop on or step back) on the way to
@@ -71,13 +69,12 @@ v20YY.MM.DD.HHMM). Newest first.
 
 ## v26.1.9 - Recordings stay in sync
 - Fixed: a synced recording slowly ran ahead of the notes. A recording at another sample rate than
-  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time - over
-  a long piece, more than half a second by the end. Recordings are now played at their own sample rate.
+  the player's (48 kHz, say) was converted on loading, and that conversion lost a little time.
 - Fixed: on every play or seek the notes started a moment (up to a third of a second) ahead of the
   recording. They now start together.
 - Scrubbing the progress bar while a recording plays is smooth: the recording picks up again when
   you let go.
-- Recordings load faster (about three times as fast).
+- Recordings load faster.
 
 ## v26.1.8 - Tidying
 - Internal tidying (one text-wrapping helper instead of three); nothing looks or works
@@ -97,8 +94,8 @@ v20YY.MM.DD.HHMM). Newest first.
   note of the other hand.
 
 ## v26.1.5 - Glissandos keep to the top speed
-- Fixed: the hand could jump across several keys in one frame at the end of a glissando. A glissando key
-  further on than the hand can slide in time is now struck a moment late instead.
+- Fixed: A glissando key further on than the hand can slide in time is
+  now struck a moment late instead.
 - Fixed: a chord far away straight after a glissando made the hand fly there at up to three times
   the pianist's top speed; it's now struck a little late, as the hand gets there.
 - Fixed: the hand twitched sideways as it left one glissando with another coming.
