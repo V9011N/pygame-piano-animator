@@ -117,6 +117,10 @@ _PINKY_MAX_ABD = math.radians(45)
 
 # Fingertip heights (model units) above the keys
 HOVER = {1: 0.9, 2: 1.4, 3: 1.4, 4: 1.4, 5: 1.4}      # resting
+# Linked tendons: a finger curving down takes these with it (pianist "tendon_link" of the way,
+# times how far down it is), unless they're reaching for a key; never below TENDON_FLOOR_IN
+TENDON_FOLLOWERS = {3: (4,), 4: (3,), 5: (3, 4)}
+TENDON_FLOOR_IN = 0.15      # in, above the key tops
 PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 
 # Joint behaviour
@@ -1282,8 +1286,55 @@ class HandAnimator:
         for f in range(1, 6):
             if busy[f] < 1.0:
                 tips[f], _ = self._tip_target(f, t, to_world_xy(shaped[f][0], shaped[f][1] - rb[f]), hand)
+        tips = self._tendon_pull(tips, t)
+        for f in range(1, 6):
             tips[f] = self._limit_tip(f, tips[f], wx, wy, psi, comp, self._key_weight(f, t)[0], low)
         return self._separate(tips, wx, wy, psi, t, comp)
+
+    def _hover(self, f):
+        """Fingertip f's resting height (world z) over the keys."""
+        return HOVER[f] * self.S + self.retract_up_in * self.ppi * (0.5 if f == 1 else 1.0)
+
+    def _tendon_pull(self, tips, t):
+        """
+        Linked tendons (TENDON_FOLLOWERS): 3 curving down takes 4 with it, 4
+        takes 3, and 5 takes both - by `self.tendon` of how far down the leader
+        is (0 hovering, 1 at the key tops), toward TENDON_FLOOR_IN, the deepest
+        leader counting; a follower reaching for a key of its own (_reaching)
+        is free of it.
+        """
+        if self.tendon <= 0.0:
+            return tips
+        down = {}
+        for lead in TENDON_FOLLOWERS:
+            h = self._hover(lead)
+            down[lead] = min(1.0, max(0.0, (h - tips[lead][2]) / h)) if h > 0 else 0.0
+        floor = TENDON_FLOOR_IN * self.ppi
+        out = dict(tips)
+        for f in (3, 4):
+            d = max(down[lead] for lead, fol in TENDON_FOLLOWERS.items() if f in fol)
+            x, y, z = tips[f]
+            if d <= 0.0 or z <= floor:
+                continue
+            free = 1.0 - self._reaching(f, t)
+            if free > 0.0:
+                out[f] = (x, y, z - self.tendon * d * free * (z - floor))
+        return out
+
+    def _reaching(self, f, t):
+        """0..1: how much finger f is busy with a key of its own - 1 while it presses one, rising with its trip to the next."""
+        if self._pressing(f, t):
+            return 1.0
+        starts = self.finger_starts[f]
+        i = bisect.bisect_right(starts, t) - 1
+        if i + 1 >= len(starts):
+            return 0.0
+        prep_start, strike_start, _ = self._prep_window(f, i)
+        if t >= strike_start:
+            return 1.0
+        if t <= prep_start:
+            return 0.0
+        return self._travel(f, i, t)[0]
 
     def _limited_tips(self, t):
         """
@@ -1477,6 +1528,7 @@ class HandAnimator:
         self.area_far = max(self.area_near + 0.05, p.b("key_area_far"))
         self.roll_dt = p.b("roll_speed")
         self.cross_arc_in = 0.5 + 3.0 * p.b("cross_height")
+        self.tendon = p.b("tendon_link")
         self.curl_k = curl_factor(p)
         c = p.b("finger_curve")
         self.curl_lift_in = 0.6 * (c - 0.4) - 0.11        # hand height: -0.35 in (flat) .. +0.25 in (curved)
@@ -2364,7 +2416,7 @@ class HandAnimator:
         approach through the strike, the press and the release.
         """
         S = self.S
-        hover = HOVER[f] * S + self.retract_up_in * self.ppi * (0.5 if f == 1 else 1.0)
+        hover = self._hover(f)
         prep = self.prep_h[f] * S
         travel = self.travel
         notes, starts, ends = self.by_finger[f], self.finger_starts[f], self.finger_ends[f]

@@ -469,11 +469,23 @@ def _seen_path():
     return os.path.join(pianists.FOLDER, "changelog_seen.txt")
 
 
+def latest_changes(path=CHANGELOG):
+    """The changelog's newest heading (its version and title), or "" if there is none."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return next((line.strip() for line in fh if line.startswith("## ")), "")
+    except OSError:
+        return ""
+
+
 def changelog_seen():
-    """Whether the changelog has been opened since this version arrived."""
+    """
+    Whether the changelog has been opened since its newest entry arrived (by
+    the entry, not VERSION: a snapshot build without one isn't news).
+    """
     try:
         with open(_seen_path(), encoding="utf-8") as fh:
-            return fh.read().strip() == VERSION
+            return fh.read().strip() == latest_changes()
     except OSError:
         return False
 
@@ -482,7 +494,7 @@ def mark_changelog_seen():
     try:
         os.makedirs(pianists.FOLDER, exist_ok=True)
         with open(_seen_path(), "w", encoding="utf-8") as fh:
-            fh.write(VERSION)
+            fh.write(latest_changes())
     except OSError as exc:
         print(f"Couldn't save that the changelog was seen ({exc})")
 

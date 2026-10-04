@@ -214,6 +214,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     95 → 89, Dante Sonata 50 → 32; the files with hand tracks split as before.
   - **Repeats**: a chord struck again within 0.5 s and split differently from the time before costs 4.
   - **Crowding**: a two-note group split one per hand with fewer than 5 semitones between them costs 1.5 per semitone short. A split third is really one hand's double note.
+  - **Trills stay in one hand** (v26.1.18.SNAPSHOT-02): `figures.find_trills` finds them in all the notes before
+    the split (each pair of neighbouring keys on its own, so the other hand's notes in between don't break one).
+    Every beam path remembers the hand each trill in progress went to (`th`, part of the merge key), and splits
+    giving any of its notes to the other hand are dropped - the costs decide which hand, then the other may not
+    pitch in. Trills shared between the hands before: Ballade 2 of 5 (306.2 s: one A#3 of ten to the LH), Dante
+    1 of 7, Winter Wind 1 of 7; now 0. Late chords unchanged (Ballade, Winter Wind) or moved between hands
+    (Dante 32 -> 32); split time unchanged.
+    Chord tones aren't trill notes (v26.1.18.SNAPSHOT-03): a note struck with two others within `TRILL_NEAR` 7
+    semitones belongs to a chord (one: a double note - trills in thirds stay trills). Chords alternating quickly
+    share neighbouring keys (Scarbo 0:35: D#6/E6, G6/G#6) and were pinned to one hand as "trills". Where a
+    longer trill takes notes, what's left of a shorter one must still alternate (it left "E6/E6" runs).
+  - **Tracks a hand can't follow, alternating**: `_track_weights` also softens the track prior where a track's
+    groups come less than `WIDE_T` 0.15 s apart spanning more than `SPAN_MAX` together, `WIDE_STREAK` 4 times
+    in a row - both hands in turn, though the file gives them to one (Scarbo 35.4-40.9 s, all in the right
+    track: G#5-D#6-G6 / D6-E6-G#6-D7-E7 every 70 ms). The split now gives 127 of its 336 notes to the left hand
+    (each hand a small rotation tremolo: LH G#5 / D6-E6, RH D#6-G6 / G#6-D7-E7 - cheaper than a 5-note chord
+    in one hand every 140 ms). A single wide leap is left to the speed check. Other two-track files unchanged.
   - **Order** (RH above the LH's centre) and a weak **range** preference.
   - **Voices**: applies to multi-track files without hand names. Moving a track to the other hand within 1.5 s of its last note costs `TRACK_SWITCH` 12. Beam entries carry each track's last hand, and that is part of the merge key.
   - **Track hands** (2026-10-02): every note goes through the split now, not only notes whose track doesn't say.
@@ -266,7 +283,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - Not detected: open-position arpeggios (fifths, sixths, an octave+ per hand position - Op. 10 No. 1, Op. 25
       No. 12); they're left to the planner.
   - **Repeated notes**: 3-2-1 (4-3-2-1 for groups of 4).
-  - **Trills** (≥ 6 alternations of neighbouring notes): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
+  - **Trills** (`TRILL_MIN_NOTES` 6+ strikes alternating between neighbouring keys, 1-2 semitones, each within
+    `TRILL_GAP_T` 0.2 s and after more than `TRILL_CHORD_T` 0.035 s - not seconds struck together; the same
+    definition `find_trills` gives the hand split): any strong finger (sets {1,2,3} / {2,3,4}), never 4-5.
   - **Octaves**: in octave passages, 1-5 with 4 on black keys (LH mirrored). A lone octave allows 4 or 5. Broken octaves are handled too.
   - **Chromatic thirds** (monotonic semitone steps): Hanon 50's 12-step table by lower-note pitch class.
   - **Scales in thirds** (monotonic stepwise): Hanon 52's four-third + three-third groups per key (`THIRDS_4GROUP`); weight 5.1, because the crossings they need look awkward note by note.
@@ -363,6 +382,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 | retraction | idle fingers pull back/up; lowers the minimum curl reach |
 | antic_hand | `HandAnimator.antic_t` (0.15–0.65 s, 0.4 at the default) / `need_t` (0.06–0.24 s) |
 | antic_fingers | `pianist.finger_lead`: -1..1 (2026-09-28: extended below 0). 0..1: head start `prep_max_t` 0.4–1.4 s, travel share 0.9–0.3 (unchanged). Below 0: 0.4 → 0.05 s and 0.9 → 1.0 (just in time); never less than the trip needs at the top speed. C major scale at 8 notes/s: the thumb is tucked under 0.2–0.3 s before its note at 0, 0.055 s at −1. Shown in the studio as the head start in ms |
+| tendon_link | linked tendons of 3, 4, 5: how far a follower goes down with its leader (`_tendon_pull`), default 0.6 |
 | cross_height | arc when a finger crosses over the thumb |
 | lift_height | `PREP` heights |
 | cross_turn | `CROSS_TURN_DEG` |
@@ -922,6 +942,14 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     (wrist path / distance 1.32 → 1.15); LH octaves 116° → 64°. Op. 25 No. 6 RH turning -24%, Op. 25 No. 10 LH
     -9%. Synthetic 1-3 chromatic scale: index 6 → 0 (test). Top speed and fingertips on keys unchanged (Concerto,
     Dante, Ballade).
+- **Linked tendons of fingers 3, 4 and 5** (v26.1.18.SNAPSHOT-01; the author's rules): 3 curving down takes 4
+  with it, 4 takes 3, and 5 takes 3 and 4 - unless the follower is reaching for a key of its own. In
+  `_tips_at`, after the targets and before `_limit_tip`, `_tendon_pull` lowers a follower's tip height by
+  `tendon_link` (pianist behaviour, default 0.6) x how far down its leader is (0 at its hover height,
+  `_hover`, 1 at the key tops; the deepest leader counts) x how free it is (1 - `_reaching`: 1 while pressing,
+  rising with its trip to the next key, `_travel`, 1 from the strike on) - toward `TENDON_FLOOR_IN` 0.15 in
+  above the key tops, never onto them. Only heights change. A finger repeating one key at the default: its
+  follower's tip from 0.54 in down to 0.31 in (0.38 on average); 2, and 5 when 3 or 4 leads, untouched (tests).
 - **The thumb under the hand stays hidden** (v26.1.14): drawn lower than the palm, the thumb passing under was
   still seen between the fingers (the palm covers up to the knuckles only). `skins._tuck_zone`: palm down, the
   thumb below the palm and some of it beyond the knuckle line between the index's outer edge and the little
