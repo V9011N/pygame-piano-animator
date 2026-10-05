@@ -480,6 +480,23 @@ def double_ok(p1, p2, f):
     return (f == 1 and thumb_pair(p1, p2)) or (f == 5 and pinky_pair(p1, p2))
 
 
+def thumb_bridge(a, b):
+    """The thumb on two black keys (C#-D#, D#-F#, A#-C#...): it lies across the white keys between them."""
+    return thumb_pair(a, b) and is_black(a) and is_black(b)
+
+
+def bridge_from(ps, fs, k):
+    """
+    Where finger fs[k] stretches to the next finger from: its key ps[k] - or,
+    for the upper key of a thumb bridging two black keys (thumb_bridge), the
+    lower one, where its tip is (it lies across to it, the near key under its
+    side). ps, fs: a chord in the RH frame, in pitch order.
+    """
+    if fs[k] == 1 and k > 0 and fs[k - 1] == 1 and thumb_bridge(ps[k - 1], ps[k]):
+        return ps[k - 1]
+    return ps[k]
+
+
 def unary_cost(pitch, f):
     c = W["finger_4"] if f == 4 else W["finger_5"] if f == 5 else 0.0
     if is_black(pitch):
@@ -592,11 +609,12 @@ def shape_cost(pairs):
     """
     pairs = sorted(pairs)
     c = 0.0
-    for (p1, f1), (p2, f2) in zip(pairs, pairs[1:]):
+    for k, ((p1, f1), (p2, f2)) in enumerate(zip(pairs, pairs[1:])):
         if f1 == f2:
             if double_ok(p1, p2, f1):
                 continue
             return IMPOSSIBLE
+        p1 = bridge_from([p for p, _ in pairs], [f for _, f in pairs], k)
         if f2 < f1:
             if 1 in (f1, f2) and key_pos(p2) - key_pos(p1) <= 2.5:
                 c += 3.0
@@ -823,8 +841,8 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                 for s_, f in zip(sug, st):
                     if s_ and (f not in s_[0] if isinstance(s_[0], frozenset) else s_[0] != f):
                         c += W["figure"] * s_[1]
-                for (pl, fl), (ph, fh) in zip(zip(ps, st), list(zip(ps, st))[1:]):
-                    c += chord_pair_cost(pl, fl, ph, fh)
+                for k in range(1, len(st)):
+                    c += chord_pair_cost(bridge_from(ps, st, k - 1), st[k - 1], ps[k], st[k])
                 c += inner_room_cost(list(zip(ps, st)))
                 # every pair of fingers within its reach, not only neighbours
                 # (an octave 1-3 with 2 between them passes each neighbour's check)

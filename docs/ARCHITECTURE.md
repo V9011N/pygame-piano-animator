@@ -576,6 +576,26 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
   - PIG test 66.23% (up from 66.17%), Hanon unchanged.
+  - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
+    D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
+    thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.
+    - `fingering.thumb_bridge` (a thumb pair of black keys); `bridge_from` makes the stretch from the bridge to the
+      next finger count from its far key, in `chord_pair_cost` (the planner's chords) and `shape_cost` (held
+      shapes) - the planner's every-pair reach check already did. `HandAnimator._bridge_pair`: `key_target` aims
+      a bridge at its far key, `THUMB_BRIDGE_DEPTH_IN` 1.4 in up it (the playing area runs to 1.6), and
+      `_roll_wide_chords` measures reach from there.
+    - `_key_fix` adds a constraint for a bridge: the straight thumb's MCP joint - on the line from the tip over
+      the near key (`THUMB_BRIDGE_NEAR_IN` 0.3 in from its front), the thumb's two outer bones from the tip - must
+      be within the metacarpal's reach (across, for the base's height) of the thumb's base: the hand comes in
+      over the keys, as a real one does to lay its thumb along them.
+    - `_thumb_bridge` poses it (blended in by `_key_weight`): the tip on the far key, straight to the MCP joint (no
+      bend at the IP joint - bent there it looked painful), the MCP where that line meets the metacarpal's reach,
+      the place of the two nearer along the keyboard.
+    - Results: the near key under the thumb's line 0.34 / 0.38 in in from its front (A#-C#, C#-D#), or under its
+      MCP joint (D#-F#, LH; 0.19 in short of its centre, the joint 0.8 in wide). Measured from the far key, some
+      chords drop the bridge for a plain fingering: the 3:20 chord D#4-F#4-A#4-D#5 is now 1-2-3-5 (29 bridges in
+      the sonata, now 19). Top speed kept; the only new off-key notes are the bridges' near keys (the tip is on the
+      far one by design).
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.

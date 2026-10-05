@@ -121,6 +121,9 @@ HOVER = {1: 0.9, 2: 1.4, 3: 1.4, 4: 1.4, 5: 1.4}      # resting
 # times how far down it is), unless they're reaching for a key; never below TENDON_FLOOR_IN
 TENDON_FOLLOWERS = {3: (4,), 4: (3,), 5: (3, 4)}
 TENDON_FLOOR_IN = 0.15      # in, above the key tops
+THUMB_BRIDGE_LIFT_IN = 0.05 # in: a thumb bridging two black keys lies flat across them, its MCP joint this little higher...
+THUMB_BRIDGE_DEPTH_IN = 1.4 # in: ...its tip this far in along the far key (BLACK_SPAN_IN), so it crosses the near one...
+THUMB_BRIDGE_NEAR_IN = 0.3  # ...and over the near one at least this far in from its front (the hand comes in for that)
 PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 
 # Joint behaviour
@@ -1291,6 +1294,50 @@ class HandAnimator:
             tips[f] = self._limit_tip(f, tips[f], wx, wy, psi, comp, self._key_weight(f, t)[0], low)
         return self._separate(tips, wx, wy, psi, t, comp)
 
+    def _thumb_bridge(self, t, pts):
+        """
+        The thumb chain `pts` (CMC, MCP, IP, tip), laid across two black keys
+        when it plays a pair of them (_bridge_pair) - not pointing up the
+        keys between them as if playing the white keys there. The thumb is
+        straight from its MCP joint to the tip (no bend at the IP joint), the
+        tip on the far key, lying as nearly along the keyboard as its base
+        lets it so its side is on the near key too; only the MCP joint
+        angles. Blended in by how firmly the thumb is on (or about to be on)
+        that pair (_key_weight).
+        """
+        w, n = self._key_weight(1, t)
+        if n is None or w <= 0.0:
+            return pts
+        pk = self.pair_key.get(id(n))
+        if not pk or not self._bridge_pair(pk, 1):
+            return pts
+        S = self.S
+        near = max(self.key_target(p, 1, n)[0] for p in pk)
+        cmc, tip = pts[0], pts[3]
+        l1, l2, l3 = (L * S for L in self.geo.bones[1])
+        side = 1.0 if near >= tip[0] else -1.0
+        mz = tip[2] + THUMB_BRIDGE_LIFT_IN * self.ppi              # (lying flat: the MCP joint barely higher)
+        r = math.sqrt(max(1e-6, (l2 + l3) ** 2 - (mz - tip[2]) ** 2))   # tip to MCP, across
+        q = math.sqrt(max(1e-6, l1 ** 2 - (cmc[2] - mz) ** 2))          # CMC to MCP, across
+        dx, dy = cmc[0] - tip[0], cmc[1] - tip[1]
+        d = max(1e-6, math.hypot(dx, dy))
+        ux, uy = dx / d, dy / d
+        if d >= r + q or d <= abs(r - q):
+            mx, my = tip[0] + ux * r, tip[1] + uy * r               # (out of reach: straight at the base)
+        else:
+            # where the straight thumb (r from the tip) meets the metacarpal (q from the CMC):
+            # of the two places, the one nearer along the keyboard toward the near key
+            a_ = (r * r - q * q + d * d) / (2 * d)
+            h = math.sqrt(max(0.0, r * r - a_ * a_))
+            cx, cy = tip[0] + ux * a_, tip[1] + uy * a_
+            cands = [(cx - uy * h, cy + ux * h), (cx + uy * h, cy - ux * h)]
+            mx, my = max(cands, key=lambda c: side * (c[0] - tip[0]) - abs(c[1] - tip[1]))
+        mcp = (mx, my, mz)
+        k = l3 / (l2 + l3)
+        ip = tuple(tv + (mv - tv) * k for tv, mv in zip(tip, mcp))
+        bridged = [cmc, mcp, ip, tip]
+        return [tuple(_lerp(a, b, w) for a, b in zip(p, q_)) for p, q_ in zip(pts, bridged)]
+
     def _hover(self, f):
         """Fingertip f's resting height (world z) over the keys."""
         return HOVER[f] * self.S + self.retract_up_in * self.ppi * (0.5 if f == 1 else 1.0)
@@ -1453,6 +1500,20 @@ class HandAnimator:
             hmin, hmax = self._reach_range(f, self.base_local[f][2] * low + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
             cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w))
+            pk = self._pk(n)
+            if f == 1 and self._bridge_pair(pk, 1):
+                # a thumb bridging two black keys lies straight across them (_thumb_bridge): from
+                # its tip on the far key, over the near one (THUMB_BRIDGE_NEAR_IN in from its front),
+                # to its MCP joint - which its metacarpal must reach: the hand comes in over the
+                # keys enough for that (as a real one does to lay its thumb along them)
+                nx = max(self.key_target(p, 1, n)[0] for p in pk)
+                py = self.kb.rect.h - self.kb.black_h + THUMB_BRIDGE_NEAR_IN * self.ppi
+                l1, l2, l3 = (L * self.S for L in self.geo.bones[1])
+                d = max(1e-6, math.hypot(nx - kx, py - ky))
+                mx, my = kx + (nx - kx) * (l2 + l3) / d, ky + (py - ky) * (l2 + l3) / d
+                dz = self.base_local[1][2] * low + self.travel              # (the base is higher: across, less)
+                reach = math.sqrt(max(0.0, l1 * l1 - dz * dz))
+                cons.append((mx, [my], self.base_local[1], -math.pi, math.pi, 0.0, reach, KEY_FIX_K * w))
         if not cons:
             return wx, wy, psi
         arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
@@ -1691,10 +1752,13 @@ class HandAnimator:
             return fg.BASE_MAX_SPAN[(a, b)] * scale[(a, b)] + 0.25
 
         def pos(n):
-            """Where the note's finger is: between the two keys it covers, if a pair."""
+            """Where the note's finger is: between the two keys it covers, if a pair - the far one for a thumb bridge."""
             pk = self.pair_key.get(id(n))
             if pk:
-                return (key_pos(self.vp(pk[0])) + key_pos(self.vp(pk[1]))) / 2
+                a, b = key_pos(self.vp(pk[0])), key_pos(self.vp(pk[1]))
+                if self._bridge_pair(pk, self.fingering[id(n)]):
+                    return min(a, b)
+                return (a + b) / 2
             return key_pos(self.vp(n.pitch))
 
         groups = self.groups
@@ -1800,6 +1864,10 @@ class HandAnimator:
         """
         if isinstance(pitch, tuple):
             (x1, y1), (x2, y2) = (self.key_target(p, f, note) for p in pitch)
+            if self._bridge_pair(pitch, f):
+                # the far key, well in along it: the straight thumb lies across to it, over the near one
+                x = min(x1, x2)
+                return x, self.kb.rect.h - self.kb.black_h + THUMB_BRIDGE_DEPTH_IN * self.ppi
             return (x1 + x2) / 2, (y1 + y2) / 2
         r = self.kb.key_rects[pitch]
         x = r.centerx
@@ -1815,6 +1883,17 @@ class HandAnimator:
                     x = _lerp(x, self.kb.tails[pitch].centerx, up)
         lo, hi = self._key_depths(pitch, note, f)          # the playing area, for this loudness
         return self._mx(x), min(max(y, lo), hi)
+
+    @staticmethod
+    def _bridge_pair(pk, f):
+        """
+        Is this the thumb bridging two black keys (C#-D#, D#-F#, A#-C#...)? It
+        lies flat across the keyboard over the white keys between them: its
+        tip on the far key (away from the other fingers), its side on the
+        near one - so its tip aims at the far key (key_target), its reach is
+        measured from there, and _thumb_bridge lays it across.
+        """
+        return f == 1 and isinstance(pk, tuple) and all(is_black_key(p) for p in pk)
 
     def _key_depths(self, pk, note=None, f=None):
         """
@@ -3148,6 +3227,7 @@ class HandAnimator:
         bulge = (out[0] * 0.85, out[1] * 0.85, 0.5)
         pts = solve_chain(cmc, tips[1], [L * S for L in geo.bones[1]], bulge,
                           THUMB_COUPLING, THUMB_BEND_MAX)
+        pts = self._thumb_bridge(t, pts)
         chains[1] = list(pts)
         for (a, b), kind in zip(zip(pts, pts[1:]), ("metacarpal", "proximal", "distal")):
             bones.append((a, b, kind))

@@ -893,3 +893,42 @@ def test_a_finger_reaching_for_its_key_is_not_pulled():
     linked, _ = _tip_heights(ns, 1.0, times)
     assert a._reaching(4, times[0]) == 1.0
     assert all(abs(x - y) < 1e-6 for x, y in zip(linked[4], free[4]))
+
+
+def test_thumb_bridging_two_black_keys_reaches_from_the_far_one():
+    # the thumb on A#3-C#4 lies across to A#3: the little finger's stretch is from there
+    from fingering import IMPOSSIBLE, MAX_SPAN, bridge_from, key_pos, shape_cost
+    assert bridge_from([58, 61, 70], [1, 1, 5], 1) == 58
+    assert bridge_from([60, 62, 70], [1, 1, 5], 1) == 62           # (two white keys: no bridge)
+    p5 = next(p for p in range(62, 100)
+              if key_pos(p) - key_pos(61) <= MAX_SPAN[(1, 5)] < key_pos(p) - key_pos(58))
+    assert shape_cost([(61, 1), (p5, 5)]) < IMPOSSIBLE              # from the near key it would reach...
+    assert shape_cost([(58, 1), (61, 1), (p5, 5)]) >= IMPOSSIBLE    # ...but the thumb's tip is on the far one
+
+
+def test_thumb_bridge_lies_straight_across_both_black_keys():
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    ns = [Note(p, 0.5, 2.0, 80, 0, RIGHT, finger=f) for p, f in ((82, 1), (85, 1), (90, 3), (94, 5))]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    for t in [0.2 + i / 60 for i in range(40)]:
+        a.pose(t, kb)
+    ch = a.pose(1.0, kb)["struct"]["chains"][1]                     # CMC, MCP, IP, tip
+    far, near = (a.key_target(p, 1)[0] for p in (82, 85))
+    tip, ip, mcp = ch[3], ch[2], ch[1]
+    assert abs(tip[0] - far) < 0.15 * a.ppi                          # the tip on the far key
+    v1 = (ip[0] - tip[0], ip[1] - tip[1], ip[2] - tip[2])
+    v2 = (mcp[0] - ip[0], mcp[1] - ip[1], mcp[2] - ip[2])
+    cos = sum(x * y for x, y in zip(v1, v2)) / math.dist(ip, tip) / math.dist(mcp, ip)
+    assert cos > math.cos(math.radians(3))                           # straight: no bend at the IP joint
+    # the thumb lies over the near key, in along it from its front: its line crosses the key,
+    # or its MCP joint (half the thumb's width either side) covers it
+    from skins import FINGER_W_IN
+    front = kb.rect.h - kb.black_h
+    u = (near - tip[0]) / (mcp[0] - tip[0])
+    assert u > 0.0
+    if u <= 1.0:
+        assert tip[1] + u * (mcp[1] - tip[1]) >= front
+    else:
+        assert near - mcp[0] <= 0.5 * FINGER_W_IN[1] * a.ppi and mcp[1] >= front
