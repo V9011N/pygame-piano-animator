@@ -193,9 +193,17 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   pitch P = width // 88 (an integer), the gap g = max(1, round(P / 15)), each lane P - g: every black key and
   every white key's back (`Keyboard.tails`) fills its lane, so every falling note and every gap is identical.
   The white fronts share their group's lanes: C-E's three in 5 lanes, F-B's four in 7 (as in DAW piano rolls
-  and the Osmose), all exactly the same width within a group - 5P or 7P rarely splits evenly (only for P a
-  multiple of 12), so the pixel or two left over widens the gaps between those fronts by one (never the backs'
-  gaps). C8's front is its back (one lane). A0's back (and front) take what's left of the width: width - 87P,
+  and the Osmose), all exactly the same width within a group, with every gap exactly g. In whole pixels that
+  needs 5P/3 and 7P/4 both whole, i.e. P a multiple of 12 (2560 px: 24 instead of 29, the keyboard 17% narrower;
+  1920: 12) - so SNAPSHOT-11 gave the leftover pixel or two to the gaps between fronts (1 px wider: distracting).
+  Since v26.1.19.SNAPSHOT-12 the fronts keep their exact fractional edges (`Keyboard.fronts`, left/right):
+  `_white` fills the whole pixels and draws a front's partly covered edge column between the key's and the
+  gap's colours by coverage, so every gap between fronts holds exactly g pixels' worth of gap colour (measured
+  along a drawn row at 1280-3840 wide) and every front's coverage is its exact width (2560: C-E 46.33, F-B
+  48.75). Only the edges inside a group are fractional: the group's outer edges are the lanes' own, so the
+  backs, the blacks, the lanes and the falling notes stay crisp whole pixels. A gap that falls half-way
+  shows as two half-grey columns (softer, the same weight). `key_rects` of a white key is its front rounded
+  (for the hands). C8's front is its back (one lane). A0's back (and front) take what's left of the width: width - 87P,
   between 1 and `EQUAL_A0_MAX` 2 lanes; beyond that the keys are centred and the rest is an even margin each
   side (up to ~(87 - P) / 2 px: 25 px at 1920, 0 at 2560). `Keyboard.pitch`, `keys_x` (the keys' left and
   right edges). At 2560x1440, measured from the drawn pixels: lanes, blacks and backs all 27 px (before 26/27),

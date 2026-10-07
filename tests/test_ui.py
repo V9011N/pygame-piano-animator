@@ -163,9 +163,25 @@ def test_equal_keys_toggle_and_layout(screen):
         blacks = {kb.key_rects[p].w for p in range(21, 109) if midi_loader.is_black_key(p)}
         tails = {kb.tails[p].w for p in kb.tails if p not in (21, 108)}
         assert blacks == tails == widths
-        for group in ((0, 2, 4), (5, 7, 9, 11)):                   # the fronts: all alike within a group
-            fronts = {kb.key_rects[p].w for p in range(22, 108) if p % 12 in group}
+        for group in ((0, 2, 4), (5, 7, 9, 11)):                   # the fronts: exactly alike within a group...
+            fronts = {round(kb.fronts[p][1] - kb.fronts[p][0], 6) for p in range(22, 108) if p % 12 in group}
             assert len(fronts) == 1
+        gaps = {round(kb.fronts[q][0] - kb.fronts[p][1], 6)          # ...and every gap between them the lanes' gap
+                for p, q in zip(sorted(kb.fronts), sorted(kb.fronts)[1:])}
+        assert gaps == {kb.gap}
+        # drawn: every gap between fronts holds exactly `gap` pixels' worth of the gap colour
+        surf = pygame.Surface((1400, 150))
+        kb.draw(surf, {})
+        row = [surf.get_at((x, 140))[0] for x in range(kb.keys_x[0], kb.keys_x[1])]
+        dark = [(common.WHITE_KEY[0] - v) / (common.WHITE_KEY[0] - common.KEY_GAP[0]) for v in row]
+        runs, cur = [], 0.0
+        for d in dark:
+            if d > 0.005:
+                cur += d
+            elif cur:
+                runs.append(cur)
+                cur = 0.0
+        assert len(runs) == 51 and all(abs(r - kb.gap) < 0.03 for r in runs)
         assert kb.key_rects[108] == pygame.Rect(kb.tails[108].x, 0, kb.tails[108].w, 150)    # C8: front = back
         xs = [kb.lanes[p][0] for p in range(21, 109)]
         assert all(b > a for a, b in zip(xs, xs[1:]))              # in pitch order, never overlapping
@@ -181,7 +197,7 @@ def test_equal_keys_toggle_and_layout(screen):
         for w in (1280, 1600, 1920, 2560, 3840):                   # and the same at any width
             k = common.Keyboard(pygame.Rect(0, 0, w, 150))
             assert len({lw for _, lw in k.lanes.values()}) == 1
-            assert len({k.key_rects[p].w for p in range(22, 108) if p % 12 in (5, 7, 9, 11)}) == 1
+            assert len({round(k.fronts[p][1] - k.fronts[p][0], 6) for p in range(22, 108) if p % 12 in (5, 7, 9, 11)}) == 1
         app.play(midi_path("demo_song.mid"))
         app.mode.seek(3.0)
         app.mode.render()

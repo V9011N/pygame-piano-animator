@@ -6,6 +6,7 @@ transport, file dialogs and a few small widgets.
 from __future__ import annotations
 
 import bisect
+import math
 import os
 import threading
 
@@ -244,20 +245,19 @@ class Keyboard:
         self.black_w = L
         self.black_h = int(rect.h * 0.63)
         self.key_rects, self.lanes, self.lane_lines = {}, {}, []
+        self.fronts = {}             # white key -> (left, right) of its front, exact
         lane = lambda p: x0 + (p - self.low) * P               # the left of p's lane pitch (gap halves either side)
         gl, gr = g // 2, g - g // 2
 
-        # the white fronts within a C-E or F-B group: equal widths, the leftover pixels to the gaps between
+        # the white fronts within a C-E or F-B group: exactly equal, every gap exactly g - so the edges
+        # inside a group fall between pixels (drawn with partly covered edge columns: _white); the group's
+        # outer edges are the lanes' own, whole pixels
         heads = {}
         for first, keys, lanes_n in ((0, (0, 2, 4), 5), (5, (5, 7, 9, 11), 7)):
             k = len(keys)
-            avail = lanes_n * P - g
-            h = (avail - (k - 1) * g) // k
-            rem = avail - k * h - (k - 1) * g
-            x = gl
+            h = (lanes_n * P - k * g) / k
             for i, pc in enumerate(keys):
-                heads[pc] = (first * P + x, h)                # from the C's lane pitch's left edge
-                x += h + g + (1 if i < rem else 0)
+                heads[pc] = (first * P + gl + i * (h + g), h)          # from the C's lane pitch's left edge
 
         for p in range(self.low, self.high + 1):
             a = lane(p)
@@ -276,7 +276,9 @@ class Keyboard:
                 tail.x = left
                 h += hx - left
                 hx = left
-            self.key_rects[p] = pygame.Rect(hx, rect.y, h, rect.h)        # the front (where it is played)
+            self.fronts[p] = (hx, hx + h)                      # exact (may fall between pixels)
+            rx0, rx1 = round(hx), round(hx + h)
+            self.key_rects[p] = pygame.Rect(rx0, rect.y, rx1 - rx0, rect.h)   # the front (where it is played)
             self.tails[p] = tail
             self.lanes[p] = (lane_rect.x, L)
             self.lane_shade.append((lane_rect.x, L))
@@ -292,8 +294,17 @@ class Keyboard:
             color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
         r = self.key_rects[p]
         if self.style == "equal":
-            head = pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap)
+            # the front: its whole pixels, then any edge column it only partly covers, in between
+            # the key's and the gap's colours as much as it covers (so every gap reads the same width)
+            fx0, fx1 = self.fronts[p]
+            top = self.rect.y + self.black_h + self.gap
+            h = r.h - self.black_h - self.gap
+            c0, c1 = math.ceil(fx0 - 1e-6), math.floor(fx1 + 1e-6)
+            head = pygame.Rect(c0, top, c1 - c0, h)
             pygame.draw.rect(surf, color, head, border_bottom_left_radius=3, border_bottom_right_radius=3)
+            for col, cover in ((c0 - 1, c0 - fx0), (c1, fx1 - c1)):
+                if cover > 1e-6:
+                    pygame.draw.line(surf, mix(KEY_GAP, color, cover), (col, top), (col, top + h - 3))
             pygame.draw.rect(surf, color, self.tails[p])
         else:
             pygame.draw.rect(surf, color, r, border_bottom_left_radius=3, border_bottom_right_radius=3)
@@ -319,7 +330,9 @@ class Keyboard:
         """The rects a white key covers."""
         r = self.key_rects[p]
         if self.style == "equal":
-            return [pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap),
+            fx0, fx1 = self.fronts[p]
+            c0, c1 = math.floor(fx0 + 1e-6), math.ceil(fx1 - 1e-6)
+            return [pygame.Rect(c0, self.rect.y + self.black_h + self.gap, c1 - c0, r.h - self.black_h - self.gap),
                     self.tails[p]]
         return [r]
 
