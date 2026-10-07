@@ -147,7 +147,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
-## Fonts and frame pacing (v26.1.19.SNAPSHOT-14)
+## Fonts and frame pacing (v26.1.19.SNAPSHOT-14, -15)
 - Every font comes from the bundled typeface: Source Sans Pro, regular and bold (`assets/fonts`, SIL Open Font
   License, `OFL.txt` beside them; build.py includes them), through `common.ui_font(size, bold)` at `FONT_SCALE`
   1.05 of the old Segoe UI sizes (Source Sans runs a little small). Before, `pygame.font.SysFont("segoeui,arial,
@@ -157,10 +157,13 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   pygame calls a quit function once, so it's registered again whenever the cache starts over).
 - The frame clock: `App.run` measures each frame with `time.perf_counter` and uses `clock.tick` only for the cap
   (tick counts whole milliseconds: at 144 fps a 6.94 ms frame moved the song 6 or 7 ms; the song drifted ±1 ms
-  against the wall clock, now ±0.04). The cap, until chosen in the Settings ("fps_cap" absent), is the monitor's
-  refresh rate (`display_refresh_rate`: pygame-ce's `get_desktop_refresh_rates`, else 60): 60 fps on a 144 Hz
-  screen holds frames 2 or 3 refreshes in turn, a judder. `note_rect` rounds a falling note's top and bottom
-  from its own times (was: top and length truncated separately, a pixel off).
+  against the wall clock, now ±0.04).
+- Tried in SNAPSHOT-14 and undone in SNAPSHOT-15 (the jitter and flicker got much worse on the author's screen):
+  the cap defaulting to the monitor's refresh rate - a frame's work is 9-12 ms, so at 144 Hz the frames came
+  unevenly, worse than a steady 60 (the default again, `FPS`); and rounding a falling note's top and bottom each
+  on its own, which made its length flick between two values (73 times in 300 frames) and, on a short note, its
+  finger number's size with it. `note_rect` now gives a note one length (its duration, rounded once) and puts
+  its bottom at the nearest pixel: a solid block (the test checks one length over 500 frames).
 - The main menu's layout measures the small font's height (the tip and the active pianist line) instead of
   assuming 20 px.
 

@@ -90,13 +90,15 @@ TO_MENU = "menu"
 # --------------------------------------------------------------------------- #
 def note_rect(x, w, keyline, start, end, t, pps):
     """
-    A falling note's box at song time t (pps: pixels a second). Both edges are
-    rounded from the note's own times: truncating its top and its length
-    separately made its bottom - and its finger number - wobble a pixel as it
-    fell, and its length flicker.
+    A falling note's box at song time t (pps: pixels a second): one length for
+    the note (its duration, rounded once) and its bottom at the nearest pixel,
+    so it moves as one solid block. (Rounding the top and the bottom each on
+    their own made the length - and on a short note its finger number's size -
+    flick between two values from frame to frame.)
     """
-    top, bottom = round(keyline - (end - t) * pps), round(keyline - (start - t) * pps)
-    return pygame.Rect(x, top, w, max(4, bottom - top))
+    h = max(4, round((end - start) * pps))
+    bottom = round(keyline - (start - t) * pps)
+    return pygame.Rect(x, bottom - h, w, h)
 
 
 class Visualizer(Transport):
@@ -1033,15 +1035,6 @@ class MainMenu:
 # --------------------------------------------------------------------------- #
 # The application: owns the window, the synth and the current mode
 # --------------------------------------------------------------------------- #
-def display_refresh_rate():
-    """The desktop's refresh rate (Hz), if pygame can tell (pygame-ce) and it's within the cap's range; else None."""
-    try:
-        rate = pygame.display.get_desktop_refresh_rates()[0]
-    except (AttributeError, IndexError, pygame.error):
-        return None
-    return rate if FPS_CAP_MIN <= rate <= FPS_CAP_MAX else None
-
-
 def fps_cap_value(cap):
     """A frame rate cap as kept: an int within FPS_CAP_MIN..FPS_CAP_MAX, or None (uncapped)."""
     if cap is None:
@@ -1059,9 +1052,7 @@ class App:
         set_key_style(pianists.app_setting("keys", "realistic"))
         set_keyboard_place(pianists.app_setting("keyboard_place"))
         self.perf_overlay = bool(pianists.app_setting("perf_overlay", False))
-        cap = pianists.app_setting("fps_cap", "auto")                         # None: uncapped
-        # never chosen: the monitor's own rate (60 fps on a 144 Hz screen holds frames 2 or 3 refreshes: judder)
-        self.fps_cap = fps_cap_value(display_refresh_rate() or FPS) if cap == "auto" else fps_cap_value(cap)
+        self.fps_cap = fps_cap_value(pianists.app_setting("fps_cap", FPS))   # None: uncapped
         self._frame_ms = collections.deque(maxlen=PERF_FRAMES)       # the last frames' times, for the overlay
         self._sound = sound
         self.midi, self.soundfont_problem = self._make_synth(pianists.app_setting("soundfont"))

@@ -432,24 +432,11 @@ def test_frame_rate_cap_setting(screen):
 
 
 def test_a_falling_note_keeps_its_length_and_moves_smoothly():
-    """No wobble: frame after frame a note's box is the same length and its bottom moves on steadily."""
+    """No flicker: frame after frame a note's box is exactly the same length, and it moves on steadily."""
     pps = 173.3                                      # (pixels a second: not a whole number)
     rects = [main.note_rect(10, 20, 700, 5.0, 5.37, t, pps) for t in [i / 144 for i in range(500)]]
-    assert max(r.h for r in rects) - min(r.h for r in rects) <= 1
+    assert len({r.h for r in rects}) == 1                # one length, every frame (no flicker)
     steps = [b.bottom - a.bottom for a, b in zip(rects, rects[1:])]
     assert all(s in (1, 2) for s in steps)           # 1.2 px a frame: never still, never back
     for i, r in enumerate(rects):                    # and within half a pixel of where it truly is
         assert abs(r.bottom - (700 - (5.0 - i / 144) * pps)) <= 0.5
-
-
-def test_the_frame_rate_cap_follows_the_monitor_until_chosen(screen, monkeypatch):
-    import pianist
-    monkeypatch.setattr(main, "display_refresh_rate", lambda: 144)
-    assert app_on(screen).fps_cap == 144                         # never chosen: the monitor's rate
-    monkeypatch.setattr(main, "display_refresh_rate", lambda: None)
-    assert app_on(screen).fps_cap == main.FPS                    # (pygame can't tell: 60)
-    pianist.set_app_setting("fps_cap", 90)
-    monkeypatch.setattr(main, "display_refresh_rate", lambda: 144)
-    assert app_on(screen).fps_cap == 90                          # chosen in the Settings: kept
-    pianist.set_app_setting("fps_cap", None)
-    assert app_on(screen).fps_cap is None                        # (uncapped, chosen)
