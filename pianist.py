@@ -48,8 +48,16 @@ DEFAULT_ANATOMY = {
     "mc5": 5.974, "pp5": 3.3, "mp5": 1.8, "dp5": 1.7,
 }
 # Each bone may be 70%..135% of the default: from a small (child's or
-# petite adult's) hand to a very large one, in any proportion.
+# petite adult's) hand to a very large one, in any proportion - and the
+# metacarpals up to 205%, enough (with the phalanges at 135%) for a span of a
+# 13th, as Rachmaninoff's (12.07 white keys, 28.5 cm; 200% was 11.94).
 BONE_MIN, BONE_MAX = 0.70, 1.35
+METACARPAL_MAX = 2.05
+
+
+def bone_max(bid):
+    """The most a bone may be, as a share of its default length."""
+    return METACARPAL_MAX if BONE_INFO[bid][1] == "mc" else BONE_MAX
 
 
 def bone_name(bid):
@@ -59,7 +67,7 @@ def bone_name(bid):
 
 def clamp_bone(bid, v):
     d = DEFAULT_ANATOMY[bid]
-    return max(d * BONE_MIN, min(d * BONE_MAX, v))
+    return max(d * BONE_MIN, min(d * bone_max(bid), v))
 
 
 # --------------------------------------------------------------------------- #

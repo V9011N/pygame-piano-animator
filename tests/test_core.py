@@ -970,3 +970,20 @@ def test_export_puts_each_hand_on_its_own_channel(tmp_path):
     assert pedal == {0, 1}                                           # the pedal for both hands
     back = midi_loader.load_song(str(dst))
     assert sorted((n.pitch, n.hand, n.finger) for n in back.notes) == [(36, LEFT, 1), (60, RIGHT, 1), (64, RIGHT, 1)]
+
+
+def test_the_largest_hand_spans_a_thirteenth():
+    """Metacarpals up to 205% (phalanges 135%): a span of a 13th, played as a chord, not rolled."""
+    import pianist as P
+    assert P.clamp_bone("mc3", 99.0) == P.DEFAULT_ANATOMY["mc3"] * P.METACARPAL_MAX
+    assert P.clamp_bone("pp3", 99.0) == P.DEFAULT_ANATOMY["pp3"] * P.BONE_MAX          # (phalanges as before)
+    big = P.default_pianist()
+    big.anatomy = {b: P.clamp_bone(b, 99.0) for b in P.DEFAULT_ANATOMY}
+    assert big.span_whites() >= 12.0 and big.span_label().startswith("13th")
+    try:
+        F.apply_pianist(big)
+        assert F.MAX_SPAN[(1, 5)] >= 12.0
+        for hand in (RIGHT, LEFT):
+            assert sorted(plan([Note(p, 0.0, 1.0, 80, 0, hand) for p in (48, 69)], hand=hand)) == [1, 5]   # C3-A4
+    finally:
+        F.apply_pianist(None)

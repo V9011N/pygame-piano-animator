@@ -490,7 +490,7 @@ class PianistStudio:
                 self._anatomy_sliders_sync()
             return set_
         pct = lambda v: f"{int(round(v * 100))}% of default"
-        self.g_mc = Slider("All metacarpals", pianists.BONE_MIN, pianists.BONE_MAX,
+        self.g_mc = Slider("All metacarpals", pianists.BONE_MIN, pianists.METACARPAL_MAX,
                            self._group_scale(pianists.METACARPALS), group_setter(pianists.METACARPALS), fmt=pct)
         self.g_ph = Slider("All phalanges", pianists.BONE_MIN, pianists.BONE_MAX,
                            self._group_scale(pianists.PHALANGES), group_setter(pianists.PHALANGES), fmt=pct)
@@ -504,11 +504,12 @@ class PianistStudio:
                 self.dirty = True
                 self.g_mc.value = self._group_scale(pianists.METACARPALS)
                 self.g_ph.value = self._group_scale(pianists.PHALANGES)
-            self.bone_slider = Slider(pianists.bone_name(b), d * pianists.BONE_MIN, d * pianists.BONE_MAX,
+            hi = d * pianists.bone_max(b)
+            self.bone_slider = Slider(pianists.bone_name(b), d * pianists.BONE_MIN, hi,
                                       self.work.anatomy[b], set_bone,
                                       fmt=lambda v: f"{_cm(v):.2f} cm  ({int(round(v / d * 100))}%)",
                                       lo_label=f"{_cm(d * pianists.BONE_MIN):.1f} cm",
-                                      hi_label=f"{_cm(d * pianists.BONE_MAX):.1f} cm")
+                                      hi_label=f"{_cm(hi):.1f} cm")
 
     def _anatomy_sliders_sync(self):
         if self.bone_slider and self.sel_bone:
