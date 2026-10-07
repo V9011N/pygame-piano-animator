@@ -82,38 +82,49 @@ class MixerStream:
 
     def _run(self):
         import pygame
+        import audio_sync
+        from audio_sync import MIXER_LOCK
         init = None
         while self.running:
+            wait = 0.0
             try:
-                cur = pygame.mixer.get_init()
-                if cur is None:
-                    self.channel, init = None, None
-                    time.sleep(0.05)
-                    continue
-                if cur != init or self.channel is None:
-                    init = cur
-                    pygame.mixer.set_reserved(1)                # channel 0 is the synth's
-                    self.channel = pygame.mixer.Channel(0)
-                if self.channel.get_queue() is not None:
-                    time.sleep(0.002)
-                    continue
-                snd = self.chunk(init)
-                if self.channel.get_busy():
-                    self.channel.queue(snd)
-                else:
-                    self.channel.play(snd)
+                with MIXER_LOCK:                                # (the mixer can't be reopened mid-step)
+                    cur = pygame.mixer.get_init()
+                    cur = cur and (*cur, audio_sync.mixer_opened)    # (reopened as it was: still new)
+                    if cur is None:
+                        self.channel, init = None, None
+                        wait = 0.05
+                    else:
+                        if cur != init or self.channel is None:
+                            init = cur
+                            pygame.mixer.set_reserved(1)        # channel 0 is the synth's
+                            self.channel = pygame.mixer.Channel(0)
+                        if self.channel.get_queue() is not None:
+                            wait = 0.002
+                        else:
+                            snd = self.chunk(init[:3])
+                            if self.channel.get_busy():
+                                self.channel.queue(snd)
+                            else:
+                                self.channel.play(snd)
             except Exception as exc:                        # (the mixer closing under us, say)
                 print(f"Soundfont output paused ({exc})")
-                time.sleep(0.2)
+                self.channel, init = None, None
+                wait = 0.2
+            if wait:
+                time.sleep(wait)
 
     def stop(self):
+        import pygame
+        from audio_sync import MIXER_LOCK
         self.running = False
         self.thread.join(timeout=1.0)
-        try:
-            if self.channel is not None:
-                self.channel.stop()
-        except Exception:
-            pass
+        with MIXER_LOCK:
+            try:
+                if self.channel is not None and pygame.mixer.get_init():
+                    self.channel.stop()
+            except Exception:
+                pass
 
 
 def soundfont_name(path):

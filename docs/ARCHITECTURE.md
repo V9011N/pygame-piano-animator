@@ -58,6 +58,10 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     from `Synth.generate` converted to the mixer's format (size 8/-8/16/-16/32, mono/stereo/more) and
     resampled if the mixer was reopened at another rate (a synced recording's). An `RLock` keeps note and
     pedal calls off the synth while a chunk is generated. `close()` stops the thread and the channel.
+    `audio_sync.MIXER_LOCK` is held by each of the thread's steps and by `ensure_mixer` while it reopens the
+    mixer (a synced recording at its own rate, e.g. a 48 kHz MP3): touching a channel while the mixer closes
+    under it was a segfault - the program vanished with nothing logged. `audio_sync.mixer_opened` counts the
+    reopenings, so the thread re-takes its channel even when the mixer comes back in the same format.
     Requirements: not in requirements.txt (pip would build PyAudio); `pip install --no-deps tinysoundfont`
     (README). build.py includes tinysoundfont when installed and doesn't follow its pyaudio import.
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and

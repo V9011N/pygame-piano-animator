@@ -164,3 +164,27 @@ def test_the_soundfont_plays_through_the_mixer_in_its_format():
         assert not out.thread.is_alive()
     finally:
         pygame.mixer.quit()
+
+
+def test_reopening_the_mixer_for_a_recording_doesnt_crash_the_soundfont():
+    """A synced recording reopens the mixer at its own rate while the soundfont's thread feeds it."""
+    import threading
+    from audio_sync import ensure_mixer
+    from sf_synth import MixerStream
+    pygame.mixer.quit()
+    ensure_mixer(44100)
+    out = MixerStream(ToneSynth(), threading.RLock(), 44100)
+    try:
+        for rate in (48000, 22050, 44100, 48000):
+            ensure_mixer(rate)
+            pygame.time.wait(30)
+        n = len(out.synth.asked)
+        for _ in range(100):
+            if len(out.synth.asked) > n:
+                break
+            pygame.time.wait(10)
+        assert len(out.synth.asked) > n and out.channel is not None     # still feeding the reopened mixer
+        assert out.synth.asked[-1] == round(512 * 44100 / 48000)        # (resampled to its rate)
+    finally:
+        out.stop()
+        pygame.mixer.quit()

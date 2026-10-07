@@ -16,6 +16,7 @@ so the audio heard at song time t is at offset + t / speed seconds
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pygame
@@ -28,6 +29,11 @@ PEAK_T = 0.005               # s, the waveform is kept as the loudest sample in 
 WAVE_H = 56                  # px, the waveform strip under the player's top bar
 WAVE_COLOR = (96, 150, 210)  # the recording's waveform
 WAVE_DIM = (62, 82, 108)     # ...where it lies outside the MIDI
+# Held while the mixer is reopened, and by anything feeding it from another
+# thread (sf_synth.MixerStream): a channel touched while the mixer closes
+# under it crashes the whole program, with no Python error to show.
+MIXER_LOCK = threading.RLock()
+mixer_opened = 0             # how many times ensure_mixer has opened it
 
 
 def pick_audio_file(title="Choose the audio file to sync", initialdir=None):
@@ -103,15 +109,18 @@ def ensure_mixer(rate=None):
     the recording's own rate, the device converting as it plays, which
     keeps time.
     """
-    cur = pygame.mixer.get_init()
-    if cur and (rate is None or cur[0] == rate):
-        return
-    if cur:
-        pygame.mixer.quit()
-    if rate is None:
-        pygame.mixer.init()
-    else:
-        pygame.mixer.init(frequency=rate, allowedchanges=0)
+    global mixer_opened
+    with MIXER_LOCK:
+        cur = pygame.mixer.get_init()
+        if cur and (rate is None or cur[0] == rate):
+            return
+        if cur:
+            pygame.mixer.quit()
+        mixer_opened += 1
+        if rate is None:
+            pygame.mixer.init()
+        else:
+            pygame.mixer.init(frequency=rate, allowedchanges=0)
 
 
 class SyncAudio:
