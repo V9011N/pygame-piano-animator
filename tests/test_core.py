@@ -972,14 +972,14 @@ def test_export_puts_each_hand_on_its_own_channel(tmp_path):
     assert sorted((n.pitch, n.hand, n.finger) for n in back.notes) == [(36, LEFT, 1), (60, RIGHT, 1), (64, RIGHT, 1)]
 
 
-def test_the_largest_hand_spans_a_thirteenth():
-    """Metacarpals up to 205% (phalanges 135%): a span of a 13th, played as a chord, not rolled."""
+def test_the_largest_hand_spans_at_least_a_thirteenth():
+    """Bones up to 250%: a span of a 13th at least (Rachmaninoff's), played as a chord, not rolled."""
     import pianist as P
     assert P.clamp_bone("mc3", 99.0) == P.DEFAULT_ANATOMY["mc3"] * P.METACARPAL_MAX
-    assert P.clamp_bone("pp3", 99.0) == P.DEFAULT_ANATOMY["pp3"] * P.BONE_MAX          # (phalanges as before)
+    assert P.clamp_bone("pp3", 99.0) == P.DEFAULT_ANATOMY["pp3"] * P.BONE_MAX == P.DEFAULT_ANATOMY["pp3"] * 2.5
     big = P.default_pianist()
     big.anatomy = {b: P.clamp_bone(b, 99.0) for b in P.DEFAULT_ANATOMY}
-    assert big.span_whites() >= 12.0 and big.span_label().startswith("13th")
+    assert big.span_whites() >= 12.0
     try:
         F.apply_pianist(big)
         assert F.MAX_SPAN[(1, 5)] >= 12.0

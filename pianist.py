@@ -47,12 +47,13 @@ DEFAULT_ANATOMY = {
     "mc4": 6.332, "pp4": 4.2, "mp4": 2.6, "dp4": 1.9,
     "mc5": 5.974, "pp5": 3.3, "mp5": 1.8, "dp5": 1.7,
 }
-# Each bone may be 70%..135% of the default: from a small (child's or
-# petite adult's) hand to a very large one, in any proportion - and the
-# metacarpals up to 205%, enough (with the phalanges at 135%) for a span of a
-# 13th, as Rachmaninoff's (12.07 white keys, 28.5 cm; 200% was 11.94).
-BONE_MIN, BONE_MAX = 0.70, 1.35
-METACARPAL_MAX = 2.05
+# Each bone may be 70%..250% of the default: from a small (child's or
+# petite adult's) hand to well past the largest pianists' (Rachmaninoff's 13th
+# needs about 205% metacarpals with 135% phalanges; everything at 250% spans an
+# 18th), in any proportion. (The metacarpals have a limit of their own,
+# METACARPAL_MAX, should they ever need a different one.)
+BONE_MIN, BONE_MAX = 0.70, 2.50
+METACARPAL_MAX = 2.50
 
 
 def bone_max(bid):

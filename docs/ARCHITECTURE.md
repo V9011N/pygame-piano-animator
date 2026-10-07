@@ -537,11 +537,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `Pianist` fields: name, color, anatomy (19 bone ids: mc1-5, pp1-5, mp2-5, dp1-5; in model units, about 1.088 cm each) and behavior.
 - Pianists are saved as JSON in `pianists/` next to the code. The active one is recorded in `pianists/settings.json`, and `pianist.active()` returns it.
 - The built-in "Default" pianist can't be edited; duplicate it to change it.
-- Bone limits are 70-135% of the default length; metacarpals up to 205% (`pianist.METACARPAL_MAX`, `bone_max`;
+- Bone limits were 70-135% of the default length; metacarpals up to 205% (`pianist.METACARPAL_MAX`, `bone_max`;
   v26.1.19.SNAPSHOT-18) - for a span of a 13th, as Rachmaninoff's: with every metacarpal at 205% and phalanx at
   135%, 12.07 white keys, 28.5 cm (200%: 11.94, short of the 12 a 13th needs; 135%: 10.28, an 11th). The
   planner's thumb-to-little reach (`MAX_SPAN[(1, 5)]`, from `hands.reach_scale`) is then 12.5 white keys (the
   default hand 8.3): C3-A4 is played 1-5 in either hand; drawn, both hands reach it with the palm wide.
+  Then (the author's call, to shape such hands themselves) every bone up to 250% (`BONE_MAX` and
+  `METACARPAL_MAX` 2.5): all at 250% spans 17.8 white keys (an 18th, 42 cm), planner reach 1-5 18.4.
 - Hand span is measured in white keys, key centre to key centre: 8 = a 9th, which is the default. Size classes are Small below 7.6, Medium from 7.6 to 8.6, Large above that.
 - `hands.HandGeometry(anatomy)` builds the model:
   - each knuckle moves along its metacarpal to match its length; phalanges come straight from `bones`;
