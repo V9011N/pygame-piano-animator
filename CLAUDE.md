@@ -101,7 +101,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   `if __name__ == "__main__":`).
 - Fonts: always `common.ui_font(size, bold)` (or the `fonts` dict from `load_fonts`), never
   `pygame.font.SysFont` - the bundled typeface (assets/fonts, OFL) looks the same on every system, unless the
-  user chose another (Settings > Font, `common.set_font_choice`). Text must fit any font: shorten with `fit_text`.
+  user chose another (Settings > Font, `common.set_font_choice`; characters it lacks are borrowed from the bundled
+  one, `FallbackFont`). Text must fit any font: shorten with `fit_text`.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

@@ -76,3 +76,31 @@ def test_choosing_a_font_in_the_settings(screen, tmp_path, monkeypatch):
         assert app.mode.font_text() == "Now: Source Sans Pro (built in) - Moved not found."
     finally:
         set_font_choice(None)
+
+
+def test_a_chosen_font_borrows_the_characters_it_lacks(screen):
+    """Arrows and the like that a chosen font hasn't got come from the bundled typeface (not boxes)."""
+    regular = pygame.font.Font(bundled(), 20)
+    font = common.FallbackFont(bundled(bold=True), 20, regular)
+    # what it has and hasn't: a missing character still measures (as the font's box), so it's told by shape
+    assert font.has("A") and font.has("←")
+    assert not font.has("")                                     # (private use: no ordinary font has it)
+    # as if the chosen font had no arrows: those are drawn by the fallback, the rest by the font itself
+    font.has = lambda ch: ch not in "←→"
+    assert font._runs("Skip ← →") == [("Skip ", font), ("←", regular), (" ", font), ("→", regular)]
+    img = font.render("A←", True, (255, 255, 255))
+    a_w = pygame.font.Font.size(font, "A")[0]
+    arrow = regular.render("←", True, (255, 255, 255))
+    assert img.get_width() == a_w + arrow.get_width() == font.size("A←")[0]
+    # the arrow's pixels are the fallback's own, on the shared baseline
+    y = max(font.get_ascent(), regular.get_ascent()) - regular.get_ascent()
+    for x in range(arrow.get_width()):
+        for yy in range(arrow.get_height()):
+            assert img.get_at((a_w + x, y + yy)).a == arrow.get_at((x, yy)).a
+    # a font chosen in the Settings gets the fallback; the bundled one doesn't need it
+    try:
+        assert not isinstance(ui_font(17), common.FallbackFont)
+        set_font_choice({"file": bundled(bold=True)})
+        assert isinstance(ui_font(17), common.FallbackFont)
+    finally:
+        set_font_choice(None)

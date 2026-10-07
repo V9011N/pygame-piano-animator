@@ -177,6 +177,15 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   `fonts` dict in place (every screen holds it) and re-lays out the mode. With another font's widths, buttons
   shorten text that doesn't fit with an ellipsis (`common.fit_text`), and the Settings rows shrink (to
   `ROW_H_MIN` 46) to keep the six-row panel above the window's centre.
+- Characters a chosen font lacks (v26.1.19.SNAPSHOT-17): the interface's arrows (← → ↑ ↓ ↵), minus sign,
+  ellipsis and the like drew as the font's "missing" box. A chosen font is a `common.FallbackFont` (a
+  `pygame.font.Font` subclass) holding the bundled typeface at the same size: `render` and `size` split the text
+  into runs it has and runs it hasn't, the latter drawn by the bundled one, all on one baseline (the line as tall
+  as the lower reach of the two). Text it fully covers takes `Font.render` directly. A missing character still
+  measures - as the box - so `has(ch)` compares its drawn shape with a private-use character's (U+E000, which no
+  ordinary font has); cached per character. The bundled typeface itself has every character the source uses
+  (checked: °·×“”•…←↑→↓↵−✓) and isn't wrapped. Tried on a copy of DejaVu Sans with the arrows, minus and
+  ellipsis stripped out (fontTools): boxes before, Source Sans's arrows after.
 - The main menu's layout measures the small font's height (the tip and the active pianist line) instead of
   assuming 20 px.
 

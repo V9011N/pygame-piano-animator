@@ -152,13 +152,89 @@ def set_font_choice(choice):
         problem = ("not found" if isinstance(exc, FileNotFoundError) else
                    "has no letters" if isinstance(exc, ValueError) else "couldn't be loaded")
         choice, paths = None, None
-    _font_choice, _font_paths = (choice or None), paths
+    _font_choice = choice or None
+    _font_paths = paths if _font_choice else None        # (None: the bundled typeface, which lacks nothing)
     _ui_fonts.clear()
     return problem
 
 
 def font_choice():
     return _font_choice
+
+
+class FallbackFont(pygame.font.Font):
+    """
+    A chosen font (Settings > Font) that borrows from the bundled typeface
+    each character it hasn't got - the arrows, the minus sign, the ellipsis
+    the interface uses - instead of drawing a box. Measured and drawn run by
+    run (a run of characters it has, a run it hasn't), on one baseline.
+    """
+
+    def __init__(self, path, size, fallback):
+        super().__init__(path, size)
+        self.fallback = fallback
+        self._has = {}
+
+    MISSING_PROBE = "\ue000"      # a private-use character: no ordinary font has it, so it draws the "missing" box
+
+    def _shape(self, ch):
+        return pygame.image.tobytes(pygame.font.Font.render(self, ch, False, (255, 255, 255), (0, 0, 0)), "RGB")
+
+    def has(self, ch):
+        """Has the font a glyph of its own for ch? (Missing ones still measure - as its box - so they're compared.)"""
+        got = self._has.get(ch)
+        if got is None:
+            m = pygame.font.Font.metrics(self, ch)
+            if not m or m[0] is None:
+                got = False
+            else:
+                if not hasattr(self, "_missing"):
+                    self._missing = self._shape(self.MISSING_PROBE)
+                got = self._shape(ch) != self._missing
+            self._has[ch] = got
+        return got
+
+    def _runs(self, text):
+        """[(text, font)]: the text in runs this font or the fallback draws."""
+        runs = []
+        for ch in text:
+            f = self if ch.isspace() or self.has(ch) else self.fallback
+            if runs and runs[-1][1] is f:
+                runs[-1][0].append(ch)
+            else:
+                runs.append(([ch], f))
+        return [("".join(chars), f) for chars, f in runs]
+
+    def _plain(self, text):
+        return all(ch.isspace() or self.has(ch) for ch in text)
+
+    def size(self, text):
+        if self._plain(text):
+            return super().size(text)
+        sizes = [pygame.font.Font.size(f, t) for t, f in self._runs(text)]
+        return sum(w for w, _ in sizes), self._line_height()
+
+    def _line_height(self):
+        """Each font's line on the shared baseline: as tall as the lower of the two reaches."""
+        ascent = max(self.get_ascent(), self.fallback.get_ascent())
+        return max(ascent - f.get_ascent() + f.get_height() for f in (self, self.fallback))
+
+    def render(self, text, antialias, color, background=None, *args):
+        if self._plain(text):
+            return super().render(text, antialias, color, background, *args)
+        ascent = max(self.get_ascent(), self.fallback.get_ascent())
+        imgs = []
+        for t, f in self._runs(text):
+            img = pygame.font.Font.render(f, t, antialias, color, background)
+            imgs.append((img, ascent - f.get_ascent()))
+        out = pygame.Surface((sum(i.get_width() for i, _ in imgs), self._line_height()), pygame.SRCALPHA)
+        if background is not None:
+            out.fill(background)
+        x = 0
+        for img, y in imgs:
+            out.blit(img, (x, y))
+            x += img.get_width()
+        return out
 
 
 def ui_font(size, bold=False):
@@ -172,7 +248,12 @@ def ui_font(size, bold=False):
             pygame.register_quit(_ui_fonts.clear)
         try:
             regular, bold_file, scale = _font_paths or font_files(None)
-            font = pygame.font.Font(bold_file if bold and bold_file else regular, max(1, round(size * scale)))
+            px = max(1, round(size * scale))
+            if _font_paths is None:
+                font = pygame.font.Font(bold_file if bold else regular, px)
+            else:                                    # (a chosen font: the bundled one fills in what it lacks)
+                fallback = pygame.font.Font(font_files(None)[1 if bold else 0], px)
+                font = FallbackFont(bold_file if bold and bold_file else regular, px, fallback)
             if bold and not bold_file:
                 font.set_bold(True)
         except (OSError, FileNotFoundError, pygame.error):
