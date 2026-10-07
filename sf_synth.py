@@ -5,9 +5,16 @@ The default sound is the system's MIDI synth (common.MidiOut). With a
 soundfont chosen in the Settings, `SoundfontOut` plays instead: the same
 interface as MidiOut (note_on / note_off by the note's hand, pedals, volume,
 silence), played by the app's own soundfont player (sf2.Synth, numpy: no
-compiled package to install, so it works on any Python). Its sound goes out
-through pygame's mixer (`MixerStream`): a thread keeps a short chunk of it
-queued on a mixer channel of its own.
+compiled package to install, so it works on any Python).
+
+The player runs in a process of its own (`_player_process`, started with
+multiprocessing's "spawn"), with its own audio output: the notes are sent to
+it down a pipe (`RemoteSynth`). In the app's process, the synth's thread and
+the drawing took turns with Python's interpreter lock - each slowed the
+other, so frames came late and the sound ran dry. There, `MixerStream` keeps
+a short chunk queued on a mixer channel: a thread generating while the
+process's main thread takes the notes off the pipe. If the process can't be
+started, the player runs in the app's process instead.
 
 The pedals are played here rather than left to the synth, so every soundfont
 gets them alike: the sustain pedal keeps a let-go key sounding until it
@@ -28,6 +35,7 @@ from midi_loader import LEFT
 SUSTAIN, SOSTENUTO, SOFT, VOLUME = 64, 66, 67, 7
 SOFT_VELOCITY = 0.7          # the soft pedal plays new notes this much softer
 SF_TYPES = [("SoundFont files", "*.sf2 *.sf3"), ("All files", "*.*")]
+STARTUP_TIMEOUT_S = 60.0     # s, the player's process says something (progress, ready) at least this often
 CHUNK_FRAMES = 768           # the mixer is fed this much at a time (17 ms at 44.1 kHz), one chunk queued ahead
 
 
@@ -40,8 +48,9 @@ class MixerStream:
     resampled to it.
     """
 
-    def __init__(self, synth, lock, rate):
+    def __init__(self, synth, lock, rate, stats=None):
         self.synth, self.lock, self.rate = synth, lock, rate
+        self.stats = stats if stats is not None else {"chunks": 0, "underruns": 0}
         self.running = True
         self.channel = None
         self.thread = threading.Thread(target=self._run, name="soundfont", daemon=True)
@@ -100,9 +109,12 @@ class MixerStream:
                             wait = 0.002
                         else:
                             snd = self.chunk(init[:3])
+                            self.stats["chunks"] += 1
                             if self.channel.get_busy():
                                 self.channel.queue(snd)
                             else:
+                                if self.stats["chunks"] > 2:
+                                    self.stats["underruns"] += 1        # (ran dry: a gap in the sound)
                                 self.channel.play(snd)
             except Exception as exc:                        # (the mixer closing under us, say)
                 print(f"Soundfont output paused ({exc})")
@@ -124,44 +136,192 @@ class MixerStream:
                 pass
 
 
+class RemoteSynth:
+    """sf2.Synth's calls, sent to the player's process (`_player_process`)."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def _send(self, *msg):
+        try:
+            self.conn.send(msg)
+        except (OSError, EOFError, ValueError):        # (the process gone: nothing to play)
+            pass
+
+    def noteon(self, ch, key, vel):
+        self._send("noteon", ch, key, vel)
+
+    def noteoff(self, ch, key):
+        self._send("noteoff", ch, key)
+
+    def control_change(self, ch, control, value):
+        self._send("control_change", ch, control, value)
+
+    def notes_off(self, ch=None):
+        self._send("notes_off", ch)
+
+    def sounds_off(self, ch=None):
+        self._send("sounds_off", ch)
+
+
+PLAYER_CALLS = {"noteon", "noteoff", "control_change", "notes_off", "sounds_off"}
+
+
+def _player_process(conn, path):
+    """
+    The soundfont player's process: load `path`, open the sound, say "ready"
+    (or "error"), then play what comes down the pipe until "quit" - or until
+    the app is gone (the pipe breaks). While loading, "progress" (0..1).
+    """
+    import pygame
+    import progress
+    from sf2 import Synth
+    stats = {"chunks": 0, "underruns": 0}
+    try:
+        progress.begin()
+        sending = [True]
+
+        def tell_progress():
+            while sending[0]:
+                conn.send(("progress", progress.value()))
+                time.sleep(0.05)
+
+        teller = threading.Thread(target=tell_progress, daemon=True)
+        teller.start()
+        try:
+            pygame.mixer.init()
+            rate = pygame.mixer.get_init()[0]
+            synth = Synth(samplerate=rate)
+            synth.sfload(path)
+            for ch in (0, 1):
+                synth.program_select(ch, 0, 0, 0)               # bank 0, preset 0: the piano in a piano soundfont
+        finally:
+            sending[0] = False
+            teller.join()
+            progress.end()
+    except Exception as exc:
+        conn.send(("error", str(exc) or type(exc).__name__))
+        return
+    conn.send(("ready", rate))
+    lock = threading.RLock()
+    stream = MixerStream(synth, lock, rate, stats)
+    try:
+        while True:
+            if not conn.poll(0.25):
+                continue
+            msgs = [conn.recv()]
+            while conn.poll():
+                msgs.append(conn.recv())
+            with lock:
+                for op, *args in msgs:
+                    if op in PLAYER_CALLS:
+                        getattr(synth, op)(*args)
+            if any(m[0] == "stats" for m in msgs):
+                conn.send(("stats", dict(stats)))
+            if any(m[0] == "quit" for m in msgs):
+                break
+    except (EOFError, OSError):                            # (the app has gone)
+        pass
+    finally:
+        stream.stop()
+
+
+class SoundfontError(Exception):
+    """The soundfont won't load (said by the player's process)."""
+
+
 def soundfont_name(path):
     """A soundfont's name to show: its file name without the extension."""
     return os.path.splitext(os.path.basename(path))[0] if path else ""
 
 
 class SoundfontOut:
-    def __init__(self, path, synth=None, start=True):
-        """Load `path` and start playing; `synth` is a stand-in for sf2.Synth (tests)."""
+    def __init__(self, path, synth=None, start=True, process=True):
+        """
+        Load `path` and start playing: in a process of its own (`process`),
+        else in this one; `synth` is a stand-in for sf2.Synth, played here
+        (tests).
+        """
         self.path = path
         self.name = soundfont_name(path)
         self.muted = False
         self.volume = 0.8
         self._lock = threading.RLock()       # (the mixer thread generates while notes come in)
         self.stream = None
-        rate = 44100
-        if start:
-            from audio_sync import ensure_mixer
-            import pygame
-            ensure_mixer()
-            rate = pygame.mixer.get_init()[0]
+        self.proc = None
+        if synth is None and start and process:
+            try:
+                synth = self._start_process(path)
+            except SoundfontError:
+                raise
+            except Exception as exc:                          # (no process: played here instead)
+                print(f"Soundfont player process didn't start ({exc}); playing in the app")
+                synth = None
         if synth is None:
+            rate = 44100
+            if start:
+                from audio_sync import ensure_mixer
+                import pygame
+                ensure_mixer()
+                rate = pygame.mixer.get_init()[0]
             from sf2 import Synth
             synth = Synth(samplerate=rate)
-        self.synth = synth
-        sfid = synth.sfload(path)
-        for ch in (0, 1):
-            try:
-                synth.program_select(ch, sfid, 0, 0)          # bank 0, preset 0: the piano in a piano soundfont
-            except Exception:
-                synth.program_change(ch, 0)
+            synth.sfload(path)
+            for ch in (0, 1):
+                synth.program_select(ch, 0, 0, 0)               # bank 0, preset 0: the piano in a piano soundfont
+            if start:
+                self.stream = MixerStream(synth, self._lock, rate)
+        elif self.proc is None:
+            sfid = synth.sfload(path)
+            for ch in (0, 1):
+                synth.program_select(ch, sfid, 0, 0)
         self._down = set()           # (channel, pitch): keys down now
         self._ringing = set()        # keys let go while a pedal holds them
         self._sustain = {0: False, 1: False}
         self._sost = {0: set(), 1: set()}      # the keys the sostenuto pedal caught
         self._soft = {0: False, 1: False}
+        self.synth = synth
         self.set_volume(self.volume)
-        if start:
-            self.stream = MixerStream(synth, self._lock, rate)
+
+    def _start_process(self, path):
+        """The player's process, loaded and ready: its RemoteSynth (progress passed on meanwhile)."""
+        import multiprocessing
+        import progress
+        ctx = multiprocessing.get_context("spawn")
+        conn, child = ctx.Pipe()
+        proc = ctx.Process(target=_player_process, args=(child, path), name="soundfont player", daemon=True)
+        proc.start()
+        child.close()
+        try:
+            while True:
+                if not conn.poll(STARTUP_TIMEOUT_S):
+                    raise RuntimeError("it didn't answer")
+                op, *args = conn.recv()
+                if op == "progress":
+                    progress.report(args[0])
+                elif op == "ready":
+                    break
+                elif op == "error":
+                    raise SoundfontError(args[0])
+        except BaseException:
+            proc.terminate()
+            proc.join(1.0)
+            conn.close()
+            raise
+        self.proc, self.conn = proc, conn
+        return RemoteSynth(conn)
+
+    def stats(self):
+        """The player's chunks played and underruns so far (its process asked), or None."""
+        if self.proc is not None:
+            with self._lock:
+                self.synth._send("stats")
+                while self.conn.poll(1.0):
+                    op, *args = self.conn.recv()
+                    if op == "stats":
+                        return args[0]
+            return None
+        return dict(self.stream.stats) if self.stream is not None else None
 
     # ----- what MidiOut offers ---------------------------------------------------
     @property
@@ -259,6 +419,13 @@ class SoundfontOut:
             if self.stream is not None:
                 self.stream.stop()
                 self.stream = None
+            if self.proc is not None:
+                self.synth._send("quit")
+                self.proc.join(1.0)
+                if self.proc.is_alive():
+                    self.proc.terminate()
+                self.conn.close()
+                self.proc = None
             self.synth = None
 
 

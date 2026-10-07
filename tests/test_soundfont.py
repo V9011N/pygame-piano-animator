@@ -289,19 +289,27 @@ def test_an_unlooped_sample_ends_and_a_bad_file_is_refused(tmp_path):
         Synth().sfload(str(bad))
 
 
-def test_the_soundfont_player_plays_through_the_built_in_synth(tmp_path):
-    """make_synth with a real file: the built-in player, no package needed."""
-    from sf2 import Synth
-    from sf_synth import SoundfontOut, make_synth
+def test_the_soundfont_plays_in_a_process_of_its_own(tmp_path):
+    """make_synth with a real file: the built-in player, in its own process (no package needed)."""
+    from sf_synth import RemoteSynth, SoundfontOut, make_synth
     path = tiny_sf2(tmp_path / "Tone.sf2")
     out, problem = make_synth(True, path)
     try:
-        assert isinstance(out, SoundfontOut) and problem == "" and isinstance(out.synth, Synth)
+        assert isinstance(out, SoundfontOut) and problem == "" and isinstance(out.synth, RemoteSynth)
+        assert out.proc.is_alive()
         out.note_on(Note(69, 0, 1, 100, 0, RIGHT))
-        assert len(out.synth.voices) == 1
+        pygame.time.wait(200)
+        st = out.stats()
+        assert st is not None and st["chunks"] > 0
     finally:
+        proc = out.proc
         out.close()
-        pygame.mixer.quit()
+    assert not proc.is_alive()
+    # a file it can't load: the system synth, and why
+    bad = tmp_path / "bad.sf2"
+    bad.write_bytes(b"RIFF\0\0\0\0sfbk")
+    out, problem = make_synth(True, str(bad))
+    assert problem.startswith("couldn't be played") and out.name == ""
 
 
 def test_many_voices_play_together_as_one_did_alone(tmp_path):

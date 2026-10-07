@@ -91,6 +91,19 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     piano (29 sample points x 8 velocity layers x 10 s, unlooped), the densest 15 s of a ballade with the pedal
     held throughout, the main thread busy: chunks median 2.1 ms (was 6.5), 95th percentile 3.7 (11.7), no
     underruns; frames median 2.1 ms, worst 15 (27); loading 2.6 s (reading the samples).
+  - The player's own process (v26.1.19.SNAPSHOT-09): in the app's process the synth's thread and the drawing
+    shared Python's interpreter lock, each slowing the other. In the real player (hands and drawing) on the
+    Ocean étude from 0:55 for 20 s, a frame's work was median 9.1 ms / 95th percentile 12.1 with no
+    soundfont, 10.8 / 15.1 with the 409 MB piano (chunks 4.2 / 9.9 ms with waits for the lock, 2 underruns).
+    Now `SoundfontOut` starts `_player_process` (multiprocessing "spawn": the same on Windows and elsewhere;
+    `main.py` calls `freeze_support` for the compiled .exe) with its own mixer and `MixerStream`, and sends it
+    sf2.Synth's calls down a pipe (`RemoteSynth`: noteon, noteoff, control_change, notes_off, sounds_off); the
+    pedals stay in `SoundfontOut`. While loading it sends "progress" (its `progress.value()`, every 50 ms) for
+    the loading bar, then "ready" or "error" (`SoundfontError`: the Settings show why). It plays until "quit"
+    or the pipe breaks (the app gone); `close()` waits 1 s, then ends it. `stats()` asks it for chunks and
+    underruns. Same test: frames 9.2-9.7 / 12.3-14.5 ms (as with no soundfont), 0-1 underruns. If the
+    process can't start, the player runs in the app's process as before. The synced recording's mixer is the
+    app's, so reopening it no longer touches the player at all.
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
     worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
     `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the

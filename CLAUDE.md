@@ -38,7 +38,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock, performance overlay), `MainMenu`, `Visualizer` (falling notes) |
 | `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), keyboard type, frame rate cap (`App.set_fps_cap`), performance overlay, soundfont (`App.set_soundfont`) |
-| `sf_synth.py` | A chosen soundfont: `SoundfontOut` (MidiOut's interface over `sf2.Synth`, the pedals played here), `MixerStream` (its sound through pygame's mixer), `make_synth` (falls back to the system synth) |
+| `sf_synth.py` | A chosen soundfont: `SoundfontOut` (MidiOut's interface, the pedals played here) driving `sf2.Synth` in a process of its own (`_player_process`, `RemoteSynth` over a pipe), `MixerStream` (its sound through pygame's mixer), `make_synth` (falls back to the system synth) |
 | `sf2.py` | The built-in SoundFont player (.sf2 / .sf3) in numpy: zones, loops, volume envelope; no compiled package |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout` (keyboard placement), `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `VolumeSlider`, `draw_tooltip`, `run_busy` (a job in a worker thread behind a progress bar) |
@@ -95,6 +95,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   add any new one to `build.py`'s `--include-data-files`; keep the user's files under `paths.DATA_DIR`
   (`pianist.FOLDER`), never beside the modules (compiled, that's a cache folder). No console then: `print`
   goes to `paths.log_path()`.
+- A chosen soundfont plays in a process of its own (`sf_synth._player_process`, multiprocessing "spawn"),
+  which imports `main.py` again: keep `main.py`'s top level free of side effects (everything under
+  `if __name__ == "__main__":`).
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

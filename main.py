@@ -1150,6 +1150,8 @@ def _no_console():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()            # (the soundfont player's process, compiled: sf_synth)
     if paths.COMPILED and _no_console():
         _log_to_file()
     try:
