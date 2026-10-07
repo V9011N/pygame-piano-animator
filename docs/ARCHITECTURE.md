@@ -62,7 +62,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     sostenuto keeps the keys down when it went down, soft plays new notes at `SOFT_VELOCITY` 0.7; a key struck
     again while it rings stops first.
     `PlaybackSetup`'s first choice names it ("Soundfont: X" / "Play the notes with the X soundfont"), else
-    "Default sound" (the system's MIDI synth). The player's top bar shows its name where the synth status was.
+    "Default sound" (the system's MIDI synth). Its name is in the tooltip of the player's "sound on / off".
     Output (v26.1.19.SNAPSHOT-05): `sf_synth.MixerStream`, a daemon thread that keeps one `CHUNK_FRAMES` 768
     chunk (17 ms) queued behind the playing one on mixer channel 0 (`set_reserved(1)`),
     from `Synth.generate` converted to the mixer's format (size 8/-8/16/-16/32, mono/stereo/more) and
@@ -124,8 +124,14 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   channels (`DEFAULT_VOLUME` 0.8, about GM's default 100); a synced recording plays at the same volume
   (`Visualizer._apply_audio_volume`, 0 while muted). `common.VolumeSlider` (click, drag, scroll) in the player's
   and the editor's top bars; kept in settings.json ("volume").
-- The player's top-bar controls are drawn one by one (`Visualizer._top_items`), each with a tooltip on hover
-  (`common.draw_tooltip`, `_draw_tooltip`) saying what it does and its key.
+- The player's progress bar holds only the song's name and time (v26.1.19.SNAPSHOT-13): the controls on it
+  were in the way of scrubbing, so a click or drag anywhere along it seeks. The controls sit under it (under the
+  waveform with a synced recording), at the right, on translucent panels (`PANEL_ALPHA` 170 over the notes;
+  `Visualizer._draw_controls`): speed, view, "sound on / off" (a click mutes and unmutes, as M) and the volume
+  (`controls_rect`, `CONTROLS_H` 30). Under them an arrow-keys button (`common.draw_arrow_keys`,
+  `keys_button`) shows or hides the key controls with what each does (`_key_controls`, `keys_rect`; shown or
+  not kept in settings.json, "player_keys", hidden at first). Clicks on the panels never seek. Each control
+  has a tooltip on hover (`_top_items`, `common.draw_tooltip`).
 - Finger numbers on the falling notes: bold, `FINGER_PX_MAX` 17 px (13 before) or as big as fits the narrowest
   notes (`_finger_size`: a black key's lane), smaller on a note too short for it (down to `FINGER_PX_MIN` 11),
   with a drop shadow - dark under a light number (plus its thin outline), light under a dark one.

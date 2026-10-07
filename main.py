@@ -53,7 +53,7 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
-                    set_keyboard_place, wrap_text, Dialog)
+                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys)
 import paths
 import pianist as pianists
 import recent
@@ -73,6 +73,10 @@ MENU_ACTIVE_H = 20          # ...the active pianist line under Quit
 FINGER_PX_MAX = 17          # finger numbers on the notes: this big at most (13 before)...
 FINGER_PX_MIN = 11          # ...but narrower than a black key's notes (Visualizer._finger_size)
 FPS_CAP_MIN, FPS_CAP_MAX = 24, 240     # the frame rate cap's range (Settings; past the top: uncapped)
+CONTROLS_H = 30            # the player's controls panel under the progress bar...
+PANEL_MARGIN = 8            # ...this far in from the window's right and below the bar (or the waveform)
+PANEL_ALPHA = 170           # ...and its panels' opacity (0-255): translucent over the notes
+KEYS_BUTTON_W, KEYS_BUTTON_H = 58, 42    # the arrow-keys button under it (shows / hides the key controls)
 UNCAPPED_IDLE_HZ = 240      # uncapped, the hands work ahead (App.run's idle) as if at this frame rate
 PERF_FRAMES = 120           # the performance overlay (Settings): this many frames' times...
 PERF_W, PERF_GRAPH_H = 230, 46
@@ -109,7 +113,12 @@ class Visualizer(Transport):
         self._finger_cache = {}          # (text, colour, size) -> rendered finger number
         self._finger_fonts = {}
         self.volume = VolumeSlider(self.midi.volume, self._set_volume)
-        self._top_items = []             # [(rect, tooltip)] of the top bar's controls, for hovering
+        self._top_items = []             # [(rect, tooltip)] of the controls panel's items, for hovering
+        self.controls_rect = pygame.Rect(0, 0, 0, 0)     # the controls panel (speed, view, sound, volume)
+        self.sound_rect = pygame.Rect(0, 0, 0, 0)        # ...its "sound on / off" (click: mute / unmute)
+        self.keys_button = pygame.Rect(0, 0, 0, 0)       # the arrow-keys button under it
+        self.keys_rect = pygame.Rect(0, 0, 0, 0)         # the key controls' list, when shown
+        self.show_keys = bool(pianists.app_setting("player_keys", False))
         self.hands = {}
         self.show_hands = True
         self.show_fingers = True
@@ -181,13 +190,7 @@ class Visualizer(Transport):
             elif k in (pygame.K_MINUS, pygame.K_KP_MINUS):
                 self.window_secs = min(12.0, self.window_secs * 1.25)
             elif k == pygame.K_m:
-                if self.audio:
-                    self.audio_muted = not self.audio_muted
-                    self._apply_audio_volume()
-                else:
-                    self.midi.muted = not self.midi.muted
-                    if self.midi.muted:
-                        self.midi.silence()
+                self.toggle_mute()
             elif k in (pygame.K_COMMA, pygame.K_PERIOD) and self.audio:
                 # nudge the recording: 10 ms, or 100 ms with Shift
                 step = 0.1 if event.mod & pygame.KMOD_SHIFT else 0.01
@@ -205,7 +208,15 @@ class Visualizer(Transport):
                 if path:
                     return ("open", path)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.bar_rect.collidepoint(event.pos):
+            if self.keys_button.collidepoint(event.pos):
+                self.show_keys = not self.show_keys
+                pianists.set_app_setting("player_keys", self.show_keys)
+            elif self.sound_rect.collidepoint(event.pos):
+                self.toggle_mute()
+            elif self.controls_rect.collidepoint(event.pos) or (self.show_keys and
+                                                                 self.keys_rect.collidepoint(event.pos)):
+                pass                                 # (the panels: no seeking or dragging through them)
+            elif self.bar_rect.collidepoint(event.pos):
                 self.dragging_bar = True
                 self._seek_to_x(event.pos[0])
             elif self.audio and self.wave_rect.collidepoint(event.pos):
@@ -224,6 +235,16 @@ class Visualizer(Transport):
                 if not self.paused:
                     self._start_audio()              # carry on from the new alignment
         return True
+
+    def toggle_mute(self):
+        """M, or a click on "sound on / off": the synced recording's sound, or the synth's."""
+        if self.audio:
+            self.audio_muted = not self.audio_muted
+            self._apply_audio_volume()
+        else:
+            self.midi.muted = not self.midi.muted
+            if self.midi.muted:
+                self.midi.silence()
 
     def _set_volume(self, v):
         """The volume slider: the synth's volume, and a synced recording's (kept for next time)."""
@@ -463,6 +484,7 @@ class Visualizer(Transport):
         self._draw_top_bar()
         if self.audio:
             self._draw_wave()
+        self._draw_controls()
         self._draw_tooltip()
 
         if not self.song:
@@ -496,6 +518,7 @@ class Visualizer(Transport):
         blit_shadowed(s, font, label, TEXT, (r.x + 8, r.y + 4))
 
     def _draw_top_bar(self):
+        """The progress bar: the song's name and time, nothing else (click or drag anywhere on it to seek)."""
         s, r = self.screen, self.bar_rect
         pygame.draw.rect(s, BAR_BG, r)
         if self.song and self.song.duration > 0:
@@ -509,46 +532,96 @@ class Visualizer(Transport):
         font = self.fonts["normal"]
         blit_shadowed(s, font, left, TEXT, (10, (r.h - font.get_height()) // 2))
 
-        # the controls on the right, each with what it does when hovered
+    def _key_controls(self):
+        """[(key, what it does)] for the key controls' list."""
+        keys = [("Space", "Play / pause"), ("← →", f"Skip back / forward {SEEK_STEP:.0f} s")]
         if self.audio:
-            sound = ("audio muted" if self.audio_muted else "synced audio",
-                     "The synced recording - M mutes it")
-            items = [(f"speed {int(round(self.speed * 100))}% (fixed)", "Playback speed, fixed for a synced recording"),
-                     (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"),
-                     sound, None,
-                     ("Space", "Play / pause"), ("←→", f"Skip back / forward {SEEK_STEP:.0f} s"),
-                     (", .", "Nudge the recording against the notes: 10 ms (Shift: 100 ms)"),
-                     ("+/-", "Show more / fewer seconds of notes"), ("M", "Mute / unmute the recording"),
-                     ("O", "Open another MIDI file"), ("H", "Show / hide the hands"),
-                     ("F", "Show / hide the finger numbers"), ("Esc menu", "Back to the main menu")]
+            keys += [(", .", "Nudge the recording: 10 ms (Shift: 100 ms)")]
         else:
-            items = [(f"speed {int(round(self.speed * 100))}%", "Playback speed - ↑ / ↓ to change"),
-                     (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"),
-                     (self.midi.status(), (f"The {self.midi.name} soundfont" if self.midi.name else
-                                           "The system's MIDI synth") + " - M mutes it"), None,
-                     ("Space", "Play / pause"), ("←→", f"Skip back / forward {SEEK_STEP:.0f} s"),
-                     ("↑↓", "Faster / slower"), ("+/-", "Show more / fewer seconds of notes"),
-                     ("M", "Mute / unmute"), ("O", "Open another MIDI file"), ("H", "Show / hide the hands"),
-                     ("F", "Show / hide the finger numbers"), ("Esc menu", "Back to the main menu")]
+            keys += [("↑ ↓", "Faster / slower")]
+        keys += [("+ −", "Show more / fewer seconds of notes"), ("Home / R", "Back to the start"),
+                 ("M", "Mute / unmute the recording" if self.audio else "Mute / unmute"),
+                 ("H", "Show / hide the hands"), ("F", "Show / hide the finger numbers"),
+                 ("O", "Open another MIDI file"), ("Esc", "Back to the main menu")]
+        return keys
+
+    @staticmethod
+    def _panel(s, rect):
+        """A translucent rounded panel behind controls drawn over the notes."""
+        panel = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(panel, (*BAR_BG, PANEL_ALPHA), panel.get_rect(), border_radius=8)
+        s.blit(panel, rect.topleft)
+
+    def _draw_controls(self):
+        """
+        Under the progress bar, on the right, on translucent panels: speed, view,
+        sound on / off and the volume; under them the arrow-keys button, which
+        shows or hides the key controls with what each does.
+        """
+        s = self.screen
         font = self.fonts["small"]
-        y = (r.h - font.get_height()) // 2
-        x = r.w - 10
+        muted = self.audio_muted if self.audio else self.midi.muted
+        if self.audio:
+            sound = ("sound off" if muted else "sound on", "The synced recording - click or M to mute / unmute")
+            speed = (f"speed {int(round(self.speed * 100))}% (fixed)", "Playback speed, fixed for a synced recording")
+        else:
+            what = f"The {self.midi.name} soundfont" if self.midi.name else "The system's MIDI synth"
+            if not self.midi.available:
+                sound = ("no synth", "No MIDI synth was found to play the notes")
+            else:
+                sound = ("sound off" if muted else "sound on", f"{what} - click or M to mute / unmute")
+            speed = (f"speed {int(round(self.speed * 100))}%", "Playback speed - ↑ / ↓ to change")
+        items = [speed, (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"), sound]
+        pad, gap, h = 12, 18, CONTROLS_H
+        widths = [font.size(text)[0] for text, _ in items]
+        vw = self.volume.width()
+        w = pad + sum(widths) + gap * len(items) + vw + pad
+        top = self.fall_rect.top + PANEL_MARGIN
+        panel = pygame.Rect(self.screen.get_width() - PANEL_MARGIN - w, top, w, h)
+        self.controls_rect = panel
+        self._panel(s, panel)
         self._top_items = []
-        for item in reversed(items):
-            if item is None:                    # the volume slider
-                vw = self.volume.width()
-                x -= vw
-                self.volume.rect = pygame.Rect(x, 0, vw, r.h)
-                self.volume.draw(s, self.fonts, muted=self.audio_muted if self.audio else self.midi.muted)
-                self._top_items.append((self.volume.rect, "Volume - click, drag or scroll"))
-                x -= 16
-                continue
-            text, tip = item
-            tw = font.size(text)[0]
-            x -= tw
-            blit_shadowed(s, font, text, TEXT_DIM, (x, y))
-            self._top_items.append((pygame.Rect(x - 3, 0, tw + 6, r.h), tip))
-            x -= 12 if len(text) <= 3 else 16
+        x = panel.x + pad
+        ty = panel.centery - font.get_height() // 2
+        for (text, tip), tw in zip(items, widths):
+            item = pygame.Rect(x - 4, panel.y, tw + 8, h)
+            hot = text == sound[0] and self.midi.available or (self.audio and text == sound[0])
+            col = ACCENT if text == "sound off" else (TEXT if hot and item.collidepoint(pygame.mouse.get_pos())
+                                                    else TEXT_DIM)
+            blit_shadowed(s, font, text, col, (x, ty))
+            self._top_items.append((item, tip))
+            if text == sound[0]:
+                self.sound_rect = item if (self.audio or self.midi.available) else pygame.Rect(0, 0, 0, 0)
+            x += tw + gap
+        self.volume.rect = pygame.Rect(x, panel.y, vw, h)
+        self.volume.draw(s, self.fonts, muted=muted)
+        self._top_items.append((self.volume.rect, "Volume - click, drag or scroll"))
+
+        # the arrow-keys button, and the key controls under it when shown
+        b = pygame.Rect(panel.right - KEYS_BUTTON_W, panel.bottom + 6, KEYS_BUTTON_W, KEYS_BUTTON_H)
+        self.keys_button = b
+        self._panel(s, b)
+        hover = b.collidepoint(pygame.mouse.get_pos())
+        draw_arrow_keys(s, b, TEXT if hover or self.show_keys else TEXT_DIM, ACCENT if self.show_keys else None)
+        self._top_items.append((b, "Hide the key controls" if self.show_keys else "Show the key controls"))
+        if self.show_keys:
+            keys = self._key_controls()
+            kf = self.fonts["small"]
+            kw = max(kf.size(k)[0] for k, _ in keys)
+            dw = max(kf.size(d)[0] for _, d in keys)
+            line = kf.get_linesize() + 4
+            box = pygame.Rect(0, b.bottom + 6, pad + kw + 16 + dw + pad, 10 + line * len(keys) + 6)
+            box.right = panel.right
+            self.keys_rect = box
+            self._panel(s, box)
+            y = box.y + 10
+            for k, d in keys:
+                img = kf.render(k, True, TEXT)
+                s.blit(img, (box.x + pad + kw - img.get_width(), y))         # (keys right-aligned)
+                s.blit(kf.render(d, True, TEXT_DIM), (box.x + pad + kw + 16, y))
+                y += line
+        else:
+            self.keys_rect = pygame.Rect(0, 0, 0, 0)
 
     def _draw_tooltip(self):
         """What the top bar's control under the mouse does."""

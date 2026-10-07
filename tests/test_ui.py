@@ -340,6 +340,46 @@ def test_settings_screen_drags_the_keyboard_and_toggles_profiling(screen):
         common.set_keyboard_place(None)
 
 
+def test_the_progress_bar_is_clear_and_the_controls_sit_under_it(screen):
+    import pianist
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    bar = v.bar_rect
+    # nothing on the bar but the name and time: every control is below it, on the right
+    for rect, _ in v._top_items:
+        assert rect.top >= bar.bottom and rect.right > screen.get_width() // 2
+    assert v.controls_rect.top >= v.fall_rect.top and v.keys_button.top >= v.controls_rect.bottom
+    # so a click anywhere along the bar seeks - even at its right end, where the controls were
+    for x in (bar.right - 12, bar.right - 200, bar.centerx):
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(x, bar.centery)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(x, bar.centery)))
+        assert abs(v.t - v.song.duration * x / bar.w) < 0.6
+    # the arrow-keys button shows the key controls (kept for next time); a click on them doesn't seek
+    assert not v.show_keys and v.keys_rect.w == 0
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_button.center))
+    v.render()
+    assert v.show_keys and v.keys_rect.h > 200 and pianist.app_setting("player_keys") is True
+    t0 = v.t
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_rect.center))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=v.keys_rect.center))
+    assert v.t == t0 and not v.dragging_bar
+    assert any(k == "Space" for k, _ in v._key_controls()) and all(d for _, d in v._key_controls())
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_button.center))
+    v.render()
+    assert not v.show_keys and v.keys_rect.w == 0
+    # "sound on / off": a click mutes and unmutes, as M does (a stand-in soundfont player to hear it)
+    from test_soundfont import player
+    v.midi = app.midi = player("Grand.sf2")
+    v.render()
+    assert v.sound_rect.w and any("Grand soundfont" in tip for _, tip in v._top_items)
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.sound_rect.center))
+    assert app.midi.muted
+    key(app, pygame.K_m)
+    assert not app.midi.muted
+
+
 def test_volume_and_top_bar_tooltips(screen):
     import pianist
     app = app_on(screen)
@@ -347,13 +387,14 @@ def test_volume_and_top_bar_tooltips(screen):
     v = app.mode
     v.render()
     tips = [tip for _, tip in v._top_items]
-    assert any("Volume" in t for t in tips) and any("hands" in t for t in tips) and all(tips)
+    assert any("Volume" in t for t in tips) and any("key controls" in t for t in tips) and all(tips)
+    assert any("hands" in d for _, d in v._key_controls())
     r = v.volume._track()
     t0 = v.t
     app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 4, r.centery)))
     app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4, r.centery)))
     assert abs(app.midi.volume - 0.25) < 0.03 and abs(pianist.app_setting("volume") - 0.25) < 0.03
-    assert v.t == t0 and not v.dragging_bar                          # (the click didn't seek: it's in the top bar)
+    assert v.t == t0 and not v.dragging_bar                          # (the click didn't seek: it's in the panel)
     # the finger numbers fit the narrowest notes
     px = v._finger_size(v.keyboard)
     narrow = min(w for _, w in v.keyboard.lanes.values())

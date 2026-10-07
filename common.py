@@ -1013,6 +1013,26 @@ class VolumeSlider:
         surf.blit(txt, txt.get_rect(midleft=(tr.right + 10, cy)))
 
 
+def draw_arrow_keys(surf, rect, color, accent=None):
+    """An arrow-keys icon (four keycaps in an inverted T, each with its arrow) centred in `rect`."""
+    k = max(6, min((rect.w - 10) // 3, (rect.h - 9) // 2))         # a keycap's side
+    gap = 1
+    x0 = rect.centerx - (3 * k + 2 * gap) // 2
+    y0 = rect.centery - (2 * k + gap) // 2
+    caps = {"up": (x0 + k + gap, y0), "left": (x0, y0 + k + gap), "down": (x0 + k + gap, y0 + k + gap),
+            "right": (x0 + 2 * (k + gap), y0 + k + gap)}
+    a = max(2, k // 3)                                               # an arrowhead's half-size
+    for name, (x, y) in caps.items():
+        cap = pygame.Rect(x, y, k, k)
+        pygame.draw.rect(surf, accent or color, cap, 1, border_radius=2)
+        cx, cy = cap.center
+        tri = {"up": [(cx, cy - a), (cx - a, cy + a // 2 + 1), (cx + a, cy + a // 2 + 1)],
+               "down": [(cx, cy + a), (cx - a, cy - a // 2 - 1), (cx + a, cy - a // 2 - 1)],
+               "left": [(cx - a, cy), (cx + a // 2 + 1, cy - a), (cx + a // 2 + 1, cy + a)],
+               "right": [(cx + a, cy), (cx - a // 2 - 1, cy - a), (cx - a // 2 - 1, cy + a)]}[name]
+        pygame.draw.polygon(surf, color, tri)
+
+
 def draw_tooltip(surf, fonts, text, anchor):
     """A small box with `text` just below the rect `anchor` (kept inside the window)."""
     img = fonts["small"].render(text, True, TEXT)
