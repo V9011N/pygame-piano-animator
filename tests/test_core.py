@@ -932,3 +932,32 @@ def test_thumb_bridge_lies_straight_across_both_black_keys():
         assert tip[1] + u * (mcp[1] - tip[1]) >= front
     else:
         assert near - mcp[0] <= 0.5 * FINGER_W_IN[1] * a.ppi and mcp[1] >= front
+
+
+def test_export_puts_each_hand_on_its_own_channel(tmp_path):
+    # one track, one channel: C4-E4 (right hand) and C2 (left hand) under the pedal
+    src, dst = tmp_path / "one.mid", tmp_path / "one_fingered.mid"
+    src.write_bytes(_smf([[(0, b"\xb0\x40\x7f"), (0, b"\x90\x24\x50"), (0, b"\x90\x3c\x50"),
+                           (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40"),
+                           (0, b"\x90\x24\x00"), (0, b"\xb0\x40\x00")]]))
+    import dataclasses
+    s = midi_loader.load_song(str(src))
+    notes = [dataclasses.replace(n, hand=LEFT if n.pitch < 48 else RIGHT) for n in s.notes]
+    midi_loader.save_fingered_midi(str(src), str(dst), notes, {id(n): 1 for n in notes})
+    _, _, tracks = midi_loader._smf_tracks(str(dst))
+    ons, offs, pedal = {}, {}, set()
+    for t, kind, p in [e for evs in tracks.values() for e in evs]:
+        if kind != 'midi':
+            continue
+        st, ch = p[0] & 0xF0, p[0] & 0x0F
+        if st == 0x90 and p[2] > 0:
+            ons[p[1]] = ch
+        elif st in (0x80, 0x90):
+            offs[p[1]] = ch
+        elif st == 0xB0:
+            pedal.add(ch)
+    assert ons[0x3c] == ons[0x40] == 0 and ons[0x24] == 1            # right hand 1st channel, left 2nd
+    assert offs == ons                                               # each note let go on its own channel
+    assert pedal == {0, 1}                                           # the pedal for both hands
+    back = midi_loader.load_song(str(dst))
+    assert sorted((n.pitch, n.hand, n.finger) for n in back.notes) == [(36, LEFT, 1), (60, RIGHT, 1), (64, RIGHT, 1)]

@@ -86,10 +86,35 @@ HAND_LEN_WW = 7.0           # room below the keys for the hands and forearms, in
 BOTTOM_MAX_SHARE = 0.5      # the keys + hand area never take more than this share of the height
 
 
+_kb_place = None             # where the keyboard sits (Settings): None = the default, else 0 (highest) .. 1 (lowest)
+
+
+def keyboard_place():
+    return _kb_place
+
+
+def set_keyboard_place(place):
+    global _kb_place
+    _kb_place = None if place is None else min(1.0, max(0.0, float(place)))
+
+
+def keyboard_y_range(size, kb_h):
+    """
+    (highest, lowest) top edge for a keyboard kb_h tall in a window `size`:
+    the top of the keys at the window's centre, or the keys' bottom edge half
+    a keyboard height above the window's bottom.
+    """
+    h = size[1]
+    hi = h // 2
+    lo = h - kb_h - kb_h // 2
+    return hi, max(hi, lo)
+
+
 def bottom_layout(size):
     """
     (keyboard rect, hand-area rect) for a window size: the keys and the hand
-    area always sit at the bottom, in every mode.
+    area always sit at the bottom, in every mode - the keys as high as the
+    Settings put them (set_keyboard_place), the hand area below them.
 
     Everything down here is drawn to one scale (pixels per white key), so it
     keeps its proportions at any window shape: the key length and the hand
@@ -108,7 +133,10 @@ def bottom_layout(size):
     hand_h = max(int(round(ww * HAND_LEN_WW)), min(HAND_AREA_MIN_H, int(h * 0.2)))
     kb_x = (w - kb_w) // 2
     kb_y = h - hand_h - kb_h
-    return pygame.Rect(kb_x, kb_y, kb_w, kb_h), pygame.Rect(0, kb_y + kb_h, w, hand_h)
+    if _kb_place is not None:                   # placed in the Settings: the hand area is what's left below
+        top, low = keyboard_y_range(size, kb_h)
+        kb_y = int(round(top + (low - top) * _kb_place))
+    return pygame.Rect(kb_x, kb_y, kb_w, kb_h), pygame.Rect(0, kb_y + kb_h, w, h - kb_y - kb_h)
 
 
 # --------------------------------------------------------------------------- #
@@ -374,10 +402,14 @@ def draw_hand_area(surf, rect):
 # --------------------------------------------------------------------------- #
 # Optional sound through the system MIDI synth (e.g. Windows GS Wavetable Synth)
 # --------------------------------------------------------------------------- #
+DEFAULT_VOLUME = 0.8         # (the synth's channel volume 102 of 127, about General MIDI's default 100)
+
+
 class MidiOut:
     def __init__(self, enabled=True):
         self.port = None
         self.muted = False
+        self.volume = DEFAULT_VOLUME             # 0..1, for the synth and a synced recording alike
         if not enabled:
             return
         try:
@@ -388,6 +420,7 @@ class MidiOut:
                 self.port = pygame.midi.Output(device)
                 for ch in (0, 1):
                     self.port.set_instrument(0, ch)   # acoustic grand piano
+                self.set_volume(self.volume)
         except Exception as exc:  # no synth available: run silently
             print(f"Sound disabled ({exc})")
             self.port = None
@@ -411,6 +444,13 @@ class MidiOut:
         if self.port:
             for ch in (0, 1):
                 self.port.write_short(0xB0 | ch, 123, 0)   # "all notes off"
+
+    def set_volume(self, v):
+        """The volume (0..1): the synth's channel volume (CC 7) on both hands' channels."""
+        self.volume = min(1.0, max(0.0, float(v)))
+        if self.port:
+            for ch in (0, 1):
+                self.port.write_short(0xB0 | ch, 7, int(round(127 * self.volume)))
 
     def control_change(self, number, value):
         """Pedals (sustain 64, sostenuto 66, soft 67) go to both hands' channels."""
@@ -770,7 +810,11 @@ def draw_pianist_badge(surf, fonts, area, pianist, pedals=None):
     if pedals is not None:
         # above the version in the window's corner (App.draw_version)
         bottom = min(area.bottom - pad, surf.get_height() - fonts["small"].get_height() - 10)
-        return draw_pedals(surf, (area.x + pad + 4, bottom), pedals, scale=min(1.5, max(0.9, surf.get_height() / 800)))
+        scale = min(1.5, max(0.9, surf.get_height() / 800))
+        scale = min(scale, (bottom - area.top - 4) / PEDAL_SIZE[1])      # (a short hand area: smaller, off the keys)
+        if scale < 0.35:
+            return None
+        return draw_pedals(surf, (area.x + pad + 4, bottom), pedals, scale=scale)
     return None
 
 
@@ -852,6 +896,88 @@ def draw_pedals(surf, bottomleft, state, scale=1.0):
     r = img.get_rect(bottomleft=bottomleft)
     surf.blit(img, r)
     return r
+
+
+class VolumeSlider:
+    """
+    A small volume control for a top bar: a speaker, a short track and a knob.
+    Click or drag along it, or scroll over it. on_change(volume 0..1).
+    """
+    TRACK_W = 80
+
+    def __init__(self, value, on_change):
+        self.value, self.on_change = value, on_change
+        self.rect = pygame.Rect(0, 0, 0, 0)
+        self.dragging = False
+
+    def width(self):
+        return 20 + self.TRACK_W + 44
+
+    def _track(self):
+        return pygame.Rect(self.rect.x + 20, self.rect.centery - 2, self.TRACK_W, 4)
+
+    def _set(self, v):
+        v = min(1.0, max(0.0, v))
+        if abs(v - self.value) > 1e-9:
+            self.value = v
+            self.on_change(v)
+
+    def handle_event(self, event):
+        """True if the event was the slider's."""
+        if self.rect.w <= 0:
+            return False
+        tr = self._track()
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+            self.dragging = True
+            self._set((event.pos[0] - tr.x) / tr.w)
+            return True
+        if event.type == pygame.MOUSEMOTION and self.dragging:
+            self._set((event.pos[0] - tr.x) / tr.w)
+            return True
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.dragging:
+            self.dragging = False
+            return True
+        if event.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
+            self._set(round((self.value + 0.05 * event.y) * 20) / 20)
+            return True
+        return False
+
+    def draw(self, surf, fonts, muted=False):
+        r = self.rect
+        cx, cy = r.x + 8, r.centery
+        col = TEXT_DIM if muted or self.value <= 0 else TEXT
+        # a speaker: box and cone, and a wave or two by the volume
+        pygame.draw.rect(surf, col, (cx - 6, cy - 3, 4, 6))
+        pygame.draw.polygon(surf, col, [(cx - 2, cy - 3), (cx + 3, cy - 7), (cx + 3, cy + 7), (cx - 2, cy + 3)])
+        if muted or self.value <= 0:
+            pygame.draw.line(surf, ACCENT, (cx + 6, cy - 4), (cx + 11, cy + 4), 2)
+            pygame.draw.line(surf, ACCENT, (cx + 6, cy + 4), (cx + 11, cy - 4), 2)
+        else:
+            for k in range(1 + (self.value > 0.5)):
+                rr = 5 + 4 * k
+                pygame.draw.arc(surf, col, (cx + 2 - rr, cy - rr, 2 * rr, 2 * rr), -0.9, 0.9, 1)
+        tr = self._track()
+        pygame.draw.rect(surf, (60, 60, 72), tr, border_radius=2)
+        fill = tr.copy()
+        fill.w = int(tr.w * self.value)
+        pygame.draw.rect(surf, mix(ACCENT, (60, 60, 72), 0.3 if muted else 0.0), fill, border_radius=2)
+        pygame.draw.circle(surf, TEXT, (tr.x + fill.w, tr.centery), 6)
+        txt = fonts["small"].render(f"{int(round(self.value * 100))}%", True, TEXT_DIM)
+        surf.blit(txt, txt.get_rect(midleft=(tr.right + 10, cy)))
+
+
+def draw_tooltip(surf, fonts, text, anchor):
+    """A small box with `text` just below the rect `anchor` (kept inside the window)."""
+    img = fonts["small"].render(text, True, TEXT)
+    box = pygame.Rect(0, 0, img.get_width() + 16, img.get_height() + 8)
+    box.midtop = (anchor.centerx, anchor.bottom + 6)
+    box.clamp_ip(surf.get_rect())
+    panel = pygame.Surface(box.size, pygame.SRCALPHA)
+    panel.fill((22, 22, 28, 235))
+    surf.blit(panel, box)
+    pygame.draw.rect(surf, PANEL_EDGE, box, 1, border_radius=4)
+    surf.blit(img, (box.x + 8, box.y + 4))
+    return box
 
 
 class Slider:

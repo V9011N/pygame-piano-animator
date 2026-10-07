@@ -28,6 +28,25 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `Transport` (clock, seek, speed, synth on/off);
   - tkinter `pick_file` / `save_file_dialog`;
   - `Button`, `Dialog`, `bottom_layout`.
+- `app_settings.py` – `SettingsScreen` (main menu > Settings, v26.1.19.SNAPSHOT-02), kept in settings.json:
+  - Keyboard position ("keyboard_place"): a live preview; drag the keyboard (or its felt) up or down. Stored as
+    0 (highest: the keys' top at the window's centre) .. 1 (lowest: the keys' bottom half a keyboard height above
+    the window's bottom), `common.keyboard_y_range`; `bottom_layout` places the keys there and gives the hand
+    area what's left below (none = the old default). Reset to default clears it. The pedal clipart shrinks to
+    fit a short hand area (`draw_pianist_badge`).
+  - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
+    worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
+    `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the
+    mode's top bar (`overlay_top`: the player's falling-notes top, the editor's roll top, 0 in the menu).
+- Volume (v26.1.19.SNAPSHOT-02): `MidiOut.volume` / `set_volume` sends channel volume (CC 7) on both hands'
+  channels (`DEFAULT_VOLUME` 0.8, about GM's default 100); a synced recording plays at the same volume
+  (`Visualizer._apply_audio_volume`, 0 while muted). `common.VolumeSlider` (click, drag, scroll) in the player's
+  and the editor's top bars; kept in settings.json ("volume").
+- The player's top-bar controls are drawn one by one (`Visualizer._top_items`), each with a tooltip on hover
+  (`common.draw_tooltip`, `_draw_tooltip`) saying what it does and its key.
+- Finger numbers on the falling notes: bold, `FINGER_PX_MAX` 17 px (13 before) or as big as fits the narrowest
+  notes (`_finger_size`: a black key's lane), smaller on a note too short for it (down to `FINGER_PX_MIN` 11),
+  with a drop shadow - dark under a light number (plus its thin outline), light under a dark one.
 - `editor.py` – `FingeringEditor`, a horizontal piano roll (DAW style) with the keyboard and animated hands below. See the Fingering editor section.
 - (old) main.py visualizer notes:
   - `Visualizer.hands` is {RIGHT/LEFT: HandAnimator}, drawn with `draw_hands`.
@@ -182,7 +201,11 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `R` / `L`: hand only.
 - `midi_loader.read_markers` returns (hand, finger).
 - `save_fingered_midi(src, dst, notes, fingers)`:
-  - rewrites the source file byte for byte, only removing old markers and inserting new ones;
+  - rewrites the source file byte for byte, only removing old markers and inserting new ones - and moving
+    each hand's notes to its own channel (v26.1.19.SNAPSHOT-02): the RH's on the piano's first channel, the LH's
+    on the first channel no other instrument's notes use (never 10, the drums'); a note-off follows its note's
+    channel (a per-track stack per file channel and pitch); the piano channels' controllers, programs, channel
+    pressure and pitch bends are written to both hand channels (the pedal holds for both);
   - matches notes by (pitch, start ±3 ms) using pretty_midi's tempo rules (tempos from track 0 only; a tick-0 tempo replaces 120 bpm).
   - Round trip: all 9 corpus files reload with identical hands and fingers.
 - Old format note (Hanon): `F1`..`F5` markers. The loader keys it by (start time, pitch) onto `Note.finger`, and the planner keeps it.

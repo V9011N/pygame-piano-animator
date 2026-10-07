@@ -39,6 +39,7 @@ drawn over the keyboard and hand area.
 from __future__ import annotations
 
 import argparse
+import collections
 import math
 import os
 import sys
@@ -51,7 +52,8 @@ from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PA
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
-                    END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, run_busy, wrap_text)
+                    DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
+                    set_keyboard_place, wrap_text)
 import paths
 import pianist as pianists
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
@@ -62,6 +64,11 @@ from version import VERSION
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
 WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it this much slower
 SEEK_STEP = 5.0
+FINGER_PX_MAX = 17          # finger numbers on the notes: this big at most (13 before)...
+FINGER_PX_MIN = 11          # ...but narrower than a black key's notes (Visualizer._finger_size)
+PERF_FRAMES = 120           # the performance overlay (Settings): this many frames' times...
+PERF_W, PERF_GRAPH_H = 230, 46
+PERF_MAX_MS = 50.0          # ...graphed up to this
 IDLE_MARGIN_T = 0.002        # s of each frame's spare time left unused (Visualizer.idle)
 
 # What a mode's handle_event can return besides True (carry on) / False (quit)
@@ -91,7 +98,10 @@ class Visualizer(Transport):
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
         self._glow_cache = {}
-        self._finger_cache = {}          # (text, colour) -> rendered finger number
+        self._finger_cache = {}          # (text, colour, size) -> rendered finger number
+        self._finger_fonts = {}
+        self.volume = VolumeSlider(self.midi.volume, self._set_volume)
+        self._top_items = []             # [(rect, tooltip)] of the top bar's controls, for hovering
         self.hands = {}
         self.show_hands = True
         self.show_fingers = True
@@ -127,6 +137,11 @@ class Visualizer(Transport):
             self.keyboard = Keyboard(kb_rect)
         self._glow_cache.clear()
 
+    @property
+    def overlay_top(self):
+        """Where the performance overlay may start (App.draw_perf): below the top bar and the waveform."""
+        return self.fall_rect.top
+
     # ----- input ------------------------------------------------------------
     def handle_event(self, event):
         """True to carry on, False to quit, TO_MENU to go back to the main menu."""
@@ -137,6 +152,8 @@ class Visualizer(Transport):
             self.layout(self.screen.get_size())
         elif event.type == pygame.DROPFILE:
             return ("open", event.file)
+        elif self.volume.handle_event(event):
+            return True
         elif event.type == pygame.KEYDOWN:
             k = event.key
             if k == pygame.K_ESCAPE:
@@ -158,8 +175,7 @@ class Visualizer(Transport):
             elif k == pygame.K_m:
                 if self.audio:
                     self.audio_muted = not self.audio_muted
-                    if self.audio.channel is not None:
-                        self.audio.channel.set_volume(0.0 if self.audio_muted else 1.0)
+                    self._apply_audio_volume()
                 else:
                     self.midi.muted = not self.midi.muted
                     if self.midi.muted:
@@ -201,6 +217,16 @@ class Visualizer(Transport):
                     self._start_audio()              # carry on from the new alignment
         return True
 
+    def _set_volume(self, v):
+        """The volume slider: the synth's volume, and a synced recording's (kept for next time)."""
+        self.midi.set_volume(v)
+        self._apply_audio_volume()
+        pianists.set_app_setting("volume", round(v, 3))
+
+    def _apply_audio_volume(self):
+        if self.audio and self.audio.channel is not None:
+            self.audio.channel.set_volume(0.0 if self.audio_muted else self.midi.volume)
+
     # ----- a synced recording ----------------------------------------------------
     def end_time(self):
         """With a recording, playback goes on to its end, past the last note if need be."""
@@ -235,8 +261,7 @@ class Visualizer(Transport):
         self._audio_pending = pos < 0           # the song's lead-in comes before the recording
         if not self._audio_pending:
             self.audio.play_from(pos)           # (copying the rest of the recording takes a moment...)
-            if self.audio.channel is not None and self.audio_muted:
-                self.audio.channel.set_volume(0.0)
+            self._apply_audio_volume()
         self._anchor = (self.t, time.perf_counter())     # (...so the clock starts once it plays)
 
     def seek(self, t):
@@ -316,10 +341,43 @@ class Visualizer(Transport):
             self._lanes_surf, self._lanes_key = surf, key
         return self._lanes_surf
 
-    def _finger_img(self, txt, color):
-        img = self._finger_cache.get((txt, color))
+    def _finger_size(self, kb):
+        """The finger numbers' font size: as big as FINGER_PX_MAX, but narrower than the narrowest note (a black key's)."""
+        narrow = min((w for _, w in kb.lanes.values()), default=20)
+        key = (narrow,)
+        if self._finger_fonts.get("key") != key:
+            size = FINGER_PX_MIN
+            for px in range(FINGER_PX_MAX, FINGER_PX_MIN - 1, -1):
+                if self._finger_font(px).size("8")[0] + 3 <= narrow:
+                    size = px
+                    break
+            self._finger_fonts["key"], self._finger_fonts["size"] = key, size
+        return self._finger_fonts["size"]
+
+    def _finger_font(self, px):
+        f = self._finger_fonts.get(px)
+        if f is None:
+            f = self._finger_fonts[px] = pygame.font.SysFont("segoeui,arial,helvetica", px, bold=True)
+        return f
+
+    def _finger_img(self, txt, color, px):
+        """A finger number with its drop shadow (dark under a light number, light under a dark one)."""
+        key = (txt, color, px)
+        img = self._finger_cache.get(key)
         if img is None:
-            img = self._finger_cache[(txt, color)] = self.fonts["finger"].render(txt, True, color)
+            font = self._finger_font(px)
+            face = font.render(txt, True, color)
+            light = sum(color) > 380
+            shadow = font.render(txt, True, (0, 0, 0) if light else (255, 255, 255))
+            shadow.set_alpha(170 if light else 120)
+            img = pygame.Surface((face.get_width() + 2, face.get_height() + 2), pygame.SRCALPHA)
+            img.blit(shadow, (2, 2))
+            if light:                    # (a light number on a light note: a thin dark outline too)
+                dark = font.render(txt, True, (15, 15, 20))
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    img.blit(dark, (1 + dx, 1 + dy))
+            img.blit(face, (1, 1))
+            self._finger_cache[key] = img
         return img
 
     def render(self):
@@ -345,6 +403,7 @@ class Visualizer(Transport):
             # what the hands are holding down now (their performance, not the file's times)
             active = [n for _, _, n in self._performance().active(t)]
             held = {id(n) for n in active}
+            fpx = self._finger_size(kb)
             s.set_clip(fall)
             # White-key notes first so black-key notes draw on top of them.
             for black_pass in (False, True):
@@ -364,23 +423,16 @@ class Visualizer(Transport):
                     # equal keys: every note is the same width, so a white-key note's
                     # finger number is white (a black-key note's stays dark)
                     equal_white = kb.style == "equal" and not black_pass
-                    if self.show_fingers and n.hand in self.hands and rect.h >= 14:
+                    px = min(fpx, rect.h - 2)            # (a short note: a smaller number, inside it)
+                    if self.show_fingers and n.hand in self.hands and px >= FINGER_PX_MIN:
                         finger = self.hands[n.hand].finger_for(n)
                         if self.hands[n.hand].is_gliss(n):
                             finger = "g"                 # slid in a glissando
                         if finger:
-                            pos = (rect.centerx, rect.bottom - 1)
-                            if equal_white:      # white number for a white key, black for a black one
-                                txt = str(finger)
-                                dark = self._finger_img(txt, (15, 15, 20))
-                                w, h = dark.get_size()
-                                at = (pos[0] - w // 2, pos[1] - h)
-                                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                                    s.blit(dark, (at[0] + dx, at[1] + dy))
-                                s.blit(self._finger_img(txt, (250, 250, 250)), at)
-                            else:
-                                img = self._finger_img(str(finger), (15, 15, 20))
-                                s.blit(img, img.get_rect(midbottom=pos))
+                            # white number for a white key, black for a black one (equal keys)
+                            color = (250, 250, 250) if equal_white else (15, 15, 20)
+                            img = self._finger_img(str(finger), color, px)
+                            s.blit(img, img.get_rect(midbottom=(rect.centerx + 1, rect.bottom + 1)))
 
             # Glow rising from the keys that are currently pressed (by the hands).
             gh = max(20, fall.h // 6)
@@ -403,6 +455,7 @@ class Visualizer(Transport):
         self._draw_top_bar()
         if self.audio:
             self._draw_wave()
+        self._draw_tooltip()
 
         if not self.song:
             center_text(s, self.fonts, self.fall_rect, "Drop a MIDI file here, or press O to open one")
@@ -448,15 +501,55 @@ class Visualizer(Transport):
         font = self.fonts["normal"]
         blit_shadowed(s, font, left, TEXT, (10, (r.h - font.get_height()) // 2))
 
+        # the controls on the right, each with what it does when hovered
         if self.audio:
-            sound = "audio muted" if self.audio_muted else "synced audio"
-            right = (f"speed {int(round(self.speed * 100))}% (fixed)   view {self.window_secs:.1f}s   "
-                     f"{sound}      Space  ←→  , .  +/-  M  O  H  F   Esc menu")
+            sound = ("audio muted" if self.audio_muted else "synced audio",
+                     "The synced recording - M mutes it")
+            items = [(f"speed {int(round(self.speed * 100))}% (fixed)", "Playback speed, fixed for a synced recording"),
+                     (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"),
+                     sound, None,
+                     ("Space", "Play / pause"), ("←→", f"Skip back / forward {SEEK_STEP:.0f} s"),
+                     (", .", "Nudge the recording against the notes: 10 ms (Shift: 100 ms)"),
+                     ("+/-", "Show more / fewer seconds of notes"), ("M", "Mute / unmute the recording"),
+                     ("O", "Open another MIDI file"), ("H", "Show / hide the hands"),
+                     ("F", "Show / hide the finger numbers"), ("Esc menu", "Back to the main menu")]
         else:
-            right = (f"speed {int(round(self.speed * 100))}%   view {self.window_secs:.1f}s   "
-                     f"{self.midi.status()}      Space  ←→  ↑↓  +/-  M  O  H  F   Esc menu")
+            items = [(f"speed {int(round(self.speed * 100))}%", "Playback speed - ↑ / ↓ to change"),
+                     (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"),
+                     (self.midi.status(), "The MIDI synth - M mutes it"), None,
+                     ("Space", "Play / pause"), ("←→", f"Skip back / forward {SEEK_STEP:.0f} s"),
+                     ("↑↓", "Faster / slower"), ("+/-", "Show more / fewer seconds of notes"),
+                     ("M", "Mute / unmute"), ("O", "Open another MIDI file"), ("H", "Show / hide the hands"),
+                     ("F", "Show / hide the finger numbers"), ("Esc menu", "Back to the main menu")]
         font = self.fonts["small"]
-        blit_shadowed(s, font, right, TEXT_DIM, (r.w - font.size(right)[0] - 10, (r.h - font.get_height()) // 2))
+        y = (r.h - font.get_height()) // 2
+        x = r.w - 10
+        self._top_items = []
+        for item in reversed(items):
+            if item is None:                    # the volume slider
+                vw = self.volume.width()
+                x -= vw
+                self.volume.rect = pygame.Rect(x, 0, vw, r.h)
+                self.volume.draw(s, self.fonts, muted=self.audio_muted if self.audio else self.midi.muted)
+                self._top_items.append((self.volume.rect, "Volume - click, drag or scroll"))
+                x -= 16
+                continue
+            text, tip = item
+            tw = font.size(text)[0]
+            x -= tw
+            blit_shadowed(s, font, text, TEXT_DIM, (x, y))
+            self._top_items.append((pygame.Rect(x - 3, 0, tw + 6, r.h), tip))
+            x -= 12 if len(text) <= 3 else 16
+
+    def _draw_tooltip(self):
+        """What the top bar's control under the mouse does."""
+        mouse = pygame.mouse.get_pos()
+        if self.dragging_bar or self.volume.dragging:
+            return
+        for rect, tip in self._top_items:
+            if rect.collidepoint(mouse):
+                draw_tooltip(self.screen, self.fonts, tip, rect)
+                return
 
 
 # --------------------------------------------------------------------------- #
@@ -606,6 +699,8 @@ class MainMenu:
         ]
         self.changelog_button = Button("What's new", "changelog", font="small")
         self.keys_button = Button("", "keys", font="small")
+        self.settings_button = Button("Settings", "settings", font="small")
+        self.overlay_top = 0
         self.changelog_new = not changelog_seen()       # glows until opened
         self.changelog = None
         self.layout(app.screen.get_size())
@@ -623,6 +718,7 @@ class MainMenu:
         self._active_y = y + 60
         self.changelog_button.rect = pygame.Rect(w - 16 - 110, 16, 110, 32)
         self.keys_button.rect = pygame.Rect(w - 16 - 110 - 10 - 150, 16, 150, 32)
+        self.settings_button.rect = pygame.Rect(self.keys_button.rect.x - 10 - 100, 16, 100, 32)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -646,7 +742,7 @@ class MainMenu:
             if event.key in (pygame.K_h, pygame.K_3):
                 return self._do("pianists")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            for b in self.buttons + [self.changelog_button, self.keys_button]:
+            for b in self.buttons + [self.changelog_button, self.keys_button, self.settings_button]:
                 if b.hit(event.pos):
                     return self._do(b.action)
         return True
@@ -668,6 +764,9 @@ class MainMenu:
             return True
         if action == "quit":
             return False
+        if action == "settings":
+            self.app.settings()
+            return True
         if action == "pianists":
             self.app.studio()
             return True
@@ -718,6 +817,7 @@ class MainMenu:
         self.changelog_button.draw(s, f, mouse)
         self.keys_button.label = "Keys: equal" if key_style() == "equal" else "Keys: realistic"
         self.keys_button.draw(s, f, mouse)
+        self.settings_button.draw(s, f, mouse)
         if self.changelog:
             self.changelog.draw(s)
 
@@ -744,7 +844,11 @@ class App:
         self.screen = screen
         self.fonts = load_fonts()
         set_key_style(pianists.app_setting("keys", "realistic"))
+        set_keyboard_place(pianists.app_setting("keyboard_place"))
+        self.perf_overlay = bool(pianists.app_setting("perf_overlay", False))
+        self._frame_ms = collections.deque(maxlen=PERF_FRAMES)       # the last frames' times, for the overlay
         self.midi = MidiOut(sound)
+        self.midi.set_volume(pianists.app_setting("volume", DEFAULT_VOLUME))
         self.speed = min(SPEED_MAX, max(SPEED_MIN, speed))
         self.last_dir = None
         self._fresh = True
@@ -834,7 +938,9 @@ class App:
             # solved) must not jump the song ahead: the clock only moves on
             # by at most MAX_FRAME_DT per frame, and not at all on the frame
             # right after a new mode (song) was set up.
-            dt = min(clock.tick(FPS) / 1000.0, MAX_FRAME_DT)
+            ms = clock.tick(FPS)
+            self._frame_ms.append(ms)
+            dt = min(ms / 1000.0, MAX_FRAME_DT)
             if self._fresh:
                 dt, self._fresh = 0.0, False
             for event in pygame.event.get():
@@ -845,6 +951,8 @@ class App:
             self.mode.update(dt)
             self.mode.render()
             self.draw_version()
+            if self.perf_overlay:
+                self.draw_perf()
             pygame.display.flip()
             # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
             spare = 1.0 / FPS - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
@@ -856,6 +964,42 @@ class App:
         """The version in the window's bottom-left corner."""
         font = self.fonts["small"]
         blit_shadowed(self.screen, font, VERSION, TEXT_DIM, (6, self.screen.get_height() - font.get_height() - 4))
+
+    def draw_perf(self):
+        """
+        Performance profiling (Settings): the frame rate and a translucent graph
+        of the last PERF_FRAMES frames' times, in the top-left corner - below
+        the mode's top bar (its `overlay_top`). Lines at 60 and 30 fps.
+        """
+        frames = list(self._frame_ms)[1:] or [0]
+        recent = frames[-30:]
+        avg = sum(recent) / len(recent)
+        fps = 1000.0 / avg if avg > 0 else 0.0
+        w, gh = PERF_W, PERF_GRAPH_H
+        font = self.fonts["small"]
+        th = font.get_height()
+        top = getattr(self.mode, "overlay_top", TOP_BAR_H) + 8
+        panel = pygame.Surface((w, th + gh + 14), pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 110))
+        g = pygame.Rect(6, th + 8, w - 12, gh)
+        y_of = lambda ms: g.bottom - min(1.0, ms / PERF_MAX_MS) * g.h
+        for ms, col in ((1000 / 60, (120, 200, 120, 150)), (1000 / 30, (230, 150, 80, 150))):
+            pygame.draw.line(panel, col, (g.x, y_of(ms)), (g.right, y_of(ms)))
+        step = g.w / max(1, PERF_FRAMES - 1)
+        x0 = g.right - step * (len(frames) - 1)
+        pts = [(x0 + i * step, y_of(ms)) for i, ms in enumerate(frames)]
+        if len(pts) > 1:
+            pygame.draw.lines(panel, (*ACCENT, 230), False, pts, 1)
+        for (x, y), ms in zip(pts, frames):
+            if ms > 1000 / 30:                                  # a slow frame stands out
+                pygame.draw.circle(panel, (240, 90, 80, 230), (int(x), int(y)), 2)
+        self.screen.blit(panel, (8, top))
+        blit_shadowed(self.screen, font, f"{fps:.0f} FPS   {avg:.1f} ms   (worst {max(frames):.0f} ms)",
+                      TEXT, (14, top + 4))
+
+    def settings(self):
+        from app_settings import SettingsScreen
+        self._switch(SettingsScreen(self))
 
     def close(self):
         self.mode.leave()

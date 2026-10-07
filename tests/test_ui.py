@@ -257,3 +257,79 @@ def test_pedals_light_up_and_keep_clear_of_the_version(screen):
         assert c[0] > 150 and c[1] > 130 and c[2] < c[1] - 30      # brass
     version_top = screen.get_height() - app.fonts["small"].get_height() - 4    # (App.draw_version)
     assert r.bottom <= version_top
+
+
+def test_keyboard_placement_limits():
+    import common
+    size = (1280, 800)
+    try:
+        default, _ = common.bottom_layout(size)
+        common.set_keyboard_place(0.0)                           # highest: the top of the keys at the centre
+        kb, hand = common.bottom_layout(size)
+        assert kb.y == size[1] // 2 and hand.top == kb.bottom and hand.bottom == size[1]
+        common.set_keyboard_place(1.0)                           # lowest: half a keyboard above the bottom
+        kb, hand = common.bottom_layout(size)
+        assert size[1] - kb.bottom == kb.h // 2 and hand.h == size[1] - kb.bottom
+        common.set_keyboard_place(None)
+        assert common.bottom_layout(size)[0] == default
+    finally:
+        common.set_keyboard_place(None)
+
+
+def test_settings_screen_drags_the_keyboard_and_toggles_profiling(screen):
+    import common
+    import pianist
+    app = app_on(screen)
+    try:
+        app.mode.render()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.mode.settings_button.rect.center))
+        st = app.mode
+        assert type(st).__name__ == "SettingsScreen"
+        st.render()
+        kb, _ = st._kb()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=kb.center))
+        app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(kb.centerx, 0), rel=(0, 0), buttons=(1, 0, 0)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(kb.centerx, 0)))
+        assert common.keyboard_place() == 0.0 and pianist.app_setting("keyboard_place") == 0.0
+        assert st._kb()[0].y == screen.get_height() // 2               # (it can't go higher)
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=st.perf.rect.center))
+        assert app.perf_overlay and pianist.app_setting("perf_overlay") is True
+        for _ in range(5):
+            app._frame_ms.append(16)
+        st.render()
+        app.draw_perf()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=st.reset.rect.center))
+        assert common.keyboard_place() is None
+        key(app, pygame.K_ESCAPE)
+        assert type(app.mode).__name__ == "MainMenu"
+        assert app_on(screen).perf_overlay                             # remembered
+    finally:
+        common.set_keyboard_place(None)
+
+
+def test_volume_and_top_bar_tooltips(screen):
+    import pianist
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    tips = [tip for _, tip in v._top_items]
+    assert any("Volume" in t for t in tips) and any("hands" in t for t in tips) and all(tips)
+    r = v.volume._track()
+    t0 = v.t
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 4, r.centery)))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4, r.centery)))
+    assert abs(app.midi.volume - 0.25) < 0.03 and abs(pianist.app_setting("volume") - 0.25) < 0.03
+    assert v.t == t0 and not v.dragging_bar                          # (the click didn't seek: it's in the top bar)
+    # the finger numbers fit the narrowest notes
+    px = v._finger_size(v.keyboard)
+    narrow = min(w for _, w in v.keyboard.lanes.values())
+    assert v._finger_font(px).size("8")[0] + 3 <= narrow or px == 11
+    # the editor has the same volume
+    app.edit(midi_path("demo_song.mid"))
+    ed = app.mode
+    ed.render()
+    assert abs(ed.volume.value - 0.25) < 0.03
+    r = ed.volume._track()
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.right, r.centery)))
+    assert app.midi.volume == 1.0
