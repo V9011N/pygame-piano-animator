@@ -40,6 +40,21 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     its one step further right "uncapped" (kept as null); default 60 (`common.FPS`, as before). `App.run` ticks
     the clock at the cap (0: no limit); the hands' work ahead in a frame's spare time (`idle`) is budgeted to the
     cap, or to `UNCAPPED_IDLE_HZ` 240 uncapped. `main.fps_cap_value` clamps what's read.
+  - Soundfont ("soundfont", v26.1.19.SNAPSHOT-04): Browse… for a .sf2 / .sf3, or Use default (the system's MIDI
+    synth, `common.MidiOut`). `sf_synth.make_synth(sound, path)` gives `SoundfontOut` - MidiOut's interface
+    (note_on / note_off by hand: RH channel 0, LH 1; control_change; set_volume as CC 7; pedals_up; silence;
+    close; `name`) over TinySoundFont (`tinysoundfont`, bank 0 preset 0 on both channels, played by its own
+    PyAudio thread) - or the system synth with the reason ("not found", "couldn't be played (...)", the package
+    missing), which the row shows ("Now: default - X not found."). `App.set_soundfont` closes the old player and
+    loads the new one behind a progress bar (`run_busy`; at startup too), keeping the volume. The pedals are
+    played in `SoundfontOut`, not left to the soundfont: sustain keeps let-go keys sounding until it lifts,
+    sostenuto keeps the keys down when it went down, soft plays new notes at `SOFT_VELOCITY` 0.7; a key struck
+    again while it rings stops first. Checked with pretty_midi's TimGM6mb.sf2 through `Synth.generate`: the note
+    sounds, the pedal holds it, it stops when the pedal lifts, CC 7 scales it.
+    `PlaybackSetup`'s first choice names it ("Soundfont: X" / "Play the notes with the X soundfont"), else
+    "Default sound" (the system's MIDI synth). The player's top bar shows its name where the synth status was.
+    Requirements: `tinysoundfont` on Windows (PyAudio wheels); elsewhere PortAudio is needed, so it's left out.
+    build.py includes tinysoundfont and pyaudio when installed.
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
     worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
     `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the

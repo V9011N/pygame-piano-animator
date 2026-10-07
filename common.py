@@ -410,6 +410,7 @@ class MidiOut:
         self.port = None
         self.muted = False
         self.volume = DEFAULT_VOLUME             # 0..1, for the synth and a synced recording alike
+        self.path, self.name = None, ""          # (no soundfont: the system's synth - sf_synth.SoundfontOut has one)
         if not enabled:
             return
         try:
@@ -649,12 +650,12 @@ def _tk_root():
     return root
 
 
-def pick_file(title="Open MIDI file", initialdir=None):
-    """Native open dialog; returns '' if cancelled or unavailable."""
+def pick_file(title="Open MIDI file", initialdir=None, filetypes=None):
+    """Native open dialog (MIDI files, or `filetypes`); returns '' if cancelled or unavailable."""
     try:
         from tkinter import filedialog
         root = _tk_root()
-        path = filedialog.askopenfilename(parent=root, title=title, filetypes=_MIDI_TYPES,
+        path = filedialog.askopenfilename(parent=root, title=title, filetypes=filetypes or _MIDI_TYPES,
                                           initialdir=initialdir or None)
         root.destroy()
         return path or ""

@@ -203,8 +203,8 @@ class PlaybackSetup:
         self.page = "sound"
         self.message = ""
         self.speed = 1.0
-        self.default_button = Button("Default sound", "default", font="button", key_hint="1",
-                                     sub="Play the notes through the MIDI synth (speed changeable)")
+        self.default_button = Button("Default sound", "default", font="button", key_hint="1")
+        self._label_sound()
         self.sync_button = Button("Sync an audio file", "sync", font="button", key_hint="2",
                                   sub="Play a recording in time with the notes and hands")
         self.back_button = Button("Back", "back", font="normal", key_hint="Esc")
@@ -213,6 +213,16 @@ class PlaybackSetup:
                              fmt=lambda v: f"{int(round(v * 100))}%", step=0.05,
                              lo_label="25%", hi_label=f"{int(SPEED_MAX * 100)}%")
         self.layout(app.screen.get_size())
+
+    def _label_sound(self):
+        """The first choice names what plays the notes: the soundfont chosen in the Settings, or the default."""
+        name = getattr(self.app.midi, "name", "")
+        if name:
+            self.default_button.label = f"Soundfont: {name}"
+            self.default_button.sub = f"Play the notes with the {name} soundfont (speed changeable)"
+        else:
+            self.default_button.label = "Default sound"
+            self.default_button.sub = "Play the notes through the system's MIDI synth (speed changeable)"
 
     def _set_speed(self, v):
         self.speed = round(v, 2)
@@ -308,6 +318,7 @@ class PlaybackSetup:
         s, f = self.app.screen, self.app.fonts
         w, h = s.get_size()
         s.fill(BG)
+        self._label_sound()
         title = f["title"].render(self.song.title, True, TEXT)
         top = self.default_button.rect.y
         s.blit(title, title.get_rect(midbottom=(w // 2, top - 56)))

@@ -518,7 +518,8 @@ class Visualizer(Transport):
         else:
             items = [(f"speed {int(round(self.speed * 100))}%", "Playback speed - ↑ / ↓ to change"),
                      (f"view {self.window_secs:.1f}s", "Seconds of notes shown falling - + / - to change"),
-                     (self.midi.status(), "The MIDI synth - M mutes it"), None,
+                     (self.midi.status(), (f"The {self.midi.name} soundfont" if self.midi.name else
+                                           "The system's MIDI synth") + " - M mutes it"), None,
                      ("Space", "Play / pause"), ("←→", f"Skip back / forward {SEEK_STEP:.0f} s"),
                      ("↑↓", "Faster / slower"), ("+/-", "Show more / fewer seconds of notes"),
                      ("M", "Mute / unmute"), ("O", "Open another MIDI file"), ("H", "Show / hide the hands"),
@@ -851,7 +852,8 @@ class App:
         self.perf_overlay = bool(pianists.app_setting("perf_overlay", False))
         self.fps_cap = fps_cap_value(pianists.app_setting("fps_cap", FPS))   # None: uncapped
         self._frame_ms = collections.deque(maxlen=PERF_FRAMES)       # the last frames' times, for the overlay
-        self.midi = MidiOut(sound)
+        self._sound = sound
+        self.midi, self.soundfont_problem = self._make_synth(pianists.app_setting("soundfont"))
         self.midi.set_volume(pianists.app_setting("volume", DEFAULT_VOLUME))
         self.speed = min(SPEED_MAX, max(SPEED_MIN, speed))
         self.last_dir = None
@@ -1000,6 +1002,31 @@ class App:
         self.screen.blit(panel, (8, top))
         blit_shadowed(self.screen, font, f"{fps:.0f} FPS   {avg:.1f} ms   (worst {max(frames):.0f} ms)",
                       TEXT, (14, top + 4))
+
+    def _make_synth(self, path):
+        """(player, problem) for the soundfont at `path` (sf_synth.make_synth), loaded behind a progress bar."""
+        from sf_synth import make_synth, soundfont_name
+        if not (self._sound and path and os.path.isfile(path)):
+            return make_synth(self._sound, path)
+        return run_busy(self.screen, self.fonts, f"Loading the soundfont {soundfont_name(path)}…",
+                        lambda: make_synth(self._sound, path))
+
+    def set_soundfont(self, path):
+        """
+        Play with the soundfont at `path` from now on, or the system's synth
+        (None); kept for next time. Returns the problem if it can't be played
+        ("" if fine) - the system's synth plays then.
+        """
+        volume = self.midi.volume
+        self.midi.close()
+        self.midi, self.soundfont_problem = self._make_synth(path)
+        self.midi.set_volume(volume)
+        pianists.set_app_setting("soundfont", path)
+        return self.soundfont_problem
+
+    def sound_label(self):
+        """What the notes are played with, for buttons and the Settings: the soundfont's name, or the default."""
+        return f"the {self.midi.name} soundfont" if self.midi.name else "the default system synth"
 
     def set_fps_cap(self, cap):
         """The frame rate cap (Settings): FPS_CAP_MIN..FPS_CAP_MAX, or None for uncapped; kept for next time."""

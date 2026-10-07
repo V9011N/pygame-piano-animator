@@ -48,8 +48,9 @@ From The Cuphead Show with White Gloves
   by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
   the MIDI file with the fingering embedded (or PIG text).
 - **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
-  cap the frame rate (24-240 fps, or uncapped), and show a performance overlay (frame rate and
-  frame times). A volume control sits in the player's and the editor's top bars;
+  cap the frame rate (24-240 fps, or uncapped), choose a soundfont (.sf2 / .sf3) to play the notes
+  with instead of the system's MIDI synth, and show a performance overlay (frame rate and frame
+  times). A volume control sits in the player's and the editor's top bars;
   hover over the player's controls to see what each does.
 - **Pianists & hands**: create pianists with their own hand anatomy (19 bones), technique and
   fingering preferences, and a skin (cartoon, white gloves, robot or skeleton).

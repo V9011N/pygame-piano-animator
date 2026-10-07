@@ -12,18 +12,25 @@ app_settings.py - The Settings screen (main menu > Settings).
     right (App.set_fps_cap; "fps_cap", none = uncapped).
   * Performance profiling: the frame rate and a translucent graph of the
     frame times in the top-left corner (App.draw_perf; "perf_overlay").
+  * Soundfont: browse for a .sf2 / .sf3 file to play the notes with
+    (sf_synth; App.set_soundfont; "soundfont"), or the default - the system's
+    MIDI synth, also used when the chosen file can't be found or played.
 """
+import os
+
 import pygame
 
 import pianist as pianists
+from sf_synth import SF_TYPES, soundfont_name
 from common import (ACCENT, BAR_BG, BG, FELT_H, KEY_STYLES, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H,
-                    Button, Keyboard, Slider, blit_shadowed, bottom_layout, draw_felt, draw_hand_area,
+                    Button, Keyboard, Slider, blit_shadowed, pick_file, bottom_layout, draw_felt, draw_hand_area,
                     key_style, keyboard_place, keyboard_y_range, mix, set_key_style, set_keyboard_place)
 from midi_loader import LEFT, RIGHT
 
 TO_MENU = "menu"
 FPS_CAP_MIN, FPS_CAP_MAX = 24, 240      # (as main.py's: the slider's top step past FPS_CAP_MAX is "uncapped")
-ROW_H = 66                              # each setting's row in the panel
+ROW_H = 60                              # each setting's row in the panel
+ROWS = 5
 
 
 class SettingsScreen:
@@ -34,6 +41,8 @@ class SettingsScreen:
         self.reset = Button("Reset to default", "reset", font="small")
         self.perf = Button("", "perf", font="small")
         self.keys = Button("", "keys", font="small")
+        self.sf_browse = Button("Browse…", "sf_browse", font="small")
+        self.sf_default = Button("Use default", "sf_default", font="small")
         cap = app.fps_cap
         self.fps = Slider("", FPS_CAP_MIN, FPS_CAP_MAX + 1, FPS_CAP_MAX + 1 if cap is None else cap,
                           self._set_cap, fmt=self._cap_text, step=1, lo_label=str(FPS_CAP_MIN),
@@ -48,7 +57,7 @@ class SettingsScreen:
         self.done.rect = pygame.Rect(w - 10 - 90, 5, 90, TOP_BAR_H - 10)
         pw = min(820, w - 40)
         # the panel sits above the highest the keys can go (the window's centre)
-        self.panel = pygame.Rect((w - pw) // 2, TOP_BAR_H + 16, pw, 4 * ROW_H + 24)
+        self.panel = pygame.Rect((w - pw) // 2, TOP_BAR_H + 16, pw, ROWS * ROW_H + 20)
         x, y = self.panel.x + 20, self.panel.y + 12
         right = self.panel.right - 20
         self.reset.rect = pygame.Rect(right - 150, y + 6, 150, 30)
@@ -56,7 +65,27 @@ class SettingsScreen:
         self.fps.layout(pygame.Rect(right - 240, y + 2 * ROW_H - 6, 248, 52))
         self._text_w = right - 260 - x              # (descriptions stop short of the controls)
         self.perf.rect = pygame.Rect(right - 150, y + 3 * ROW_H + 6, 150, 30)
+        self.sf_default.rect = pygame.Rect(right - 110, y + 4 * ROW_H + 6, 110, 30)
+        self.sf_browse.rect = pygame.Rect(right - 110 - 8 - 110, y + 4 * ROW_H + 6, 110, 30)
         self._rows = (x, y)
+
+    # ----- the soundfont ---------------------------------------------------------
+    def sound_text(self):
+        """What plays the notes now - and, if the chosen soundfont can't be used, why not."""
+        path = pianists.app_setting("soundfont")
+        if self.app.midi.name:
+            return f"Now: {self.app.midi.name}."
+        problem = getattr(self.app, "soundfont_problem", "")
+        if path and problem:
+            return f"Now: default - {soundfont_name(path)} {problem}."
+        return "Now: default (the system's MIDI synth)."
+
+    def _browse_soundfont(self):
+        path = pianists.app_setting("soundfont")
+        start = os.path.dirname(path) if path else None
+        chosen = pick_file("Choose a soundfont", initialdir=start, filetypes=SF_TYPES)
+        if chosen:
+            self.app.set_soundfont(chosen)
 
     # ----- the frame rate cap ----------------------------------------------------
     @staticmethod
@@ -92,6 +121,12 @@ class SettingsScreen:
             if self.reset.hit(event.pos):
                 set_keyboard_place(None)
                 pianists.set_app_setting("keyboard_place", None)
+                return True
+            if self.sf_browse.hit(event.pos):
+                self._browse_soundfont()
+                return True
+            if self.sf_default.hit(event.pos):
+                self.app.set_soundfont(None)
                 return True
             if self.keys.hit(event.pos):
                 style = KEY_STYLES[(KEY_STYLES.index(key_style()) + 1) % len(KEY_STYLES)]
@@ -157,7 +192,8 @@ class SettingsScreen:
         rows = [("Keyboard position", f"Click and hold the keyboard, then drag it up or down. Now: {where}."),
                 ("Keyboard type", "Realistic keys, or equal keys: every key, black or white, the same width."),
                 ("Frame rate cap", "The most frames a second (all the way right: uncapped)."),
-                ("Performance profiling", "Frame rate and a frame-time graph in the top-left corner.")]
+                ("Performance profiling", "Frame rate and a frame-time graph in the top-left corner."),
+                ("Soundfont", self.sound_text())]
         for i, (title, desc) in enumerate(rows):
             ry = y + i * ROW_H
             if i:
@@ -170,7 +206,8 @@ class SettingsScreen:
         self.keys.label = "Equal keys" if key_style() == "equal" else "Realistic keys"
         self.perf.label = "Shown" if self.app.perf_overlay else "Hidden"
         self.perf.active = self.app.perf_overlay
-        for b in (self.reset, self.keys, self.perf):
+        self.sf_default.enabled = bool(self.app.midi.name or pianists.app_setting("soundfont"))
+        for b in (self.reset, self.keys, self.perf, self.sf_browse, self.sf_default):
             b.draw(s, f, mouse)
         self.fps.draw(s, f)
 

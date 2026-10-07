@@ -51,6 +51,11 @@ def have_tkinter():
         return False
 
 
+def have_module(name):
+    import importlib.util
+    return importlib.util.find_spec(name) is not None
+
+
 def _real_library(interp, path, dest):
     """
     A Tcl/Tk script library as a folder: `path` itself, or - built into the
@@ -134,6 +139,10 @@ def command(console=False, tcl_tk=()):
         "--company-name=Hand-thesia",
         "--copyright=Hand-thesia",
     ]
+    if have_module("tinysoundfont"):                                   # soundfonts (sf_synth.py)
+        cmd.append("--include-package=tinysoundfont")
+        if have_module("pyaudio"):
+            cmd.append("--include-module=pyaudio")                     # (imported only when it starts playing)
     if have_tkinter():
         cmd.append("--enable-plugin=tk-inter")                         # the file dialogs
         cmd += list(tcl_tk)
