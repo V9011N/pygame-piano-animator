@@ -43,18 +43,16 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - Soundfont ("soundfont", v26.1.19.SNAPSHOT-04): Browse… for a .sf2 / .sf3, or Use default (the system's MIDI
     synth, `common.MidiOut`). `sf_synth.make_synth(sound, path)` gives `SoundfontOut` - MidiOut's interface
     (note_on / note_off by hand: RH channel 0, LH 1; control_change; set_volume as CC 7; pedals_up; silence;
-    close; `name`) over TinySoundFont (`tinysoundfont`, bank 0 preset 0 on both channels, at the mixer's rate) - or the system synth with the reason ("not found", "couldn't be played (...)", the package
-    missing), which the row shows ("Now: default - X not found."). `App.set_soundfont` closes the old player and
+    close; `name`) over the built-in player `sf2.Synth` (bank 0 preset 0 on both channels, at the mixer's rate)
+    - or the system synth with the reason ("not found", "couldn't be played (...)"), which the row shows ("Now: default - X not found."). `App.set_soundfont` closes the old player and
     loads the new one behind a progress bar (`run_busy`; at startup too), keeping the volume. The pedals are
     played in `SoundfontOut`, not left to the soundfont: sustain keeps let-go keys sounding until it lifts,
     sostenuto keeps the keys down when it went down, soft plays new notes at `SOFT_VELOCITY` 0.7; a key struck
-    again while it rings stops first. Checked with pretty_midi's TimGM6mb.sf2 through `Synth.generate`: the note
-    sounds, the pedal holds it, it stops when the pedal lifts, CC 7 scales it.
+    again while it rings stops first.
     `PlaybackSetup`'s first choice names it ("Soundfont: X" / "Play the notes with the X soundfont"), else
     "Default sound" (the system's MIDI synth). The player's top bar shows its name where the synth status was.
-    Output (v26.1.19.SNAPSHOT-05): not tinysoundfont's `start()` (PyAudio, which has no wheel for every Python -
-    3.14 on Windows - and needs PortAudio to build) but `sf_synth.MixerStream`: a daemon thread keeps one
-    `CHUNK_FRAMES` 512 chunk (12 ms) queued behind the playing one on mixer channel 0 (`set_reserved(1)`),
+    Output (v26.1.19.SNAPSHOT-05): `sf_synth.MixerStream`, a daemon thread that keeps one `CHUNK_FRAMES` 768
+    chunk (17 ms) queued behind the playing one on mixer channel 0 (`set_reserved(1)`),
     from `Synth.generate` converted to the mixer's format (size 8/-8/16/-16/32, mono/stereo/more) and
     resampled if the mixer was reopened at another rate (a synced recording's). An `RLock` keeps note and
     pedal calls off the synth while a chunk is generated. `close()` stops the thread and the channel.
@@ -62,8 +60,26 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     mixer (a synced recording at its own rate, e.g. a 48 kHz MP3): touching a channel while the mixer closes
     under it was a segfault - the program vanished with nothing logged. `audio_sync.mixer_opened` counts the
     reopenings, so the thread re-takes its channel even when the mixer comes back in the same format.
-    Requirements: not in requirements.txt (pip would build PyAudio); `pip install --no-deps tinysoundfont`
-    (README). build.py includes tinysoundfont when installed and doesn't follow its pyaudio import.
+    768 frames: playing the densest 15 s of a ballade with the sustain pedal held throughout (up to 128 voices)
+    while the main thread ran Python 10 ms in every 16, 512-frame chunks ran dry 7-9 times; 768 none.
+  - The built-in player (`sf2.py`, v26.1.19.SNAPSHOT-07): TinySoundFont (the package) has Windows wheels only up
+    to Python 3.12 - on 3.13+ pip needs a C++ compiler - and its own output needs PyAudio, so the app plays
+    soundfonts itself, in numpy. `Synth.sfload` reads the RIFF chunks (pdta: phdr/pbag/pgen, inst/ibag/igen,
+    shdr) and keeps the samples on disk (`np.memmap`, viewed as a plain array - memmap indexing is slow);
+    a preset's regions are put together when it is first chosen (`regions`): instrument global zone, then the
+    zone, then the preset's generators added (key/velocity ranges intersected), as SoundFont 2.04 says. .sf3
+    samples (Ogg Vorbis) are decoded then, only the chosen preset's, through pygame's mixer; the decoded length
+    over the stream's own (the last Ogg page's granule position) gives the true rate (SDL's conversion is a
+    little off) and scales the loop points (sf3 counts them from the sample's start). FluidR3Mono's piano
+    (164 zones, 144 samples): 1.8 s. A `Voice` resamples by linear interpolation (step from root key, scale
+    tuning, coarse/fine tune and the sample's pitch correction), loops (modes 1 and 3), and follows the volume
+    envelope: delay, attack (linear amplitude), hold and decay key-scaled (`keynumTo...`), decay and release a
+    steady fall of `ENV_RANGE_DB` 96 dB per decay/release time (as FluidSynth), release at least
+    `MIN_RELEASE_S` 8 ms; over at 96 dB down or the sample's end. Gain: initialAttenuation (cB), velocity
+    linear, CC 7 squared (General MIDI; default 100), constant-power pan. Past `MAX_VOICES` 128 the quietest
+    (released first) go. Not played: modulation envelope, LFOs, filter, modulators, reverb/chorus.
+    Against TinySoundFont on TimGM6mb.sf2 (keys 36-84, velocities 30-120): the same pitch to 0.1 Hz, level
+    within 0.7 dB, release a little faster. 79 voices: 3.7 ms a 512-frame chunk.
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
     worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
     `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the

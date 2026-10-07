@@ -5,7 +5,7 @@ from midi_loader import LEFT, RIGHT, Note
 
 
 class FakeSynth:
-    """Records what tinysoundfont.Synth would be asked to do."""
+    """Records what sf2.Synth would be asked to do."""
 
     def __init__(self):
         self.on, self.off, self.cc = [], [], []
@@ -170,7 +170,7 @@ def test_reopening_the_mixer_for_a_recording_doesnt_crash_the_soundfont():
     """A synced recording reopens the mixer at its own rate while the soundfont's thread feeds it."""
     import threading
     from audio_sync import ensure_mixer
-    from sf_synth import MixerStream
+    from sf_synth import CHUNK_FRAMES, MixerStream
     pygame.mixer.quit()
     ensure_mixer(44100)
     out = MixerStream(ToneSynth(), threading.RLock(), 44100)
@@ -184,7 +184,121 @@ def test_reopening_the_mixer_for_a_recording_doesnt_crash_the_soundfont():
                 break
             pygame.time.wait(10)
         assert len(out.synth.asked) > n and out.channel is not None     # still feeding the reopened mixer
-        assert out.synth.asked[-1] == round(512 * 44100 / 48000)        # (resampled to its rate)
+        assert out.synth.asked[-1] == round(CHUNK_FRAMES * 44100 / 48000)        # (resampled to its rate)
     finally:
         out.stop()
+        pygame.mixer.quit()
+
+
+# ----- the built-in player (sf2.py) ------------------------------------------------
+def tiny_sf2(path, preset_gens=(), inst_gens=(), loop=True, rate=22050, root=69):
+    """A SoundFont with one preset (0:0) of one instrument zone: a sine at `root`, looped over whole periods."""
+    import struct
+    import numpy as np
+    period = rate / 440.0 * 2 ** ((69 - root) / 12)
+    n = int(round(period * 50))
+    wave = (np.sin(2 * np.pi * np.arange(n + 46) / period) * 16000).astype("<i2")
+    smpl = wave.tobytes()
+    gens = lambda gs: b"".join(struct.pack("<Hh", op, v) if not isinstance(v, tuple) else
+                               struct.pack("<HBB", op, *v) for op, v in gs)
+
+    def chunk(cid, data):
+        return cid + struct.pack("<I", len(data)) + data + (b"\0" if len(data) & 1 else b"")
+
+    pg = gens(list(preset_gens) + [(41, 0)])
+    ig = gens(list(inst_gens) + [(54, 1 if loop else 0), (53, 0)])
+    n_pg, n_ig = len(pg) // 4, len(ig) // 4
+    pdta = b"pdta" + b"".join([
+        chunk(b"phdr", struct.pack("<20sHHHIII", b"Tone", 0, 0, 0, 0, 0, 0) +
+              struct.pack("<20sHHHIII", b"EOP", 0, 0, 1, 0, 0, 0)),
+        chunk(b"pbag", struct.pack("<HH", 0, 0) + struct.pack("<HH", n_pg, 0)),
+        chunk(b"pmod", b"\0" * 10),
+        chunk(b"pgen", pg + b"\0" * 4),
+        chunk(b"inst", struct.pack("<20sH", b"Tone", 0) + struct.pack("<20sH", b"EOI", 1)),
+        chunk(b"ibag", struct.pack("<HH", 0, 0) + struct.pack("<HH", n_ig, 0)),
+        chunk(b"imod", b"\0" * 10),
+        chunk(b"igen", ig + b"\0" * 4),
+        chunk(b"shdr", struct.pack("<20sIIIIIBbHH", b"sine", 0, n, 0, n, rate, root, 0, 0, 1) +
+              struct.pack("<20sIIIIIBbHH", b"EOS", 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+    ])
+    body = b"sfbk" + chunk(b"LIST", b"INFO" + chunk(b"ifil", struct.pack("<HH", 2, 1))) + \
+        chunk(b"LIST", b"sdta" + chunk(b"smpl", smpl)) + chunk(b"LIST", pdta)
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    return str(path)
+
+
+def render(synth, key, vel, held, after=0.0):
+    import numpy as np
+    synth.noteon(0, key, vel)
+    a = np.frombuffer(bytes(synth.generate(int(synth.rate * held))), np.float32).reshape(-1, 2)
+    synth.noteoff(0, key)
+    b = np.frombuffer(bytes(synth.generate(int(synth.rate * after) or 1)), np.float32).reshape(-1, 2)
+    return a, b
+
+
+def peak_hz(x, rate):
+    import numpy as np
+    x = x[:16384]
+    f = np.abs(np.fft.rfft(x * np.hanning(len(x)), 1 << 18))
+    return np.argmax(f) * rate / (1 << 18)
+
+
+def test_the_built_in_player_plays_a_soundfont_in_tune_with_its_envelope(tmp_path):
+    import numpy as np
+    from sf2 import Synth
+    # a held release of 0.5 s (timecents 1200*log2(0.5) = -1200), sustain 6 dB down, decay 1 s, preset attenuation 6 dB
+    path = tiny_sf2(tmp_path / "t.sf2", preset_gens=[(48, 60)],
+                    inst_gens=[(36, 0), (37, 60), (38, -1200), (43, (40, 90))])
+    s = Synth(samplerate=44100)
+    s.sfload(path)
+    s.program_select(0, 0, 0, 0)
+    s.control_change(0, 7, 127)                                        # (the default is General MIDI's 100)
+    held, rel = render(s, 81, 127, 2.0, 1.0)
+    assert abs(peak_hz(held[:, 0], 44100) - 880.0) < 1.0              # an octave above the sample's root, looped
+    level = lambda a: float(np.sqrt((a[:, 0] ** 2).mean()))
+    full = 16000 / 32768 / np.sqrt(2) * np.cos(np.pi / 4)               # the sine's RMS, panned centre
+    db = lambda a: 20 * np.log10(level(a) / full)
+    assert abs(db(held[int(1.5 * 44100):]) - (-6 - 6)) < 0.5            # attenuation 6 dB + sustain 6 dB
+    # the release: 96 dB in 0.5 s, so 19.2 dB down 0.1 s after the key is let go; over by 0.5 s
+    assert abs(db(rel[4000:4820]) - (-12 - 19.2)) < 1.5
+    assert level(rel[int(0.6 * 44100):]) < 1e-5 and not s.voices            # (past -96 dB: dropped)
+    # outside the key range: nothing
+    a, _ = render(s, 30, 100, 0.1)
+    assert level(a) == 0.0
+    # velocity and the channel volume (CC 7, squared)
+    a, _ = render(s, 69, 127, 1.6)
+    s.control_change(0, 7, 64)
+    b, _ = render(s, 69, 127, 1.6)
+    assert abs(level(b[-4410:]) / level(a[-4410:]) - (64 / 127) ** 2) < 0.01
+    s.control_change(0, 7, 127)
+    c, _ = render(s, 69, 64, 1.6)
+    assert abs(level(c[-4410:]) / level(a[-4410:]) - 64 / 127) < 0.01
+
+
+def test_an_unlooped_sample_ends_and_a_bad_file_is_refused(tmp_path):
+    import pytest
+    from sf2 import SoundFontError, Synth
+    s = Synth(samplerate=22050)
+    s.sfload(tiny_sf2(tmp_path / "t.sf2", loop=False))
+    s.program_select(0, 0, 0, 0)
+    render(s, 69, 100, 0.2)
+    assert not s.voices                                                 # (50 periods at 440 Hz: 0.11 s)
+    bad = tmp_path / "bad.sf2"
+    bad.write_bytes(b"RIFF\0\0\0\0WAVEfmt ")
+    with pytest.raises(SoundFontError):
+        Synth().sfload(str(bad))
+
+
+def test_the_soundfont_player_plays_through_the_built_in_synth(tmp_path):
+    """make_synth with a real file: the built-in player, no package needed."""
+    from sf2 import Synth
+    from sf_synth import SoundfontOut, make_synth
+    path = tiny_sf2(tmp_path / "Tone.sf2")
+    out, problem = make_synth(True, path)
+    try:
+        assert isinstance(out, SoundfontOut) and problem == "" and isinstance(out.synth, Synth)
+        out.note_on(Note(69, 0, 1, 100, 0, RIGHT))
+        assert len(out.synth.voices) == 1
+    finally:
+        out.close()
         pygame.mixer.quit()

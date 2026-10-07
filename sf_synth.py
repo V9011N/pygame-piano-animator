@@ -4,12 +4,10 @@ sf_synth.py - Playing the notes with a SoundFont (.sf2 / .sf3) the user chose.
 The default sound is the system's MIDI synth (common.MidiOut). With a
 soundfont chosen in the Settings, `SoundfontOut` plays instead: the same
 interface as MidiOut (note_on / note_off by the note's hand, pedals, volume,
-silence), backed by TinySoundFont (the `tinysoundfont` package). Its sound
-goes out through pygame's mixer (`MixerStream`): a thread keeps a short chunk
-of it queued on a mixer channel of its own. (Not tinysoundfont's own player,
-which needs PyAudio - and PyAudio has no ready-built package for every
-Python, Python 3.14 on Windows among them. Install tinysoundfont with
-`pip install --no-deps tinysoundfont`, so pip doesn't try to build PyAudio.)
+silence), played by the app's own soundfont player (sf2.Synth, numpy: no
+compiled package to install, so it works on any Python). Its sound goes out
+through pygame's mixer (`MixerStream`): a thread keeps a short chunk of it
+queued on a mixer channel of its own.
 
 The pedals are played here rather than left to the synth, so every soundfont
 gets them alike: the sustain pedal keeps a let-go key sounding until it
@@ -30,8 +28,7 @@ from midi_loader import LEFT
 SUSTAIN, SOSTENUTO, SOFT, VOLUME = 64, 66, 67, 7
 SOFT_VELOCITY = 0.7          # the soft pedal plays new notes this much softer
 SF_TYPES = [("SoundFont files", "*.sf2 *.sf3"), ("All files", "*.*")]
-CHUNK_FRAMES = 512           # the mixer is fed this much at a time (12 ms at 44.1 kHz), one chunk queued ahead
-INSTALL_HINT = "pip install --no-deps tinysoundfont"
+CHUNK_FRAMES = 768           # the mixer is fed this much at a time (17 ms at 44.1 kHz), one chunk queued ahead
 
 
 class MixerStream:
@@ -134,7 +131,7 @@ def soundfont_name(path):
 
 class SoundfontOut:
     def __init__(self, path, synth=None, start=True):
-        """Load `path` and start playing; `synth` is a stand-in for tinysoundfont.Synth (tests)."""
+        """Load `path` and start playing; `synth` is a stand-in for sf2.Synth (tests)."""
         self.path = path
         self.name = soundfont_name(path)
         self.muted = False
@@ -148,8 +145,8 @@ class SoundfontOut:
             ensure_mixer()
             rate = pygame.mixer.get_init()[0]
         if synth is None:
-            import tinysoundfont
-            synth = tinysoundfont.Synth(samplerate=rate)
+            from sf2 import Synth
+            synth = Synth(samplerate=rate)
         self.synth = synth
         sfid = synth.sfload(path)
         for ch in (0, 1):
@@ -278,8 +275,6 @@ def make_synth(sound, path):
         return MidiOut(sound), "not found"
     try:
         return SoundfontOut(path), ""
-    except ImportError:
-        return MidiOut(sound), f"needs the tinysoundfont package ({INSTALL_HINT})"
     except Exception as exc:
         print(f"Couldn't play the soundfont {path} ({exc})")
         return MidiOut(sound), f"couldn't be played ({exc})"

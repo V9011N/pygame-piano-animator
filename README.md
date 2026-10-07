@@ -73,14 +73,6 @@ python main.py song.mid          # play a file straight away
 python main.py song.mid --edit   # open it in the fingering editor
 ```
 
-To play the notes with a soundfont (.sf2 / .sf3, chosen in Settings), also install TinySoundFont
-without its dependencies - its sound goes out through pygame's mixer, so it doesn't need PyAudio,
-which pip would otherwise try (and on some Pythons fail) to build:
-
-```bash
-pip install --no-deps tinysoundfont
-```
-
 Switching an existing install from `pygame` to `pygame-ce` (both install as `import pygame`, so
 remove the old one first): `pip uninstall -y pygame` then `pip install -r requirements.txt`.
 
