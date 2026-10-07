@@ -26,6 +26,8 @@ Debussy Arabesque with Human Hands
 
 From The Cuphead Show with White Gloves
 
+### Like what you see and want to help with further development? Join the Discord: https://discord.gg/HDRX89mQ9 
+
 ## Features
 
 - **Falling-notes player** with a full 88-key keyboard, pedal support and sound through your
