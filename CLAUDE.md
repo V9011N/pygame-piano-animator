@@ -37,7 +37,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | File | Role |
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock, performance overlay, `open_recent`), `MainMenu` (+ `RecentView`), `Visualizer` (falling notes) |
-| `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), keyboard type, frame rate cap (`App.set_fps_cap`), performance overlay, soundfont (`App.set_soundfont`) |
+| `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), keyboard type, frame rate cap (`App.set_fps_cap`), performance overlay, soundfont (`App.set_soundfont`), font (`App.set_font`, `FontPicker`) |
 | `sf_synth.py` | A chosen soundfont: `SoundfontOut` (MidiOut's interface, the pedals played here) driving `sf2.Synth` in a process of its own (`_player_process`, `RemoteSynth` over a pipe), `MixerStream` (its sound through pygame's mixer), `make_synth` (falls back to the system synth) |
 | `sf2.py` | The built-in SoundFont player (.sf2 / .sf3) in numpy: zones, loops, volume envelope; no compiled package |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
@@ -100,7 +100,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   which imports `main.py` again: keep `main.py`'s top level free of side effects (everything under
   `if __name__ == "__main__":`).
 - Fonts: always `common.ui_font(size, bold)` (or the `fonts` dict from `load_fonts`), never
-  `pygame.font.SysFont` - the bundled typeface (assets/fonts, OFL) looks the same on every system.
+  `pygame.font.SysFont` - the bundled typeface (assets/fonts, OFL) looks the same on every system, unless the
+  user chose another (Settings > Font, `common.set_font_choice`). Text must fit any font: shorten with `fit_text`.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

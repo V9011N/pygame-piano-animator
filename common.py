@@ -72,14 +72,97 @@ def fmt_time(seconds, frac=False):
 # The app's typeface, bundled (assets/fonts, SIL Open Font License): the same on every computer. Fonts
 # looked up by name (pygame.font.SysFont) came out differently from one system to the next - another
 # face, or an italic one where a bold was asked for. Only if the files are missing is the system asked.
+# The user can choose another (Settings > Font): one installed on the computer, or a font file.
 FONT_FILES = {False: "SourceSansPro-Regular.ttf", True: "SourceSansPro-Bold.ttf"}
 FONT_SCALE = 1.05            # (Source Sans runs a little smaller than Segoe UI at the same size)
+DEFAULT_FONT_NAME = "Source Sans Pro"
+FONT_TYPES = [("Font files", "*.ttf *.otf *.ttc"), ("All files", "*.*")]
 _FALLBACK_FACE = "segoeui,arial,helvetica"
 _ui_fonts = {}
+_font_choice = None          # None: the bundled typeface; {"system": name} or {"file": path}
+_font_paths = None           # (regular file, bold file or None - made bold by pygame -, scale) for the choice
+
+
+def font_files(choice):
+    """
+    (regular path, bold path or None, scale) for a font choice, or raise
+    FileNotFoundError: the bundled typeface (None), an installed font by its
+    name ({"system": name}, as pygame.font.get_fonts() lists them) or a font
+    file ({"file": path}). Without a bold face of its own, pygame makes one.
+    """
+    from paths import resource
+    if not choice:
+        return resource("assets", "fonts", FONT_FILES[False]), resource("assets", "fonts", FONT_FILES[True]), FONT_SCALE
+    if choice.get("file"):
+        path = choice["file"]
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+        return path, None, 1.0
+    name = choice.get("system") or ""
+    regular = pygame.font.match_font(name)
+    if not regular:
+        raise FileNotFoundError(name)
+    bold = pygame.font.match_font(name, bold=True)
+    if bold and ("italic" in os.path.basename(bold).lower() or bold == regular):
+        bold = None                              # (not a true bold face: made bold from the regular)
+    return regular, bold, 1.0
+
+
+def has_letters(font, text="Aaegmors1"):
+    """
+    Can `font` draw ordinary letters and digits? Not a symbol or emoji font:
+    each glyph there, has ink, and they aren't all one shape (a font of boxes).
+    """
+    try:
+        if not all(m is not None and m[1] > m[0] for m in font.metrics(text)):
+            return False
+        shapes = {pygame.image.tobytes(font.render(ch, False, (255, 255, 255), (0, 0, 0)), "RGB") for ch in text}
+        return len(shapes) >= len(text) - 1
+    except (pygame.error, TypeError, AttributeError):
+        return False
+
+
+def font_choice_name(choice):
+    """A font choice's name to show."""
+    if not choice:
+        return DEFAULT_FONT_NAME
+    if choice.get("file"):
+        return os.path.splitext(os.path.basename(choice["file"]))[0]
+    return choice.get("system") or DEFAULT_FONT_NAME
+
+
+def set_font_choice(choice):
+    """
+    Use `choice` (see font_files) for every font from now on; "" if fine, or
+    why not (the bundled typeface is used then). ui_font's cache starts over:
+    the caller reloads its fonts (load_fonts).
+    """
+    global _font_choice, _font_paths
+    problem = ""
+    try:
+        if not pygame.font.get_init():
+            pygame.font.init()
+        paths = font_files(choice)
+        font = pygame.font.Font(paths[0], 12)
+        if all(m is None for m in font.metrics("Aa1")):
+            raise pygame.error("not a font")             # (pygame opens any file; it has no glyphs at all)
+        if not has_letters(font):
+            raise ValueError("no letters")
+    except (OSError, pygame.error, AttributeError, TypeError, ValueError) as exc:
+        problem = ("not found" if isinstance(exc, FileNotFoundError) else
+                   "has no letters" if isinstance(exc, ValueError) else "couldn't be loaded")
+        choice, paths = None, None
+    _font_choice, _font_paths = (choice or None), paths
+    _ui_fonts.clear()
+    return problem
+
+
+def font_choice():
+    return _font_choice
 
 
 def ui_font(size, bold=False):
-    """The app's typeface at `size` (as a Segoe UI size), regular or bold; cached."""
+    """The chosen typeface (the bundled one by default) at `size` (as a Segoe UI size), regular or bold; cached."""
     key = (size, bool(bold))
     font = _ui_fonts.get(key)
     if font is None:
@@ -87,10 +170,11 @@ def ui_font(size, bold=False):
             # a font kept past pygame.quit() crashes when used: forget them all then (pygame calls a quit
             # function once, so it's registered again each time the cache starts over)
             pygame.register_quit(_ui_fonts.clear)
-        from paths import resource
         try:
-            font = pygame.font.Font(resource("assets", "fonts", FONT_FILES[bool(bold)]),
-                                    max(1, round(size * FONT_SCALE)))
+            regular, bold_file, scale = _font_paths or font_files(None)
+            font = pygame.font.Font(bold_file if bold and bold_file else regular, max(1, round(size * scale)))
+            if bold and not bold_file:
+                font.set_bold(True)
         except (OSError, FileNotFoundError, pygame.error):
             font = pygame.font.SysFont(_FALLBACK_FACE, size, bold=bold)
         _ui_fonts[key] = font
@@ -770,6 +854,15 @@ def default_export_name(path):
 # --------------------------------------------------------------------------- #
 # Small widgets
 # --------------------------------------------------------------------------- #
+def fit_text(font, text, width):
+    """`text`, shortened with an ellipsis if it's wider than `width` in `font` (any font the user chooses)."""
+    if width <= 0 or font.size(text)[0] <= width:
+        return text
+    while text and font.size(text + "…")[0] > width:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
 class Button:
     def __init__(self, label, action, font="normal", sub=None, key_hint=None):
         self.label, self.action, self.font, self.sub, self.key_hint = label, action, font, sub, key_hint
@@ -790,9 +883,10 @@ class Button:
         pygame.draw.rect(surf, base, self.rect, border_radius=8)
         pygame.draw.rect(surf, mix(base, (255, 255, 255), 0.18), self.rect, 1, border_radius=8)
         color = TEXT if self.enabled else TEXT_DIM
-        img = fonts[self.font].render(self.label, True, color)
+        room = self.rect.w - 16 - (2 * fonts["small"].size(self.key_hint)[0] + 16 if self.key_hint else 0)
+        img = fonts[self.font].render(fit_text(fonts[self.font], self.label, room), True, color)
         if self.sub:
-            sub = fonts["small"].render(self.sub, True, TEXT_DIM)
+            sub = fonts["small"].render(fit_text(fonts["small"], self.sub, self.rect.w - 24), True, TEXT_DIM)
             gap = 6
             total = img.get_height() + gap + sub.get_height()
             y = self.rect.centery - total // 2

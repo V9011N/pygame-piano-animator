@@ -53,7 +53,7 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
-                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys, ui_font)
+                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys, ui_font, set_font_choice)
 import paths
 import pianist as pianists
 import recent
@@ -1048,6 +1048,7 @@ def fps_cap_value(cap):
 class App:
     def __init__(self, screen, sound=True, speed=1.0):
         self.screen = screen
+        self.font_problem = set_font_choice(pianists.app_setting("font"))      # (Settings > Font)
         self.fonts = load_fonts()
         set_key_style(pianists.app_setting("keys", "realistic"))
         set_keyboard_place(pianists.app_setting("keyboard_place"))
@@ -1270,6 +1271,21 @@ class App:
         self.midi.set_volume(volume)
         pianists.set_app_setting("soundfont", path)
         return self.soundfont_problem
+
+    def set_font(self, choice):
+        """
+        Use the font `choice` (common.font_files: None for the bundled one) for
+        everything from now on, kept for next time; "" if fine, else why not
+        (the bundled one is used then). The fonts dict is updated in place, so
+        every screen holding it follows.
+        """
+        self.font_problem = set_font_choice(choice)
+        pianists.set_app_setting("font", choice or None)
+        self.fonts.clear()
+        self.fonts.update(load_fonts())
+        if hasattr(self.mode, "layout"):
+            self.mode.layout(self.screen.get_size())
+        return self.font_problem
 
     def sound_label(self):
         """What the notes are played with, for buttons and the Settings: the soundfont's name, or the default."""

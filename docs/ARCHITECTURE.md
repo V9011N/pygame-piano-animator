@@ -164,6 +164,19 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   on its own, which made its length flick between two values (73 times in 300 frames) and, on a short note, its
   finger number's size with it. `note_rect` now gives a note one length (its duration, rounded once) and puts
   its bottom at the nearest pixel: a solid block (the test checks one length over 500 frames).
+- Settings > Font (v26.1.19.SNAPSHOT-16): the bundled typeface by default, or Choose... one installed on the
+  computer (`app_settings.FontPicker`: `pygame.font.get_fonts()`, each name drawn in its own face - pygame-ce's
+  `Font.name` for the label when it has one; type to filter, Enter takes the first shown) or Browse for a file
+  (.ttf / .otf / .ttc). Kept as "font": {"system": name} / {"file": path} / none. `common.set_font_choice`
+  checks it can be used - found, a real font (pygame opens any file: one with no glyph for "Aa1" isn't) and
+  with letters (`has_letters`: a glyph with ink for each of "Aaegmors1", nearly all different shapes - an
+  emoji font's are empty, OpenSymbol's lowercase letters all one box) - else the bundled one and why
+  ("not found", "couldn't be loaded", "has no letters"), shown in the row. A system font's bold is its own bold
+  file if `match_font` finds one that isn't italic, else pygame's synthetic bold (`set_bold`); a font file is
+  made bold that way. Chosen fonts aren't scaled (`FONT_SCALE` is for Source Sans). `App.set_font` refreshes the
+  `fonts` dict in place (every screen holds it) and re-lays out the mode. With another font's widths, buttons
+  shorten text that doesn't fit with an ellipsis (`common.fit_text`), and the Settings rows shrink (to
+  `ROW_H_MIN` 46) to keep the six-row panel above the window's centre.
 - The main menu's layout measures the small font's height (the tip and the active pianist line) instead of
   assuming 20 px.
 
