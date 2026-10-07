@@ -79,7 +79,18 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     linear, CC 7 squared (General MIDI; default 100), constant-power pan. Past `MAX_VOICES` 128 the quietest
     (released first) go. Not played: modulation envelope, LFOs, filter, modulators, reverb/chorus.
     Against TinySoundFont on TimGM6mb.sf2 (keys 36-84, velocities 30-120): the same pitch to 0.1 Hz, level
-    within 0.7 dB, release a little faster. 79 voices: 3.7 ms a 512-frame chunk.
+    within 0.7 dB, release a little faster.
+    Speed (v26.1.19.SNAPSHOT-08): the voices are rendered together, as (voices x frames) arrays (`Synth._render`, one per sample
+    array) - one at a time, Python's overhead per voice was most of the cost (about 45 us each, so 128 voices of
+    a big stereo piano - two voices a note - took 4-12 ms a 768-frame chunk, 44 ms at worst, and held the
+    interpreter from the drawing). The envelope is worked out every `ENV_STEP` 32 frames and drawn straight
+    between (against frame by frame: 123 dB down); voices still in their attack get it frame by frame. 128
+    voices: 2.1 ms a chunk. A preset's .sf3 samples are packed into one array when decoded (`_pack`), and its
+    .sf2 samples read through once when it's chosen (`_warm`, a value from every 4 KB page, behind the
+    progress bar) so a note's first chunk doesn't wait on the disk. Measured on a generated 409 MB stereo
+    piano (29 sample points x 8 velocity layers x 10 s, unlooped), the densest 15 s of a ballade with the pedal
+    held throughout, the main thread busy: chunks median 2.1 ms (was 6.5), 95th percentile 3.7 (11.7), no
+    underruns; frames median 2.1 ms, worst 15 (27); loading 2.6 s (reading the samples).
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
     worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
     `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the

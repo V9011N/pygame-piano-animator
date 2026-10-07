@@ -302,3 +302,29 @@ def test_the_soundfont_player_plays_through_the_built_in_synth(tmp_path):
     finally:
         out.close()
         pygame.mixer.quit()
+
+
+def test_many_voices_play_together_as_one_did_alone(tmp_path):
+    """The voices are rendered together (an array at a time): the mix is the sum of each alone."""
+    import numpy as np
+    from sf2 import Sample, Synth
+    path = tiny_sf2(tmp_path / "t.sf2", inst_gens=[(38, -1200)])
+    alone = []
+    for key in (57, 69, 81):
+        s = Synth(samplerate=22050)
+        s.sfload(path)
+        a, b = render(s, key, 90, 0.3, 0.6)
+        alone.append(np.concatenate([a, b]))
+    s = Synth(samplerate=22050)
+    s.sfload(path)
+    for key in (57, 69, 81):
+        s.noteon(0, key, 90)
+    a = np.frombuffer(bytes(s.generate(int(22050 * 0.3))), np.float32).reshape(-1, 2)
+    for key in (57, 69, 81):
+        s.noteoff(0, key)
+    b = np.frombuffer(bytes(s.generate(int(22050 * 0.6))), np.float32).reshape(-1, 2)
+    assert np.abs(np.concatenate([a, b]) - sum(alone)).max() < 1e-5
+    # decoded (.sf3) samples are packed into one array, each keeping its own place
+    one, two = (Sample(np.arange(10, dtype=np.int16) + k * 100, 0, 10, 2, 8, 22050, 60, 0) for k in (0, 1))
+    Synth._pack([one, two])
+    assert one.data is two.data and two.start == 10 and two.loop_start == 12 and two.data[two.start] == 100

@@ -35,6 +35,8 @@ SILENT_DB = 96.0             # dB down, a voice is over
 MIN_RELEASE_S = 0.008        # s, the shortest release (no click when a key is let go)
 MAX_VOICES = 128             # past this, the quietest voices are dropped first
 INT16_SCALE = 1.0 / 32768.0
+ENV_STEP = 32                # frames, the envelope is worked out this often (0.7 ms) and drawn straight between
+_STEP_FRAC = (np.arange(ENV_STEP) / ENV_STEP).astype(np.float32)
 _RAMPS = {}
 
 
@@ -132,7 +134,7 @@ class Region:
 
 class Voice:
     __slots__ = ("ch", "key", "r", "pos", "step", "gain", "t", "rate", "hold", "decay", "released", "rel_db",
-                 "done")
+                 "done", "fixed")
 
     def __init__(self, ch, key, vel, r, rate):
         self.ch, self.key, self.r, self.rate = ch, key, r, rate
@@ -148,6 +150,10 @@ class Voice:
         self.released = None                         # the output frame the key was let go at
         self.rel_db = 0.0                            # ...and the envelope then, in dB down
         self.done = False
+        # what Synth._render needs that doesn't change: loop and end, envelope times and rates, gains
+        self.fixed = (self.step, r.loop_start, r.loop_end, r.end - 1, r.loop, r.delay, r.attack,
+                      r.delay + r.attack + self.hold, ENV_RANGE_DB / self.decay if self.decay > 0 else 1e12,
+                      r.sustain_db, ENV_RANGE_DB / r.release, self.gain * r.left, self.gain * r.right)
 
     def _held_db(self, ts):
         """The envelope in dB down (attack aside) at times ts (s) while the key is held: hold, then decay."""
@@ -156,25 +162,6 @@ class Voice:
         if self.decay <= 0:
             return np.where(ts < t0, 0.0, r.sustain_db)
         return np.minimum(r.sustain_db, np.maximum(0.0, ts - t0) * (ENV_RANGE_DB / self.decay))
-
-    def envelope(self, n):
-        """The amplitude over the next n output frames."""
-        r = self.r
-        ts = (self.t + _ramp(n)) / self.rate
-        if self.released is None:
-            db = self._held_db(ts)
-            amp = 10.0 ** (-db / 20.0)
-            if r.attack > 0 or r.delay > 0:
-                ramp = np.clip((ts - r.delay) / r.attack, 0.0, 1.0) if r.attack > 0 else (ts >= r.delay) * 1.0
-                amp = np.where(ts < r.delay + r.attack, ramp, amp)
-            if db[-1] >= SILENT_DB:
-                self.done = True
-            return amp
-        tr = self.released / self.rate
-        db = self.rel_db + np.maximum(0.0, ts - tr) * (ENV_RANGE_DB / self.r.release)
-        if db[-1] >= SILENT_DB:
-            self.done = True
-        return 10.0 ** (-db / 20.0)
 
     def release(self):
         if self.released is not None:
@@ -194,37 +181,6 @@ class Voice:
             return float(self._held_db(np.array([self.t / self.rate]))[0])
         return self.rel_db + (self.t - self.released) / self.rate * ENV_RANGE_DB / self.r.release
 
-    def render(self, n):
-        """(left, right) of the next n frames, unscaled by the channel; done set when it has ended."""
-        r = self.r
-        p = self.pos + self.step * _ramp(n + 1)
-        looping = r.loop == 1 or (r.loop == 3 and self.released is None)
-        if looping and p[-1] >= r.loop_end:
-            span = r.loop_end - r.loop_start
-            p = np.where(p >= r.loop_end, r.loop_start + np.mod(p - r.loop_start, span), p)
-        self.pos = float(p[-1])
-        p = p[:-1]
-        last = r.end - 1
-        if not looping and p[-1] >= last:
-            k = int(np.searchsorted(p, last))            # frames left in the sample
-            self.done = True
-            if k == 0:
-                return None
-            p, n = p[:k], k
-        i = p.astype(np.int64)
-        f = (p - i).astype(np.float32)
-        i1 = i + 1
-        if looping:
-            i1 = np.where(i1 >= r.loop_end, i1 - (r.loop_end - r.loop_start), i1)
-        np.minimum(i1, last, out=i1)
-        d = r.sample.data
-        a = d[i].astype(np.float32)
-        s = a + (d[i1].astype(np.float32) - a) * f
-        env = self.envelope(n).astype(np.float32) * (self.gain * INT16_SCALE)
-        self.t += n
-        s *= env
-        return s * r.left, s * r.right, n
-
 
 class Synth:
     """A soundfont played in numpy, with the calls sf_synth makes (as tinysoundfont.Synth's)."""
@@ -237,7 +193,7 @@ class Synth:
         self._samples_ = []              # Sample, or how to decode it (.sf3), or None
         self.channels = {}               # channel -> {"regions", "volume"}
         self.voices = []
-        self._file = None
+        self._map = None                 # the file's samples (memory-mapped)
 
     # ----- loading ---------------------------------------------------------------
     def sfload(self, path, gain=0, max_voices=MAX_VOICES):
@@ -300,7 +256,8 @@ class Synth:
     def _samples(self, path, shdr, smpl):
         s0, s1 = smpl
         # (a plain array over the mapped file: indexing a np.memmap goes through Python each time)
-        data = np.memmap(path, dtype="<i2", mode="r", offset=s0, shape=((s1 - s0) // 2,)).view(np.ndarray)
+        data = self._map = np.memmap(path, dtype="<i2", mode="r", offset=s0,
+                                     shape=((s1 - s0) // 2,)).view(np.ndarray)
         recs = [struct.unpack_from("<20sIIIIIBbHH", shdr, i) for i in range(0, len(shdr) - 46 + 1, 46)][:-1]
         out = []
         for name, start, end, ls, le, rate, root, corr, link, kind in recs:
@@ -411,19 +368,54 @@ class Synth:
         return smp
 
     def regions(self, bank, preset):
-        """A preset's regions (the first preset's if it has none), put together the first time."""
+        """
+        A preset's regions (the first preset's if it has none), put together
+        the first time: its .sf3 samples decoded and packed into one array (the
+        voices are played together, an array at a time), and its .sf2 samples
+        read through once, so the first notes don't wait on the disk.
+        """
         key = (bank, preset) if (bank, preset) in self.presets else \
             (0, preset) if (0, preset) in self.presets else next(iter(self.presets), None)
         if key is None:
             return []
         if key not in self._regions:
             zones = self.presets[key]
-            out = []
-            for k, (g, i) in enumerate(zones):
-                out.append(Region(g, self._sample(i)))
-                progress.report((k + 1) / len(zones))          # (.sf3: decoding takes a moment)
-            self._regions[key] = out
+            used = sorted({i for _, i in zones})
+            todo = [i for i in used if isinstance(self._samples_[i], tuple)]
+            with progress.stage(0.0, 0.5 if todo else 0.0):
+                for k, i in enumerate(todo):
+                    self._sample(i)
+                    progress.report((k + 1) / len(todo))
+            if todo:
+                self._pack([self._samples_[i] for i in todo])
+            with progress.stage(0.5 if todo else 0.0, 1.0):
+                self._warm([self._samples_[i] for i in used if self._samples_[i].data is self._map])
+            self._regions[key] = [Region(g, self._samples_[i]) for g, i in zones]
         return self._regions[key]
+
+    @staticmethod
+    def _pack(samples):
+        """Decoded samples into one array (each keeps its place in it)."""
+        pool = np.concatenate([smp.data for smp in samples])
+        at = 0
+        for smp in samples:
+            n = len(smp.data)
+            smp.data = pool
+            smp.start, smp.end = smp.start + at, smp.end + at
+            smp.loop_start, smp.loop_end = smp.loop_start + at, smp.loop_end + at
+            at += n
+
+    @staticmethod
+    def _warm(samples):
+        """Read the samples' pages of the file once (into the system's file cache)."""
+        spans = sorted({(smp.start, smp.end) for smp in samples})
+        total = sum(e - s for s, e in spans) or 1
+        done = 0
+        for s0, s1 in spans:
+            if samples and s1 > s0:
+                int(samples[0].data[s0:s1:2048].sum())           # (a value in every 4 KB page)
+            done += s1 - s0
+            progress.report(done / total)
 
     # ----- playing ---------------------------------------------------------------
     def _channel(self, ch):
@@ -473,16 +465,74 @@ class Synth:
     def generate(self, frames):
         """The next `frames` frames: interleaved stereo float32 (a memoryview)."""
         out = np.zeros((frames, 2), np.float32)
-        keep = []
-        for v in self.voices:
-            got = v.render(frames)
-            if got is not None:
-                left, right, n = got
-                cv = self._channel(v.ch)["volume"] / 127.0
-                g = self.master * cv * cv
-                out[:n, 0] += left * g
-                out[:n, 1] += right * g
-            if not v.done:
-                keep.append(v)
-        self.voices = keep
+        if self.voices:
+            groups = {}
+            for v in self.voices:
+                groups.setdefault(id(v.r.sample.data), []).append(v)
+            for vs in groups.values():
+                self._render(vs, frames, out)
+            self.voices = [v for v in self.voices if not v.done]
         return memoryview(out.reshape(-1))
+
+    def _render(self, vs, n, out):
+        """
+        Add voices `vs` (sharing one sample array) to out (n x 2): every voice at
+        once, as (voices x frames) arrays - a voice at a time, Python's overhead
+        was most of the cost.
+        """
+        d = vs[0].r.sample.data
+        (step, ls, le, last, mode, delay, attack, t0, slope, sus, rslope, gl, gr) = \
+            np.array([v.fixed for v in vs], dtype=np.float64).T
+        pos = np.array([v.pos for v in vs])
+        t = np.array([v.t for v in vs], dtype=np.float64)
+        rel = np.array([v.released is not None for v in vs])
+        tr = np.array([v.released or 0 for v in vs], dtype=np.float64)
+        rel_db = np.array([v.rel_db for v in vs])
+        vol = np.array([self._channel(v.ch)["volume"] for v in vs], dtype=np.float64) / 127.0
+        ramp = _ramp(n + 1)
+        # where in the samples: looped voices wrap round their loop
+        p = pos[:, None] + step[:, None] * ramp
+        lp = (mode == 1) | ((mode == 3) & ~rel)
+        span = np.maximum(1.0, le - ls)
+        if lp.any():
+            wrap = lp[:, None] & (p >= le[:, None])
+            p = np.where(wrap, ls[:, None] + np.mod(p - ls[:, None], span[:, None]), p)
+        new_pos = p[:, -1]
+        p = p[:, :-1]
+        valid = lp[:, None] | (p < last[:, None])            # (an unlooped sample's end: silence after)
+        np.minimum(p, last[:, None], out=p)
+        i = p.astype(np.int64)
+        f = (p - i).astype(np.float32)
+        i1 = i + 1
+        if lp.any():
+            i1 = np.where(lp[:, None] & (i1 >= le[:, None]), i1 - span[:, None].astype(np.int64), i1)
+        np.minimum(i1, last[:, None].astype(np.int64), out=i1)
+        a = d[i].astype(np.float32)
+        w = a + (d[i1].astype(np.float32) - a) * f
+        # the volume envelope, in dB down: hold then decay to the sustain level; after the key, the release -
+        # worked out every ENV_STEP frames and drawn straight between (smooth: no audible difference)
+        m = -(-n // ENV_STEP)
+        tc = (t[:, None] + _ramp(m + 1) * ENV_STEP) / self.rate
+        db = np.minimum(sus[:, None], np.maximum(0.0, tc - t0[:, None]) * slope[:, None])
+        if rel.any():
+            db = np.where(rel[:, None], rel_db[:, None] + np.maximum(0.0, tc - (tr / self.rate)[:, None])
+                          * rslope[:, None], db)
+        ac = np.exp(db * (-np.log(10.0) / 20.0)).astype(np.float32)
+        amp = (ac[:, :-1, None] + (ac[:, 1:] - ac[:, :-1])[:, :, None] * _STEP_FRAC).reshape(len(vs), -1)[:, :n]
+        attacking = ~rel & (t / self.rate < delay + attack)
+        if attacking.any():                                  # (the attack, frame by frame: it can be 1 ms)
+            k = np.nonzero(attacking)[0]
+            ts = (t[k, None] + ramp[:n]) / self.rate
+            up = np.clip((ts - delay[k, None]) / np.maximum(attack[k], 1e-9)[:, None], 0.0, 1.0)
+            amp[k] = np.where(ts < (delay + attack)[k, None], up, amp[k])
+        w *= amp
+        w *= valid
+        g = vol * vol * (self.master * INT16_SCALE)
+        out[:, 0] += (gl * g).astype(np.float32) @ w
+        out[:, 1] += (gr * g).astype(np.float32) @ w
+        over = (db[:, m] >= SILENT_DB) | ~valid[:, -1]
+        for k, v in enumerate(vs):
+            v.pos = float(new_pos[k])
+            v.t += n
+            if over[k]:
+                v.done = True
