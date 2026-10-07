@@ -53,9 +53,10 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
-                    set_keyboard_place, wrap_text)
+                    set_keyboard_place, wrap_text, Dialog)
 import paths
 import pianist as pianists
+import recent
 from hands import build_hands, draw_hands, load_with_hands, prepare_hands
 from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
@@ -64,6 +65,11 @@ from version import VERSION
 DEFAULT_WINDOW_SECS = 3.0    # how many seconds of upcoming notes fit above the keys
 WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it this much slower
 SEEK_STEP = 5.0
+MENU_TITLE_H = 130          # px, the main menu's title and subtitle above its first button
+MENU_BUTTON_MIN_H = 54      # ...its buttons no lower than this with two lines of text...
+MENU_BUTTON_SMALL_H = 40    # ...and this with just their names (a small window)
+MENU_TIP_H = 20             # ...the tip above the keyboard
+MENU_ACTIVE_H = 20          # ...the active pianist line under Quit
 FINGER_PX_MAX = 17          # finger numbers on the notes: this big at most (13 before)...
 FINGER_PX_MIN = 11          # ...but narrower than a black key's notes (Visualizer._finger_size)
 FPS_CAP_MIN, FPS_CAP_MAX = 24, 240     # the frame rate cap's range (Settings; past the top: uncapped)
@@ -687,6 +693,61 @@ class ChangelogView:
         self.close_button.draw(surf, self.fonts, pygame.mouse.get_pos())
 
 
+class RecentView:
+    """The Recent list over the main menu: the last setups opened (recent.py); `chosen` when one is clicked."""
+
+    ROW_H = 72
+
+    def __init__(self, fonts):
+        self.fonts = fonts
+        self.items = recent.entries()
+        self.rows = []
+        for i, entry in enumerate(self.items):
+            title, sub = recent.describe(entry)
+            self.rows.append(Button(title, i, font="button", sub=sub, key_hint=str(i + 1)))
+        self.close_button = Button("Close", "close", key_hint="Esc")
+        self.chosen = None
+        self.closed = False
+
+    def _layout(self, w, h):
+        n = len(self.rows)
+        row = max(54, min(self.ROW_H, (h - 40 - 134) // max(1, n) - 10))     # (smaller rows in a small window)
+        self.box = pygame.Rect(0, 0, min(620, w - 60), 64 + n * (row + 10) + 70)
+        self.box.center = (w // 2, h // 2)
+        y = self.box.y + 64
+        for b in self.rows:
+            b.rect = pygame.Rect(self.box.x + 24, y, self.box.w - 48, row)
+            y += row + 10
+        self.close_button.rect = pygame.Rect(self.box.right - 24 - 120, self.box.bottom - 24 - 38, 120, 38)
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.closed = True
+            elif pygame.K_1 <= event.key < pygame.K_1 + len(self.items):
+                self.chosen = self.items[event.key - pygame.K_1]
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for b in self.rows:
+                if b.hit(event.pos):
+                    self.chosen = self.items[b.action]
+                    return
+            if self.close_button.hit(event.pos) or not self.box.collidepoint(event.pos):
+                self.closed = True
+
+    def draw(self, surf):
+        w, h = surf.get_size()
+        self._layout(w, h)
+        shade = pygame.Surface((w, h), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 150))
+        surf.blit(shade, (0, 0))
+        pygame.draw.rect(surf, PANEL, self.box, border_radius=12)
+        pygame.draw.rect(surf, PANEL_EDGE, self.box, 1, border_radius=12)
+        surf.blit(self.fonts["big"].render("Recent", True, TEXT), (self.box.x + 24, self.box.y + 18))
+        mouse = pygame.mouse.get_pos()
+        for b in self.rows + [self.close_button]:
+            b.draw(surf, self.fonts, mouse)
+
+
 class MainMenu:
     def __init__(self, app):
         self.app = app
@@ -696,6 +757,7 @@ class MainMenu:
                    sub="Browse for a file and watch it in falling-notes mode"),
             Button("Fingering editor", "edit", font="button", key_hint="E",
                    sub="Open a MIDI file, fine-tune its fingering and export it"),
+            Button("Recent", "recent", font="button", key_hint="R", sub=""),
             Button("Pianists & hands", "pianists", font="button", key_hint="H",
                    sub="Create pianists: hand anatomy, colour and technique; choose the active one"),
             Button("Quit", "quit", font="normal", key_hint="Esc"),
@@ -705,29 +767,56 @@ class MainMenu:
         self.overlay_top = 0
         self.changelog_new = not changelog_seen()       # glows until opened
         self.changelog = None
+        self.recent = None              # the Recent list (RecentView) while it's open
+        self.dialog = None              # an error to acknowledge (a recent setup's file not found)
         self.layout(app.screen.get_size())
         pygame.display.set_caption(f"Hand-thesia {VERSION}")
 
     def layout(self, size):
         w, h = size
         bw = min(560, w - 80)
-        bh = max(64, min(88, int(h * 0.105)))
-        y = int(h * 0.27)
-        for b in self.buttons[:3]:
+        # the buttons, Quit and the active pianist fit between the title and the tip above the keyboard
+        kb_h = bottom_layout((w, h))[0].h
+        floor = h - kb_h - FELT_H - 14 - MENU_TIP_H            # (the tip's top)
+        below = 4 + 40 + 16 + MENU_ACTIVE_H + 8                # Quit, then the active pianist
+        n, gap = 4, 16 if h >= 760 else 10
+        fit = (floor - MENU_TITLE_H - below - (n - 1) * gap) // n
+        bh = max(MENU_BUTTON_SMALL_H, min(88, int(h * 0.105), fit))
+        self._compact = bh < MENU_BUTTON_MIN_H              # (no room for the buttons' second lines)
+        block = n * bh + (n - 1) * gap + below
+        top = MENU_TITLE_H - (20 if self._compact else 0)      # (a small window: the title a little higher)
+        y = max(top, min(int(h * 0.27), floor - block))
+        for b in self.buttons[:n]:
             b.rect = pygame.Rect((w - bw) // 2, y, bw, bh)
-            y += bh + 16
-        self.buttons[3].rect = pygame.Rect((w - 160) // 2, y + 4, 160, 40)
-        self._active_y = y + 60
+            y += bh + gap
+        self.buttons[n].rect = pygame.Rect((w - 160) // 2, y + 4 - gap + 12, 160, 40)
+        self._active_y = self.buttons[n].rect.bottom + 16
         self.changelog_button.rect = pygame.Rect(w - 16 - 110, 16, 110, 32)
         self.settings_button.rect = pygame.Rect(w - 16 - 110 - 10 - 100, 16, 100, 32)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
             return False
+        if self.dialog and event.type != pygame.VIDEORESIZE:
+            if event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                self.dialog.choice = "ok"
+            else:
+                self.dialog.handle_event(event)
+            if self.dialog.choice:
+                self.dialog = None
+            return True
         if self.changelog and event.type != pygame.VIDEORESIZE:
             self.changelog.handle_event(event)
             if self.changelog.closed:
                 self.changelog = None
+            return True
+        if self.recent and event.type != pygame.VIDEORESIZE:
+            self.recent.handle_event(event)
+            if self.recent.chosen is not None:
+                entry, self.recent = self.recent.chosen, None
+                self.app.open_recent(entry)
+            elif self.recent.closed:
+                self.recent = None
             return True
         if event.type == pygame.VIDEORESIZE:
             self.layout(event.size if hasattr(event, "size") else self.app.screen.get_size())
@@ -740,7 +829,9 @@ class MainMenu:
                 return self._do("play")
             if event.key in (pygame.K_e, pygame.K_2):
                 return self._do("edit")
-            if event.key in (pygame.K_h, pygame.K_3):
+            if event.key in (pygame.K_r, pygame.K_3):
+                return self._do("recent")
+            if event.key in (pygame.K_h, pygame.K_4):
                 return self._do("pianists")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for b in self.buttons + [self.changelog_button, self.settings_button]:
@@ -754,9 +845,16 @@ class MainMenu:
             self.changelog_new = False
             mark_changelog_seen()
 
+    def show_error(self, title, message):
+        self.dialog = Dialog(title, message, [("OK", "ok")])
+
     def _do(self, action):
         if action == "changelog":
             self.open_changelog()
+            return True
+        if action == "recent":
+            if recent.entries():
+                self.recent = RecentView(self.app.fonts)
             return True
         if action == "quit":
             return False
@@ -796,8 +894,23 @@ class MainMenu:
         sub = f["normal"].render("MIDI playback with animated hands and fingering", True, TEXT_DIM)
         s.blit(sub, sub.get_rect(midbottom=(w // 2, top - 20)))
         mouse = pygame.mouse.get_pos()
+        if self.recent or self.dialog:
+            mouse = (-1, -1)                         # (no hover under the panel)
+        items = recent.entries()
+        rb = self.buttons[2]
+        rb.enabled = bool(items)
+        if items:
+            title, sub = recent.describe(items[0])
+            rb.sub = f"The last {len(items)} setups you opened  ·  latest: {title}" if len(items) > 1 \
+                else f"The last setup you opened: {title}"
+        else:
+            rb.sub = "The files you open will be listed here"
         for b in self.buttons:
+            sub = b.sub
+            if self._compact:
+                b.sub = None
             b.draw(s, f, mouse)
+            b.sub = sub
         # the active pianist, quietly
         act = pianists.active()
         img = f["small"].render(f"Active pianist: {act.name}  ·  {act.span_label()}", True, TEXT_DIM)
@@ -807,13 +920,19 @@ class MainMenu:
         pygame.draw.circle(s, (150, 150, 160), (r.x - 14, r.centery), 6, 1)
         hint = self.message or "Tip: drop a MIDI file on this window to play it"
         img = f["small"].render(hint, True, TEXT_DIM)
-        s.blit(img, img.get_rect(midbottom=(w // 2, kb.rect.y - FELT_H - 14)))
+        tip = img.get_rect(midbottom=(w // 2, kb.rect.y - FELT_H - 14))
+        if self.message or tip.top >= r.bottom + 4:           # (the tip only where there's room for it)
+            s.blit(img, tip)
         if self.changelog_new:
             self._draw_glow(s, self.changelog_button.rect)
         self.changelog_button.draw(s, f, mouse)
         self.settings_button.draw(s, f, mouse)
         if self.changelog:
             self.changelog.draw(s)
+        if self.recent:
+            self.recent.draw(s)
+        if self.dialog:
+            self.dialog.draw(s, f)
 
     @staticmethod
     def _draw_glow(s, rect, period=2.4):
@@ -910,6 +1029,9 @@ class App:
         if song:
             self._switch(Visualizer(self.screen, song, midi=self.midi, speed=speed or self.speed,
                                     fonts=self.fonts, audio=audio, hands=hands))
+            if song.path:
+                recent.add_play(song.path, soundfont=getattr(self.midi, "path", None),
+                                audio=audio.path if audio else None, speed=speed)
 
     def edit(self, path_or_song):
         from editor import FingeringEditor
@@ -917,6 +1039,42 @@ class App:
         song, hands = self._load(path_or_song, repair=False)
         if song:
             self._switch(FingeringEditor(self, song, hands))
+            if song.path:
+                recent.add_edit(song.path)
+
+    def open_recent(self, entry):
+        """
+        A setup from the Recent list, opened again as it was: the editor, or
+        playing with its soundfont (or the default sound) or its recording at
+        its speed. If one of its files can't be found: an error saying so, and
+        the setup leaves the list.
+        """
+        gone = recent.missing(entry)
+        if gone:
+            recent.remove(entry)
+            kinds = {entry.get("midi"): "MIDI file", entry.get("audio"): "audio file",
+                     entry.get("soundfont"): "soundfont"}
+            what = " and ".join(f"the {kinds.get(p, 'file')} {os.path.basename(p or '?')}" for p in gone)
+            self.menu()
+            self.mode.show_error("File not found",
+                                 f"Couldn't find {what}. The setup has been removed from the Recent list.")
+            return
+        midi = entry["midi"]
+        if entry.get("mode") == "edit":
+            self.edit(midi)
+        elif entry.get("audio"):
+            song, hands = self._load(midi)
+            if song:
+                setup = PlaybackSetup(self, song, hands)
+                setup.page = "speed"
+                setup.slider.value = min(SPEED_MAX, max(0.25, float(entry.get("speed") or 1.0)))
+                setup._set_speed(setup.slider.value)
+                self._switch(setup)
+                setup.open_audio(entry["audio"])   # (playing if it loads and is long enough, else why not)
+        else:
+            if (entry.get("soundfont") or None) != (getattr(self.midi, "path", None) or None):
+                self.set_soundfont(entry.get("soundfont"))
+            self.play(midi)
 
     def studio(self):
         from hand_editor import PianistStudio

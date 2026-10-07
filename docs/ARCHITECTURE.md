@@ -20,7 +20,19 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `finger_hand(notes, left, context)` is the convenience entry point.
 - `main.py` – the app.
   - `App` owns the window, the synth and the current mode.
-  - `MainMenu` has two options: Play (browse → falling notes) and Fingering editor (browse → editor).
+  - `MainMenu`: Play (browse → falling notes), Fingering editor (browse → editor), Recent, Pianists & hands.
+    Its layout fits the buttons, Quit and the active pianist between the title and the tip above the keyboard
+    (`MENU_*`); in a small window (under `MENU_BUTTON_MIN_H` 54 px a button) the buttons lose their second
+    lines and the title moves up, and the tip is left out if it still doesn't fit.
+  - Recent (v26.1.19.SNAPSHOT-10, `recent.py`): `App.play` / `App.edit` record each launch of a file in
+    settings.json ("recent", newest first, `RECENT_MAX` 5): playing, the MIDI file with the soundfont
+    (`MidiOut.path`; None = the system's synth) or the synced recording and its speed; editing, the MIDI
+    file. The same files again move to the top (another soundfont or speed for the same files counts as the
+    same setup, the newest kept). `RecentView` lists them over the menu (keys 1-5); `App.open_recent` opens
+    one as it was - the editor; or the player with that soundfont (`set_soundfont` if it differs; it's kept
+    as the setting); or `PlaybackSetup` on its speed page with the speed set, then `open_audio`, which plays
+    or says why not (too short). If any of its files is missing: `recent.remove`, and a `Dialog` ("File not
+    found", naming which file - MIDI, audio or soundfont) over the menu. `Dialog` now wraps its message.
   - `Visualizer` is the falling-notes player. Esc returns to the menu.
   - Command line: `main.py file.mid` plays the file, `--edit` opens it in the editor, `--screenshot` saves one frame.
 - `common.py` – shared pieces:

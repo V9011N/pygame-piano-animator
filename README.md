@@ -47,6 +47,8 @@ From The Cuphead Show with White Gloves
   right-click to set hand and finger, re-plan groups, see per-note difficulty, and finger note
   by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
   the MIDI file with the fingering embedded (or PIG text).
+- **Recent**: the main menu lists the last five setups you opened - a MIDI file with its soundfont or
+  synced recording, or a file in the fingering editor - to open again in one click.
 - **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
   cap the frame rate (24-240 fps, or uncapped), choose a soundfont (.sf2 / .sf3) to play the notes
   with instead of the system's MIDI synth, and show a performance overlay (frame rate and frame

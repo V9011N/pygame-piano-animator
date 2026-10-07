@@ -775,12 +775,16 @@ class Dialog:
         shade = pygame.Surface((w, h), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 140))
         surf.blit(shade, (0, 0))
-        box = pygame.Rect(0, 0, 520, 190)
+        bw_box = min(560, w - 40)
+        lines = wrap_text(fonts["normal"], self.message, bw_box - 48)
+        line_h = fonts["normal"].get_linesize()
+        box = pygame.Rect(0, 0, bw_box, 190 + max(0, len(lines) - 1) * line_h)
         box.center = (w // 2, h // 2)
         pygame.draw.rect(surf, PANEL, box, border_radius=12)
         pygame.draw.rect(surf, PANEL_EDGE, box, 1, border_radius=12)
         surf.blit(fonts["button"].render(self.title, True, TEXT), (box.x + 24, box.y + 20))
-        surf.blit(fonts["normal"].render(self.message, True, TEXT_DIM), (box.x + 24, box.y + 62))
+        for i, line in enumerate(lines):
+            surf.blit(fonts["normal"].render(line, True, TEXT_DIM), (box.x + 24, box.y + 62 + i * line_h))
         bw, gap = 140, 12
         x = box.right - 24 - len(self.buttons) * bw - (len(self.buttons) - 1) * gap
         mouse = pygame.mouse.get_pos()

@@ -36,12 +36,13 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 
 | File | Role |
 |---|---|
-| `main.py` | `App` (window, synth, mode switching, frame clock, performance overlay), `MainMenu`, `Visualizer` (falling notes) |
+| `main.py` | `App` (window, synth, mode switching, frame clock, performance overlay, `open_recent`), `MainMenu` (+ `RecentView`), `Visualizer` (falling notes) |
 | `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), keyboard type, frame rate cap (`App.set_fps_cap`), performance overlay, soundfont (`App.set_soundfont`) |
 | `sf_synth.py` | A chosen soundfont: `SoundfontOut` (MidiOut's interface, the pedals played here) driving `sf2.Synth` in a process of its own (`_player_process`, `RemoteSynth` over a pipe), `MixerStream` (its sound through pygame's mixer), `make_synth` (falls back to the system synth) |
 | `sf2.py` | The built-in SoundFont player (.sf2 / .sf3) in numpy: zones, loops, volume envelope; no compiled package |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout` (keyboard placement), `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `VolumeSlider`, `draw_tooltip`, `run_busy` (a job in a worker thread behind a progress bar) |
+| `recent.py` | The main menu's Recent list: the last five setups launched (play with soundfont / recording + speed, or edit), in settings.json |
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
