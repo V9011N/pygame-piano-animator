@@ -152,7 +152,7 @@ KEY_STYLES = ("realistic", "equal")
 _key_style = "realistic"
 LANE_WHITE = (33, 33, 42)        # equal keys: the lanes above white keys, a shade lighter
 KEY_GAP = (44, 44, 50)           # equal keys: the gaps between keys
-_EQUAL_SPAN = 87 + 0.5 + 5 / 3   # the keyboard's width in lanes (A0's front half a lane left of its lane .. C8's front)
+EQUAL_A0_MAX = 2.0               # equal keys: A0's back is the width's remainder, at most this many lanes
 
 
 def key_style():
@@ -216,42 +216,70 @@ class Keyboard:
 
     def _layout_equal(self, rect):
         """
-        PASHKULI's equal keys: 88 lanes of one width L, separated by a gap
-        (1 px, or more on big windows); every black key and every white
-        key's back fills one lane, and the white fronts share their group's
-        lanes evenly. The average white key keeps the realistic width, so
-        the hands keep their scale.
+        PASHKULI's equal keys, in whole pixels: 88 lanes of one pitch P (px,
+        an integer), each a lane L = P - gap wide with the gap between; every
+        black key and every white key's back fills its lane exactly, so every
+        falling note is the same width and every gap is too. The white fronts
+        share their group's lanes: C-E's three in 5 lanes, F-B's four in 7, all
+        exactly the same width within a group - the pixel or two left over
+        goes to the gaps between them (so those may be a pixel wider). C8's
+        front is its back (one lane); A0's back takes what's left of the width
+        (at most EQUAL_A0_MAX lanes - beyond that the keyboard is centred, the
+        rest left as a margin each side). The average white key keeps the
+        realistic width (`white_w`), so the hands keep their scale.
         """
         whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
         self.white_w = rect.w / len(whites)
-        L = rect.w / _EQUAL_SPAN
-        g = self.gap = max(1, round(L / 15))
-        self.black_w = L - g
+        n = self.high - self.low + 1                          # 88
+        P = max(2, rect.w // n)
+        g = self.gap = max(1, round(P / 15))
+        L = P - g
+        back = rect.w - (n - 1) * P                           # A0's back: what's left (P at least)
+        margin = max(0, back - int(EQUAL_A0_MAX * P))
+        back -= margin
+        left = rect.x + margin // 2                            # the keyboard's left edge
+        x0 = left + back - P                                   # A0's lane (its lane pitch's left edge)
+        self.pitch = P
+        self.keys_x = (left, x0 + n * P)                      # the keys' left and right edges
+        self.black_w = L
         self.black_h = int(rect.h * 0.63)
         self.key_rects, self.lanes, self.lane_lines = {}, {}, []
-        lane_x = lambda p: rect.x + (p - self.low + 0.5) * L      # left edge of p's lane
+        lane = lambda p: x0 + (p - self.low) * P               # the left of p's lane pitch (gap halves either side)
+        gl, gr = g // 2, g - g // 2
 
-        def span(a, b, top, h):
-            x0, x1 = round(a) + g // 2, round(b) - (g - g // 2)
-            return pygame.Rect(x0, top, max(1, x1 - x0), h)
+        # the white fronts within a C-E or F-B group: equal widths, the leftover pixels to the gaps between
+        heads = {}
+        for first, keys, lanes_n in ((0, (0, 2, 4), 5), (5, (5, 7, 9, 11), 7)):
+            k = len(keys)
+            avail = lanes_n * P - g
+            h = (avail - (k - 1) * g) // k
+            rem = avail - k * h - (k - 1) * g
+            x = gl
+            for i, pc in enumerate(keys):
+                heads[pc] = (first * P + x, h)                # from the C's lane pitch's left edge
+                x += h + g + (1 if i < rem else 0)
 
         for p in range(self.low, self.high + 1):
-            a, b = lane_x(p), lane_x(p) + L
+            a = lane(p)
+            lane_rect = pygame.Rect(a + gl, rect.y, L, self.black_h)
             if is_black_key(p):
-                self.key_rects[p] = span(a, b, rect.y, self.black_h)
-                self.lanes[p] = (self.key_rects[p].x, self.key_rects[p].w)
+                self.key_rects[p] = lane_rect
+                self.lanes[p] = (lane_rect.x, L)
                 continue
-            c = lane_x(p - p % 12)
-            h0, h1 = c + _equal_head(p)[0] * L, c + _equal_head(p)[1] * L
-            if p == self.low:                     # the ends: the back reaches the keyboard's edge
-                a = h0
-            if p == self.high:
-                b = h1
-            self.key_rects[p] = span(h0, h1, rect.y, rect.h)          # the front (where it is played)
-            self.tails[p] = span(a, b, rect.y, self.black_h + g)
-            lane = span(lane_x(p), lane_x(p) + L, rect.y, 1)
-            self.lanes[p] = (lane.x, lane.w)
-            self.lane_shade.append((lane.x, lane.w))
+            off, h = heads[p % 12]
+            hx = lane(p - p % 12) + off
+            tail = pygame.Rect(lane_rect.x, rect.y, L, self.black_h + g)
+            if p == self.high:                                 # C8: its front is its back
+                hx, h = tail.x, L
+            if p == self.low:                                  # A0: its back and front reach the left edge
+                tail.width += tail.x - left
+                tail.x = left
+                h += hx - left
+                hx = left
+            self.key_rects[p] = pygame.Rect(hx, rect.y, h, rect.h)        # the front (where it is played)
+            self.tails[p] = tail
+            self.lanes[p] = (lane_rect.x, L)
+            self.lane_shade.append((lane_rect.x, L))
 
     # ----- drawing -------------------------------------------------------------
     # The keyboard at rest is drawn once and cached (_base); each frame it is
@@ -320,7 +348,8 @@ class Keyboard:
 
     def _draw_all(self, surf, pressed):
         if self.style == "equal":
-            pygame.draw.rect(surf, KEY_GAP, self.rect)
+            pygame.draw.rect(surf, KEY_GAP, pygame.Rect(self.keys_x[0], self.rect.y,
+                                                        self.keys_x[1] - self.keys_x[0], self.rect.h))
         for p in self.key_rects:
             if not is_black_key(p):
                 self._white(surf, p, pressed)

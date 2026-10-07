@@ -157,7 +157,16 @@ def test_equal_keys_toggle_and_layout(screen):
         kb = common.Keyboard(pygame.Rect(0, 0, 1400, 150))
         assert kb.style == "equal"
         widths = {w for _, w in kb.lanes.values()}
-        assert max(widths) - min(widths) <= 1                      # every lane the same width
+        assert len(widths) == 1                                    # every lane exactly the same width...
+        xs = [kb.lanes[p][0] for p in range(21, 109)]
+        assert {b - a for a, b in zip(xs, xs[1:])} == {kb.pitch}   # ...and the same step (so the same gaps)
+        blacks = {kb.key_rects[p].w for p in range(21, 109) if midi_loader.is_black_key(p)}
+        tails = {kb.tails[p].w for p in kb.tails if p not in (21, 108)}
+        assert blacks == tails == widths
+        for group in ((0, 2, 4), (5, 7, 9, 11)):                   # the fronts: all alike within a group
+            fronts = {kb.key_rects[p].w for p in range(22, 108) if p % 12 in group}
+            assert len(fronts) == 1
+        assert kb.key_rects[108] == pygame.Rect(kb.tails[108].x, 0, kb.tails[108].w, 150)    # C8: front = back
         xs = [kb.lanes[p][0] for p in range(21, 109)]
         assert all(b > a for a, b in zip(xs, xs[1:]))              # in pitch order, never overlapping
         for p in range(21, 109):
@@ -165,7 +174,14 @@ def test_equal_keys_toggle_and_layout(screen):
                 assert kb.lanes[p] == (kb.key_rects[p].x, kb.key_rects[p].w)   # black key = its lane
             else:                                                  # a white key's back is its lane
                 assert abs(kb.tails[p].centerx - (kb.lanes[p][0] + kb.lanes[p][1] / 2)) <= 1 or p in (21, 108)
-        assert kb.key_rects[21].left <= 1 and kb.key_rects[108].right >= 1398
+        # A0's back takes what's left of the width (at most EQUAL_A0_MAX lanes), the rest an even margin
+        left, right = kb.key_rects[21].left, kb.tails[108].right
+        assert kb.tails[21].left == left and kb.pitch <= kb.tails[21].w <= common.EQUAL_A0_MAX * kb.pitch
+        assert abs(left - (1400 - (right + kb.gap - kb.gap // 2))) <= 1
+        for w in (1280, 1600, 1920, 2560, 3840):                   # and the same at any width
+            k = common.Keyboard(pygame.Rect(0, 0, w, 150))
+            assert len({lw for _, lw in k.lanes.values()}) == 1
+            assert len({k.key_rects[p].w for p in range(22, 108) if p % 12 in (5, 7, 9, 11)}) == 1
         app.play(midi_path("demo_song.mid"))
         app.mode.seek(3.0)
         app.mode.render()

@@ -187,11 +187,19 @@ proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
 menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setting`):
-- 88 lanes of one width L = keyboard width / (87 + 0.5 + 5/3), with a gap of max(1, L/15) px.
-  Every black key and every white key's back (`Keyboard.tails`) fills its lane, so every
-  falling note has the same width. The white fronts share their group's lanes evenly:
-  C-E = 5 lanes / 3, F-B = 7 lanes / 4 (as in DAW piano rolls and the Osmose). A0's and C8's
-  backs reach the keyboard's edges.
+- 88 lanes, every one exactly the same in whole pixels (v26.1.19.SNAPSHOT-11, after PASHKULI measured a 2560 px
+  screenshot: with a fractional lane width L = width / 89.17 and each edge rounded, lanes, blacks and backs came
+  out 26 or 27 px and fronts 46, 48 or 49, so the notes' lanes and gaps wandered by a pixel). Now the lane
+  pitch P = width // 88 (an integer), the gap g = max(1, round(P / 15)), each lane P - g: every black key and
+  every white key's back (`Keyboard.tails`) fills its lane, so every falling note and every gap is identical.
+  The white fronts share their group's lanes: C-E's three in 5 lanes, F-B's four in 7 (as in DAW piano rolls
+  and the Osmose), all exactly the same width within a group - 5P or 7P rarely splits evenly (only for P a
+  multiple of 12), so the pixel or two left over widens the gaps between those fronts by one (never the backs'
+  gaps). C8's front is its back (one lane). A0's back (and front) take what's left of the width: width - 87P,
+  between 1 and `EQUAL_A0_MAX` 2 lanes; beyond that the keys are centred and the rest is an even margin each
+  side (up to ~(87 - P) / 2 px: 25 px at 1920, 0 at 2560). `Keyboard.pitch`, `keys_x` (the keys' left and
+  right edges). At 2560x1440, measured from the drawn pixels: lanes, blacks and backs all 27 px (before 26/27),
+  C-E fronts all 46, F-B all 48 (before 46/48/49).
 - The average white key keeps the realistic width (`white_w`), so the hands keep their scale;
   `key_rects` of a white key is its front, and a finger playing up among the black keys
   (`white_up`) moves over to the key's back (`HandAnimator.key_target`).
