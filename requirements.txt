@@ -1,5 +1,6 @@
 pygame-ce>=2.5      # the community edition: faster drawing; still `import pygame`. Plain pygame>=2.1 works too
 pretty_midi>=0.2.10
-# a soundfont chosen in the Settings plays through TinySoundFont (+ PyAudio, prebuilt for Windows);
-# without it the notes play through the system's MIDI synth. Elsewhere: install PortAudio, then tinysoundfont
-tinysoundfont>=0.3.7; sys_platform == "win32"
+# Optional, for a soundfont chosen in the Settings (without it the notes play through the system's MIDI synth):
+#   pip install --no-deps tinysoundfont
+# --no-deps: its sound goes out through pygame's mixer, so it doesn't need PyAudio (which pip would try to
+# build, and can't without PortAudio - e.g. on Python 3.14 on Windows). numpy comes with pretty_midi.

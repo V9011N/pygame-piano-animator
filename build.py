@@ -141,8 +141,7 @@ def command(console=False, tcl_tk=()):
     ]
     if have_module("tinysoundfont"):                                   # soundfonts (sf_synth.py)
         cmd.append("--include-package=tinysoundfont")
-        if have_module("pyaudio"):
-            cmd.append("--include-module=pyaudio")                     # (imported only when it starts playing)
+        cmd.append("--nofollow-import-to=pyaudio")                     # (its own player; ours is pygame's mixer)
     if have_tkinter():
         cmd.append("--enable-plugin=tk-inter")                         # the file dialogs
         cmd += list(tcl_tk)

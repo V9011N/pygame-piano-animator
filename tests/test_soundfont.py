@@ -124,3 +124,43 @@ def test_settings_choose_a_soundfont_and_the_sound_choice_names_it(screen, tmp_p
     app.set_soundfont(str(tmp_path / "moved.sf2"))
     app.settings()
     assert app.mode.sound_text() == "Now: default - moved not found."
+
+
+class ToneSynth(FakeSynth):
+    """A stand-in that generates a steady stereo tone (left 0.5, right -0.5)."""
+
+    def __init__(self):
+        super().__init__()
+        self.asked = []
+
+    def generate(self, frames):
+        import numpy as np
+        self.asked.append(frames)
+        return memoryview(np.tile(np.float32([0.5, -0.5]), frames).tobytes())
+
+
+def test_the_soundfont_plays_through_the_mixer_in_its_format():
+    import threading
+    from sf_synth import CHUNK_FRAMES, MixerStream
+    stream = MixerStream.__new__(MixerStream)                # (no thread: chunks made by hand)
+    stream.synth, stream.lock, stream.rate = ToneSynth(), threading.RLock(), 44100
+    pygame.mixer.quit()
+    pygame.mixer.init(frequency=44100, size=-16, channels=2)
+    try:
+        init = pygame.mixer.get_init()
+        a = pygame.sndarray.array(stream.chunk(init))
+        assert a.shape == (CHUNK_FRAMES, 2) and abs(a[0, 0] - 16384) < 2 and abs(a[0, 1] + 16384) < 2
+        # another rate (a synced recording's): resampled to the same length
+        a = pygame.sndarray.array(stream.chunk((22050, init[1], init[2])))
+        assert stream.synth.asked[-1] == 2 * CHUNK_FRAMES and len(a) == CHUNK_FRAMES
+        # the thread keeps the reserved channel playing
+        out = MixerStream(ToneSynth(), threading.RLock(), 44100)
+        for _ in range(100):
+            if out.synth.asked:
+                break
+            pygame.time.wait(10)
+        assert out.synth.asked and out.channel is not None
+        out.stop()
+        assert not out.thread.is_alive()
+    finally:
+        pygame.mixer.quit()
