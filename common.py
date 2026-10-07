@@ -69,16 +69,43 @@ def fmt_time(seconds, frac=False):
     return ("-" if neg else "") + text
 
 
+# The app's typeface, bundled (assets/fonts, SIL Open Font License): the same on every computer. Fonts
+# looked up by name (pygame.font.SysFont) came out differently from one system to the next - another
+# face, or an italic one where a bold was asked for. Only if the files are missing is the system asked.
+FONT_FILES = {False: "SourceSansPro-Regular.ttf", True: "SourceSansPro-Bold.ttf"}
+FONT_SCALE = 1.05            # (Source Sans runs a little smaller than Segoe UI at the same size)
+_FALLBACK_FACE = "segoeui,arial,helvetica"
+_ui_fonts = {}
+
+
+def ui_font(size, bold=False):
+    """The app's typeface at `size` (as a Segoe UI size), regular or bold; cached."""
+    key = (size, bool(bold))
+    font = _ui_fonts.get(key)
+    if font is None:
+        if not _ui_fonts:
+            # a font kept past pygame.quit() crashes when used: forget them all then (pygame calls a quit
+            # function once, so it's registered again each time the cache starts over)
+            pygame.register_quit(_ui_fonts.clear)
+        from paths import resource
+        try:
+            font = pygame.font.Font(resource("assets", "fonts", FONT_FILES[bool(bold)]),
+                                    max(1, round(size * FONT_SCALE)))
+        except (OSError, FileNotFoundError, pygame.error):
+            font = pygame.font.SysFont(_FALLBACK_FACE, size, bold=bold)
+        _ui_fonts[key] = font
+    return font
+
+
 def load_fonts():
-    face = "segoeui,arial,helvetica"
     return {
-        "small": pygame.font.SysFont(face, 15),
-        "normal": pygame.font.SysFont(face, 17),
-        "big": pygame.font.SysFont(face, 30, bold=True),
-        "title": pygame.font.SysFont(face, 54, bold=True),
-        "finger": pygame.font.SysFont(face, 13, bold=True),
-        "label": pygame.font.SysFont(face, 11, bold=True),
-        "button": pygame.font.SysFont(face, 22, bold=True),
+        "small": ui_font(15),
+        "normal": ui_font(17),
+        "big": ui_font(30, bold=True),
+        "title": ui_font(54, bold=True),
+        "finger": ui_font(13, bold=True),
+        "label": ui_font(11, bold=True),
+        "button": ui_font(22, bold=True),
     }
 
 

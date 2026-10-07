@@ -60,6 +60,15 @@ def test_thumb_covers_two_black_keys_instead_of_rolling():
     assert plan(chord) == [1, 1, 3, 5]
 
 
+def test_a_finger_takes_two_keys_only_when_nothing_else_reaches():
+    # a free finger and every key in reach: one finger a key (not the thumb on the top two)
+    chord = [Note(p, 0.0, 1.0, 80, 0, LEFT) for p in (53, 57, 62, 64)]     # LH F-A-D-E
+    assert plan(chord, hand=LEFT) == [5, 4, 2, 1]
+    chord = [Note(p, 0.0, 1.0, 80, 0, LEFT) for p in (48, 52, 57, 59)]     # LH C-E-A-B
+    assert plan(chord, hand=LEFT).count(1) == 1
+    # out of reach one finger a key: the thumb on two (test_thumb_covers_two_black_keys_instead_of_rolling)
+
+
 def test_plain_chord_keeps_one_finger_per_note():
     chord = [Note(p, 0.0, 1.0, 80, 0, RIGHT) for p in (60, 62, 65, 69)]   # C-D-F-A
     assert plan(chord) == [1, 2, 3, 5]

@@ -53,7 +53,7 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
-                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys)
+                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys, ui_font)
 import paths
 import pianist as pianists
 import recent
@@ -68,8 +68,6 @@ SEEK_STEP = 5.0
 MENU_TITLE_H = 130          # px, the main menu's title and subtitle above its first button
 MENU_BUTTON_MIN_H = 54      # ...its buttons no lower than this with two lines of text...
 MENU_BUTTON_SMALL_H = 40    # ...and this with just their names (a small window)
-MENU_TIP_H = 20             # ...the tip above the keyboard
-MENU_ACTIVE_H = 20          # ...the active pianist line under Quit
 FINGER_PX_MAX = 17          # finger numbers on the notes: this big at most (13 before)...
 FINGER_PX_MIN = 11          # ...but narrower than a black key's notes (Visualizer._finger_size)
 FPS_CAP_MIN, FPS_CAP_MAX = 24, 240     # the frame rate cap's range (Settings; past the top: uncapped)
@@ -90,6 +88,17 @@ TO_MENU = "menu"
 # --------------------------------------------------------------------------- #
 # The falling-notes player
 # --------------------------------------------------------------------------- #
+def note_rect(x, w, keyline, start, end, t, pps):
+    """
+    A falling note's box at song time t (pps: pixels a second). Both edges are
+    rounded from the note's own times: truncating its top and its length
+    separately made its bottom - and its finger number - wobble a pixel as it
+    fell, and its length flicker.
+    """
+    top, bottom = round(keyline - (end - t) * pps), round(keyline - (start - t) * pps)
+    return pygame.Rect(x, top, w, max(4, bottom - top))
+
+
 class Visualizer(Transport):
     def __init__(self, screen, song=None, midi=None, speed=1.0, fonts=None, audio=None, hands=None):
         self.screen = screen
@@ -386,7 +395,7 @@ class Visualizer(Transport):
     def _finger_font(self, px):
         f = self._finger_fonts.get(px)
         if f is None:
-            f = self._finger_fonts[px] = pygame.font.SysFont("segoeui,arial,helvetica", px, bold=True)
+            f = self._finger_fonts[px] = ui_font(px, bold=True)
         return f
 
     def _finger_img(self, txt, color, px):
@@ -440,9 +449,7 @@ class Visualizer(Transport):
                     if n.is_black != black_pass or n.pitch not in kb.lanes:
                         continue
                     x, w = kb.lanes[n.pitch]
-                    y_bottom = keyline - (n.start - t) * pps
-                    y_top = keyline - (n.end - t) * pps
-                    rect = pygame.Rect(x, int(y_top), w, max(4, int(y_bottom - y_top)))
+                    rect = note_rect(x, w, keyline, n.start, n.end, t, pps)
                     color = HAND_COLORS[n.hand][1 if black_pass else 0]
                     if id(n) in held:
                         color = mix(color, (255, 255, 255), 0.3)
@@ -850,8 +857,9 @@ class MainMenu:
         bw = min(560, w - 80)
         # the buttons, Quit and the active pianist fit between the title and the tip above the keyboard
         kb_h = bottom_layout((w, h))[0].h
-        floor = h - kb_h - FELT_H - 14 - MENU_TIP_H            # (the tip's top)
-        below = 4 + 40 + 16 + MENU_ACTIVE_H + 8                # Quit, then the active pianist
+        line = self.app.fonts["small"].get_height()            # the tip's and the active pianist line's height
+        floor = h - kb_h - FELT_H - 14 - line                  # (the tip's top)
+        below = 16 + 40 + 16 + line + 6                        # Quit, then the active pianist (and a gap)
         n, gap = 4, 16 if h >= 760 else 10
         fit = (floor - MENU_TITLE_H - below - (n - 1) * gap) // n
         bh = max(MENU_BUTTON_SMALL_H, min(88, int(h * 0.105), fit))
@@ -1025,6 +1033,15 @@ class MainMenu:
 # --------------------------------------------------------------------------- #
 # The application: owns the window, the synth and the current mode
 # --------------------------------------------------------------------------- #
+def display_refresh_rate():
+    """The desktop's refresh rate (Hz), if pygame can tell (pygame-ce) and it's within the cap's range; else None."""
+    try:
+        rate = pygame.display.get_desktop_refresh_rates()[0]
+    except (AttributeError, IndexError, pygame.error):
+        return None
+    return rate if FPS_CAP_MIN <= rate <= FPS_CAP_MAX else None
+
+
 def fps_cap_value(cap):
     """A frame rate cap as kept: an int within FPS_CAP_MIN..FPS_CAP_MAX, or None (uncapped)."""
     if cap is None:
@@ -1042,7 +1059,9 @@ class App:
         set_key_style(pianists.app_setting("keys", "realistic"))
         set_keyboard_place(pianists.app_setting("keyboard_place"))
         self.perf_overlay = bool(pianists.app_setting("perf_overlay", False))
-        self.fps_cap = fps_cap_value(pianists.app_setting("fps_cap", FPS))   # None: uncapped
+        cap = pianists.app_setting("fps_cap", "auto")                         # None: uncapped
+        # never chosen: the monitor's own rate (60 fps on a 144 Hz screen holds frames 2 or 3 refreshes: judder)
+        self.fps_cap = fps_cap_value(display_refresh_rate() or FPS) if cap == "auto" else fps_cap_value(cap)
         self._frame_ms = collections.deque(maxlen=PERF_FRAMES)       # the last frames' times, for the overlay
         self._sound = sound
         self.midi, self.soundfont_problem = self._make_synth(pianists.app_setting("soundfont"))
@@ -1170,14 +1189,20 @@ class App:
     def run(self):
         clock = pygame.time.Clock()
         running = True
+        last = None
         while running:
             # A frame that took long (a file loading, the first poses being
             # solved) must not jump the song ahead: the clock only moves on
             # by at most MAX_FRAME_DT per frame, and not at all on the frame
             # right after a new mode (song) was set up.
-            ms = clock.tick(self.fps_cap or 0)
-            self._frame_ms.append(ms)
-            dt = min(ms / 1000.0, MAX_FRAME_DT)
+            # (tick only for the cap: it counts whole milliseconds, so at 144 Hz a 6.94 ms frame moved the
+            # song on 6 or 7 ms - unevenly, a jitter - so the frame's time is measured to the microsecond)
+            clock.tick(self.fps_cap or 0)
+            now = time.perf_counter()
+            real = now - last if last is not None else 0.0
+            last = now
+            self._frame_ms.append(real * 1000.0)
+            dt = min(real, MAX_FRAME_DT)
             if self._fresh:
                 dt, self._fresh = 0.0, False
             for event in pygame.event.get():

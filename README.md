@@ -57,6 +57,11 @@ From The Cuphead Show with White Gloves
 - **Pianists & hands**: create pianists with their own hand anatomy (19 bones), technique and
   fingering preferences, and a skin (cartoon, white gloves, robot or skeleton).
 
+## Credits
+
+The interface typeface is Source Sans Pro by Adobe, under the SIL Open Font License
+(`assets/fonts/OFL.txt`).
+
 ## Requirements
 
 - Python 3.10+ (developed with 3.12)

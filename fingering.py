@@ -150,8 +150,9 @@ W = {
     "chord_cramp": 0.4,
     "chord_stretch_adj": 1.2,
     "figure": 1.0,             # times the figure's weight, for leaving its standard fingering
-    "thumb_double": 7.0,       # the thumb covering two neighbouring keys in a chord
-    "pinky_double": 8.0,       # the little finger covering two neighbouring white keys
+    "thumb_double": 15.0,      # the thumb covering two neighbouring keys in a chord (only where no finger-a-key
+                               # shape is in reach: at 7 it beat a merely uncomfortable one, e.g. LH F-A-D-E 5-3-1-1)
+    "pinky_double": 16.0,      # the little finger covering two neighbouring white keys (likewise)
     "same_shape": 1.5,         # the same fingers on a chord shape that moves by step (4-2, 4-2, 4-2)
     "shape_shift": 0.5,        # moving a whole chord shape with the same fingers
     "octave_4_white": 1.5,     # an octave's top note with 4 on a white key

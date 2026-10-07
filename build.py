@@ -121,6 +121,8 @@ def command(console=False, tcl_tk=()):
         "--onefile-tempdir-spec={CACHE_DIR}/Hand-thesia/{VERSION}",
         "--include-data-files=CHANGELOG.md=CHANGELOG.md",              # the menu's "What's new"
         "--include-data-files=assets/icon.png=assets/icon.png",        # the window icon
+        "--include-data-files=assets/fonts/*.ttf=assets/fonts/",       # the typeface (common.ui_font)
+        "--include-data-files=assets/fonts/OFL.txt=assets/fonts/OFL.txt",   # ...and its licence
         # tools and tests that the app never imports
         "--nofollow-import-to=pig_eval,learn_weights,tests,conftest,pytest",
         "--noinclude-pytest-mode=nofollow",

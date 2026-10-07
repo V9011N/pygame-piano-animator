@@ -99,6 +99,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - A chosen soundfont plays in a process of its own (`sf_synth._player_process`, multiprocessing "spawn"),
   which imports `main.py` again: keep `main.py`'s top level free of side effects (everything under
   `if __name__ == "__main__":`).
+- Fonts: always `common.ui_font(size, bold)` (or the `fonts` dict from `load_fonts`), never
+  `pygame.font.SysFont` - the bundled typeface (assets/fonts, OFL) looks the same on every system.
 - Don't commit third-party data (MIDI collections, PIG files, PDFs, reference images) or
   personal `pianists/` files; `.gitignore` covers them.
 - Windows is the main target (the author's machine); paths go through `os.path`, and file

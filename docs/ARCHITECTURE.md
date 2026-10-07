@@ -147,6 +147,23 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Fonts and frame pacing (v26.1.19.SNAPSHOT-14)
+- Every font comes from the bundled typeface: Source Sans Pro, regular and bold (`assets/fonts`, SIL Open Font
+  License, `OFL.txt` beside them; build.py includes them), through `common.ui_font(size, bold)` at `FONT_SCALE`
+  1.05 of the old Segoe UI sizes (Source Sans runs a little small). Before, `pygame.font.SysFont("segoeui,arial,
+  helvetica")` asked each system by name: Segoe UI on the author's Windows, FreeSans in the Linux container, and
+  on a forum user's machine an italic face for the bold finger numbers. Falls back to SysFont only if the files
+  are missing. Fonts are cached and the cache cleared on `pygame.quit()` (a font used after it segfaults;
+  pygame calls a quit function once, so it's registered again whenever the cache starts over).
+- The frame clock: `App.run` measures each frame with `time.perf_counter` and uses `clock.tick` only for the cap
+  (tick counts whole milliseconds: at 144 fps a 6.94 ms frame moved the song 6 or 7 ms; the song drifted ±1 ms
+  against the wall clock, now ±0.04). The cap, until chosen in the Settings ("fps_cap" absent), is the monitor's
+  refresh rate (`display_refresh_rate`: pygame-ce's `get_desktop_refresh_rates`, else 60): 60 fps on a 144 Hz
+  screen holds frames 2 or 3 refreshes in turn, a judder. `note_rect` rounds a falling note's top and bottom
+  from its own times (was: top and length truncated separately, a pixel off).
+- The main menu's layout measures the small font's height (the tip and the active pianist line) instead of
+  assuming 20 px.
+
 ## Performance (v26.1.1)
 Measured headless (SDL dummy video, 1600x900) on the development container; a desktop is faster, but the
 proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames per section.
@@ -698,7 +715,12 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Both are symmetric about D, so they hold in the LH's mirrored frame.
   - `_states(given, ps)` adds (1,1,…) when the two lowest keys in the hand's frame are a thumb pair, (…,5,5) when the two highest are a pinky pair, and both for chords of 5 or more.
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
-  - Costs: `chord_pair_cost` charges `thumb_double` 7 / `pinky_double` 8 for the pair. `shape_cost` and the held-key steal (`held_map` is now finger → set of pitches) accept pairs.
+  - Costs: `chord_pair_cost` charges `thumb_double` 15 / `pinky_double` 16 for the pair (7 / 8 until
+    v26.1.19.SNAPSHOT-14: below the comfort costs of an ordinary in-reach shape - LH F-A-D-E's 5-4-2-1 is 12.1,
+    its fourth 4-5 a third (`chord_stretch_adj`) and `inner_room_cost` 4 - so 4-note chords with a free finger got
+    the thumb on two keys, 288 of 364 isolated test chords; 15: 224, the rest being shapes with no finger-a-key
+    fingering in reach (MAX_SPAN), e.g. C-D-G-C's fourths on 2-3 / 4-5. In five pieces, 8699 chords: thumb on
+    two 87 → 57, little finger 8 → 4). `shape_cost` and the held-key steal (`held_map` is now finger → set of pitches) accept pairs.
   - The costs are tuned so plain chords stay normal (C-D-F-A: 1-2-3-5; C-E-G-B-C: 1-2-3-4-5). Doubles appear when a normal fingering would overstretch neighbouring fingers or exceed MAX_SPAN, e.g. C#-D#-G#-C#: 1-1-3-5.
   - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
