@@ -37,7 +37,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | File | Role |
 |---|---|
 | `main.py` | `App` (window, synth, mode switching, frame clock, performance overlay), `MainMenu`, `Visualizer` (falling notes) |
-| `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), performance overlay |
+| `app_settings.py` | `SettingsScreen`: keyboard position (dragged; `common.set_keyboard_place`), keyboard type, frame rate cap (`App.set_fps_cap`), performance overlay |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout` (keyboard placement), `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `VolumeSlider`, `draw_tooltip`, `run_busy` (a job in a worker thread behind a progress bar) |
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |

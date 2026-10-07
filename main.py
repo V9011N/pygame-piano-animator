@@ -48,7 +48,7 @@ import time
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")      # (no banner in the console or the log)
 import pygame  # noqa: E402
 
-from common import (ACCENT, KEY_STYLES, LANE_WHITE, key_style, set_key_style, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
+from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_shadowed, BAR_BG, BAR_FILL, BAR_LINE, BG, FELT_H, FPS, HAND_COLORS, LANE_LINE,
                     LEAD_IN, TEXT, TEXT_DIM, TOP_BAR_H, WINDOW_SIZE, Button, Keyboard,
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
@@ -66,6 +66,8 @@ WAVE_FINE = 0.1              # dragging the waveform with Shift held moves it th
 SEEK_STEP = 5.0
 FINGER_PX_MAX = 17          # finger numbers on the notes: this big at most (13 before)...
 FINGER_PX_MIN = 11          # ...but narrower than a black key's notes (Visualizer._finger_size)
+FPS_CAP_MIN, FPS_CAP_MAX = 24, 240     # the frame rate cap's range (Settings; past the top: uncapped)
+UNCAPPED_IDLE_HZ = 240      # uncapped, the hands work ahead (App.run's idle) as if at this frame rate
 PERF_FRAMES = 120           # the performance overlay (Settings): this many frames' times...
 PERF_W, PERF_GRAPH_H = 230, 46
 PERF_MAX_MS = 50.0          # ...graphed up to this
@@ -698,7 +700,6 @@ class MainMenu:
             Button("Quit", "quit", font="normal", key_hint="Esc"),
         ]
         self.changelog_button = Button("What's new", "changelog", font="small")
-        self.keys_button = Button("", "keys", font="small")
         self.settings_button = Button("Settings", "settings", font="small")
         self.overlay_top = 0
         self.changelog_new = not changelog_seen()       # glows until opened
@@ -717,8 +718,7 @@ class MainMenu:
         self.buttons[3].rect = pygame.Rect((w - 160) // 2, y + 4, 160, 40)
         self._active_y = y + 60
         self.changelog_button.rect = pygame.Rect(w - 16 - 110, 16, 110, 32)
-        self.keys_button.rect = pygame.Rect(w - 16 - 110 - 10 - 150, 16, 150, 32)
-        self.settings_button.rect = pygame.Rect(self.keys_button.rect.x - 10 - 100, 16, 100, 32)
+        self.settings_button.rect = pygame.Rect(w - 16 - 110 - 10 - 100, 16, 100, 32)
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -742,7 +742,7 @@ class MainMenu:
             if event.key in (pygame.K_h, pygame.K_3):
                 return self._do("pianists")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            for b in self.buttons + [self.changelog_button, self.keys_button, self.settings_button]:
+            for b in self.buttons + [self.changelog_button, self.settings_button]:
                 if b.hit(event.pos):
                     return self._do(b.action)
         return True
@@ -756,11 +756,6 @@ class MainMenu:
     def _do(self, action):
         if action == "changelog":
             self.open_changelog()
-            return True
-        if action == "keys":
-            style = KEY_STYLES[(KEY_STYLES.index(key_style()) + 1) % len(KEY_STYLES)]
-            set_key_style(style)
-            pianists.set_app_setting("keys", style)
             return True
         if action == "quit":
             return False
@@ -815,8 +810,6 @@ class MainMenu:
         if self.changelog_new:
             self._draw_glow(s, self.changelog_button.rect)
         self.changelog_button.draw(s, f, mouse)
-        self.keys_button.label = "Keys: equal" if key_style() == "equal" else "Keys: realistic"
-        self.keys_button.draw(s, f, mouse)
         self.settings_button.draw(s, f, mouse)
         if self.changelog:
             self.changelog.draw(s)
@@ -839,6 +832,16 @@ class MainMenu:
 # --------------------------------------------------------------------------- #
 # The application: owns the window, the synth and the current mode
 # --------------------------------------------------------------------------- #
+def fps_cap_value(cap):
+    """A frame rate cap as kept: an int within FPS_CAP_MIN..FPS_CAP_MAX, or None (uncapped)."""
+    if cap is None:
+        return None
+    try:
+        return max(FPS_CAP_MIN, min(FPS_CAP_MAX, int(round(float(cap)))))
+    except (TypeError, ValueError):
+        return FPS
+
+
 class App:
     def __init__(self, screen, sound=True, speed=1.0):
         self.screen = screen
@@ -846,6 +849,7 @@ class App:
         set_key_style(pianists.app_setting("keys", "realistic"))
         set_keyboard_place(pianists.app_setting("keyboard_place"))
         self.perf_overlay = bool(pianists.app_setting("perf_overlay", False))
+        self.fps_cap = fps_cap_value(pianists.app_setting("fps_cap", FPS))   # None: uncapped
         self._frame_ms = collections.deque(maxlen=PERF_FRAMES)       # the last frames' times, for the overlay
         self.midi = MidiOut(sound)
         self.midi.set_volume(pianists.app_setting("volume", DEFAULT_VOLUME))
@@ -938,7 +942,7 @@ class App:
             # solved) must not jump the song ahead: the clock only moves on
             # by at most MAX_FRAME_DT per frame, and not at all on the frame
             # right after a new mode (song) was set up.
-            ms = clock.tick(FPS)
+            ms = clock.tick(self.fps_cap or 0)
             self._frame_ms.append(ms)
             dt = min(ms / 1000.0, MAX_FRAME_DT)
             if self._fresh:
@@ -955,7 +959,7 @@ class App:
                 self.draw_perf()
             pygame.display.flip()
             # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
-            spare = 1.0 / FPS - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
+            spare = 1.0 / (self.fps_cap or UNCAPPED_IDLE_HZ) - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
             if spare > 0 and hasattr(self.mode, "idle"):
                 self.mode.idle(spare)
         self.close()
@@ -996,6 +1000,11 @@ class App:
         self.screen.blit(panel, (8, top))
         blit_shadowed(self.screen, font, f"{fps:.0f} FPS   {avg:.1f} ms   (worst {max(frames):.0f} ms)",
                       TEXT, (14, top + 4))
+
+    def set_fps_cap(self, cap):
+        """The frame rate cap (Settings): FPS_CAP_MIN..FPS_CAP_MAX, or None for uncapped; kept for next time."""
+        self.fps_cap = fps_cap_value(cap)
+        pianists.set_app_setting("fps_cap", self.fps_cap)
 
     def settings(self):
         from app_settings import SettingsScreen

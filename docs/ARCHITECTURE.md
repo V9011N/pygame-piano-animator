@@ -34,6 +34,12 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     the window's bottom), `common.keyboard_y_range`; `bottom_layout` places the keys there and gives the hand
     area what's left below (none = the old default). Reset to default clears it. The pedal clipart shrinks to
     fit a short hand area (`draw_pianist_badge`).
+  - Keyboard type ("keys", v26.1.19.SNAPSHOT-03): realistic or equal keys - moved here from the main menu's
+    Keys button (`common.set_key_style`).
+  - Frame rate cap ("fps_cap", v26.1.19.SNAPSHOT-03): a slider from `FPS_CAP_MIN` 24 to `FPS_CAP_MAX` 240 fps,
+    its one step further right "uncapped" (kept as null); default 60 (`common.FPS`, as before). `App.run` ticks
+    the clock at the cap (0: no limit); the hands' work ahead in a frame's spare time (`idle`) is budgeted to the
+    cap, or to `UNCAPPED_IDLE_HZ` 240 uncapped. `main.fps_cap_value` clamps what's read.
   - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
     worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
     `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the

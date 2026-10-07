@@ -148,9 +148,10 @@ def test_equal_keys_toggle_and_layout(screen):
     import common
     import pianist
     app = app_on(screen)
-    menu = app.mode
     assert common.key_style() == "realistic"
-    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=menu.keys_button.rect.center))
+    app.settings()                                               # (the keyboard type is in the Settings)
+    app.mode.render()
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.mode.keys.rect.center))
     assert common.key_style() == "equal" and pianist.app_setting("keys") == "equal"
     try:
         kb = common.Keyboard(pygame.Rect(0, 0, 1400, 150))
@@ -333,3 +334,25 @@ def test_volume_and_top_bar_tooltips(screen):
     r = ed.volume._track()
     app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.right, r.centery)))
     assert app.midi.volume == 1.0
+
+
+def test_frame_rate_cap_setting(screen):
+    import pianist
+    app = app_on(screen)
+    assert app.fps_cap == 60                                         # the default
+    app.settings()
+    st = app.mode
+    st.render()
+    tr = st.fps.track
+    for x, want in ((tr.x - 4, 24), (tr.right + 4, None), (tr.x + tr.w // 2, None)):
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(x, tr.centery)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(x, tr.centery)))
+        if want is None and x < tr.right:
+            assert 24 < app.fps_cap < 240                            # somewhere in between
+        else:
+            assert app.fps_cap == want, (x, app.fps_cap)             # all the way right: uncapped
+    assert pianist.app_setting("fps_cap") == app.fps_cap
+    app.set_fps_cap(None)
+    assert app_on(screen).fps_cap is None                            # remembered, uncapped too
+    import main
+    assert main.fps_cap_value(500) == 240 and main.fps_cap_value(5) == 24 and main.fps_cap_value("x") == 60

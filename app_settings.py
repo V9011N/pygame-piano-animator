@@ -7,18 +7,23 @@ app_settings.py - The Settings screen (main menu > Settings).
     lowest the keys' bottom half a keyboard height above the window's bottom
     (common.keyboard_y_range). Kept as a share of that range, so it holds at
     any window size ("keyboard_place" in settings.json; none = the default).
+  * Keyboard type: realistic or equal keys (common.set_key_style; "keys").
+  * Frame rate cap: 24 to 240 frames a second, uncapped all the way to the
+    right (App.set_fps_cap; "fps_cap", none = uncapped).
   * Performance profiling: the frame rate and a translucent graph of the
     frame times in the top-left corner (App.draw_perf; "perf_overlay").
 """
 import pygame
 
 import pianist as pianists
-from common import (ACCENT, BAR_BG, BG, FELT_H, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button,
-                    Keyboard, blit_shadowed, bottom_layout, draw_felt, draw_hand_area, keyboard_place,
-                    keyboard_y_range, mix, set_keyboard_place)
+from common import (ACCENT, BAR_BG, BG, FELT_H, KEY_STYLES, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H,
+                    Button, Keyboard, Slider, blit_shadowed, bottom_layout, draw_felt, draw_hand_area,
+                    key_style, keyboard_place, keyboard_y_range, mix, set_key_style, set_keyboard_place)
 from midi_loader import LEFT, RIGHT
 
 TO_MENU = "menu"
+FPS_CAP_MIN, FPS_CAP_MAX = 24, 240      # (as main.py's: the slider's top step past FPS_CAP_MAX is "uncapped")
+ROW_H = 66                              # each setting's row in the panel
 
 
 class SettingsScreen:
@@ -28,6 +33,11 @@ class SettingsScreen:
         self.done = Button("Done", "done", font="small")
         self.reset = Button("Reset to default", "reset", font="small")
         self.perf = Button("", "perf", font="small")
+        self.keys = Button("", "keys", font="small")
+        cap = app.fps_cap
+        self.fps = Slider("", FPS_CAP_MIN, FPS_CAP_MAX + 1, FPS_CAP_MAX + 1 if cap is None else cap,
+                          self._set_cap, fmt=self._cap_text, step=1, lo_label=str(FPS_CAP_MIN),
+                          hi_label="uncapped")
         self.dragging = None             # the mouse's offset from the keyboard's top while it's dragged
         self.layout(app.screen.get_size())
         pygame.display.set_caption("Hand-thesia - Settings")
@@ -36,13 +46,25 @@ class SettingsScreen:
         w, h = size
         self.bar_rect = pygame.Rect(0, 0, w, TOP_BAR_H)
         self.done.rect = pygame.Rect(w - 10 - 90, 5, 90, TOP_BAR_H - 10)
-        pw = min(640, w - 40)
+        pw = min(820, w - 40)
         # the panel sits above the highest the keys can go (the window's centre)
-        self.panel = pygame.Rect((w - pw) // 2, TOP_BAR_H + 16, pw, 166)
-        x, y = self.panel.x + 20, self.panel.y
-        self.reset.rect = pygame.Rect(self.panel.right - 20 - 150, y + 18, 150, 30)
-        self.perf.rect = pygame.Rect(self.panel.right - 20 - 150, y + 108, 150, 30)
+        self.panel = pygame.Rect((w - pw) // 2, TOP_BAR_H + 16, pw, 4 * ROW_H + 24)
+        x, y = self.panel.x + 20, self.panel.y + 12
+        right = self.panel.right - 20
+        self.reset.rect = pygame.Rect(right - 150, y + 6, 150, 30)
+        self.keys.rect = pygame.Rect(right - 150, y + ROW_H + 6, 150, 30)
+        self.fps.layout(pygame.Rect(right - 240, y + 2 * ROW_H - 6, 248, 52))
+        self._text_w = right - 260 - x              # (descriptions stop short of the controls)
+        self.perf.rect = pygame.Rect(right - 150, y + 3 * ROW_H + 6, 150, 30)
         self._rows = (x, y)
+
+    # ----- the frame rate cap ----------------------------------------------------
+    @staticmethod
+    def _cap_text(v):
+        return "uncapped" if v > FPS_CAP_MAX else f"{int(round(v))} fps"
+
+    def _set_cap(self, v):
+        self.app.set_fps_cap(None if v > FPS_CAP_MAX else int(round(v)))
 
     # ----- the keyboard's place ------------------------------------------------
     def _kb(self):
@@ -62,12 +84,19 @@ class SettingsScreen:
             self.layout(event.size if hasattr(event, "size") else self.app.screen.get_size())
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             return TO_MENU
+        elif self.fps.handle_event(event):
+            return True
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.done.hit(event.pos):
                 return TO_MENU
             if self.reset.hit(event.pos):
                 set_keyboard_place(None)
                 pianists.set_app_setting("keyboard_place", None)
+                return True
+            if self.keys.hit(event.pos):
+                style = KEY_STYLES[(KEY_STYLES.index(key_style()) + 1) % len(KEY_STYLES)]
+                set_key_style(style)
+                pianists.set_app_setting("keys", style)
                 return True
             if self.perf.hit(event.pos):
                 self.app.perf_overlay = not self.app.perf_overlay
@@ -124,19 +153,26 @@ class SettingsScreen:
         pygame.draw.rect(s, PANEL, p, border_radius=8)
         pygame.draw.rect(s, PANEL_EDGE, p, 1, border_radius=8)
         x, y = self._rows
-        s.blit(f["normal"].render("Keyboard position", True, TEXT), (x, y + 16))
-        s.blit(f["small"].render("Click and hold the keyboard, then drag it up or down.", True, TEXT_DIM),
-               (x, y + 42))
         where = "default" if keyboard_place() is None else f"{int(round(100 * (1 - keyboard_place())))}% up"
-        s.blit(f["small"].render(f"Now: {where}", True, TEXT_DIM), (x, y + 62))
-        pygame.draw.line(s, mix(PANEL_EDGE, PANEL, 0.5), (x, y + 92), (p.right - 20, y + 92))
-        s.blit(f["normal"].render("Performance profiling", True, TEXT), (x, y + 106))
-        s.blit(f["small"].render("Frame rate and a frame-time graph in the top-left corner.", True, TEXT_DIM),
-               (x, y + 132))
+        rows = [("Keyboard position", f"Click and hold the keyboard, then drag it up or down. Now: {where}."),
+                ("Keyboard type", "Realistic keys, or equal keys: every key, black or white, the same width."),
+                ("Frame rate cap", "The most frames a second (all the way right: uncapped)."),
+                ("Performance profiling", "Frame rate and a frame-time graph in the top-left corner.")]
+        for i, (title, desc) in enumerate(rows):
+            ry = y + i * ROW_H
+            if i:
+                pygame.draw.line(s, mix(PANEL_EDGE, PANEL, 0.5), (x, ry - 8), (p.right - 20, ry - 8))
+            s.blit(f["normal"].render(title, True, TEXT), (x, ry))
+            clip = s.get_clip()
+            s.set_clip(pygame.Rect(x, ry + 20, max(0, self._text_w), 30))
+            s.blit(f["small"].render(desc, True, TEXT_DIM), (x, ry + 26))
+            s.set_clip(clip)
+        self.keys.label = "Equal keys" if key_style() == "equal" else "Realistic keys"
         self.perf.label = "Shown" if self.app.perf_overlay else "Hidden"
         self.perf.active = self.app.perf_overlay
-        for b in (self.reset, self.perf):
+        for b in (self.reset, self.keys, self.perf):
             b.draw(s, f, mouse)
+        self.fps.draw(s, f)
 
         pygame.draw.rect(s, BAR_BG, self.bar_rect)
         blit_shadowed(s, f["normal"], "Settings", TEXT,
