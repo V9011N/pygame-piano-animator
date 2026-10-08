@@ -55,7 +55,7 @@ From The Cuphead Show with White Gloves
   file), and show a performance overlay (frame rate and frame
   times). A volume control sits in the player's and the editor's top bars;
   hover over the player's controls to see what each does; the arrow-keys button under them lists the keys.
-- **Pianists & hands**: create pianists with their own hand anatomy (19 bones), technique and
+- **Pianists & hands**: create pianists with their own hand anatomy (19 bones and the wrist width), technique and
   fingering preferences, and a skin (cartoon, white gloves, robot or skeleton).
 
 ## Credits

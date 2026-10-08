@@ -544,6 +544,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   default hand 8.3): C3-A4 is played 1-5 in either hand; drawn, both hands reach it with the palm wide.
   Then (the author's call, to shape such hands themselves) every bone up to 250% (`BONE_MAX` and
   `METACARPAL_MAX` 2.5): all at 250% spans 17.8 white keys (an 18th, 42 cm), planner reach 1-5 18.4.
+- Wrist width (v26.1.19.SNAPSHOT-19): `anatomy["wrist"]`, a share of the default hand's, 75-200%
+  (`pianist.WRIST_MIN` / `WRIST_MAX`, `clamp_wrist`; absent = 100%, so older pianist files are unchanged). Not a
+  bone - it isn't in `DEFAULT_ANATOMY`, which the bone limits and sliders walk. `HandGeometry` scales the two
+  wrist sides (`WRIST_SIDES`, ±2.2 units) apart by it (`wrist_scale`, `wrist_sides`); the skins' cuff, sleeve
+  and forearm are sized from those sides, the studio's skeleton draws from them, and nothing about reach or the
+  span depends on them. The studio's anatomy page has a "Wrist width" slider under the bone groups; Reset all
+  resets it too.
 - Hand span is measured in white keys, key centre to key centre: 8 = a 9th, which is the default. Size classes are Small below 7.6, Medium from 7.6 to 8.6, Large above that.
 - `hands.HandGeometry(anatomy)` builds the model:
   - each knuckle moves along its metacarpal to match its length; phalanges come straight from `bones`;

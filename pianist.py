@@ -56,6 +56,15 @@ BONE_MIN, BONE_MAX = 0.70, 2.50
 METACARPAL_MAX = 2.50
 
 
+# The wrist's width, as a share of the default hand's (anatomy["wrist"]; none = 100%): 75%..200%. Not a bone, so
+# it isn't in DEFAULT_ANATOMY (which the bone sliders and limits walk).
+WRIST, WRIST_MIN, WRIST_MAX = "wrist", 0.75, 2.0
+
+
+def clamp_wrist(v):
+    return max(WRIST_MIN, min(WRIST_MAX, float(v)))
+
+
 def bone_max(bid):
     """The most a bone may be, as a share of its default length."""
     return METACARPAL_MAX if BONE_INFO[bid][1] == "mc" else BONE_MAX
@@ -302,6 +311,11 @@ class Pianist:
         for k, v in (d.get("anatomy") or {}).items():
             if k in anatomy:
                 anatomy[k] = clamp_bone(k, float(v))
+            elif k == WRIST:
+                try:
+                    anatomy[WRIST] = clamp_wrist(v)
+                except (TypeError, ValueError):
+                    pass
         behavior = dict(DEFAULT_BEHAVIOR)
         for k, v in (d.get("behavior") or {}).items():
             spec = BEHAVIOR.get(k)

@@ -987,3 +987,34 @@ def test_the_largest_hand_spans_at_least_a_thirteenth():
             assert sorted(plan([Note(p, 0.0, 1.0, 80, 0, hand) for p in (48, 69)], hand=hand)) == [1, 5]   # C3-A4
     finally:
         F.apply_pianist(None)
+
+
+def test_the_wrist_width_is_part_of_the_anatomy(screen):
+    """Wrist width: 75%..200% of the default, kept with the pianist, moves the wrist's two sides."""
+    import pianist as P
+    from hands import HandGeometry, WRIST_SIDES
+    assert P.clamp_wrist(9.0) == 2.0 and P.clamp_wrist(0.1) == 0.75
+    p = P.default_pianist()
+    p.anatomy[P.WRIST] = 1.6
+    back = P.Pianist.from_json(p.id, p.to_json())
+    assert back.anatomy[P.WRIST] == 1.6
+    d = p.to_json()
+    d["anatomy"] = dict(d["anatomy"], **{P.WRIST: 5.0})
+    assert P.Pianist.from_json(p.id, d).anatomy[P.WRIST] == 2.0                   # (kept within its limits)
+    assert P.WRIST not in P.Pianist.from_json("old", {"name": "Old"}).anatomy       # (older files: 100%)
+    g, g0 = HandGeometry(back.anatomy), HandGeometry()
+    assert g0.wrist_sides == WRIST_SIDES
+    width = lambda geo: geo.wrist_sides[1][0] - geo.wrist_sides[0][0]
+    assert abs(width(g) - 1.6 * width(g0)) < 1e-9 and g.span_units() == g0.span_units()   # (the span is the fingers')
+    # the studio's slider
+    import main
+    app = main.App(screen, sound=False)
+    app.studio()
+    st = app.mode
+    st._start_new("Wide")
+    st._open_anatomy()
+    st.render()
+    assert st.g_wr.lo == 0.75 and st.g_wr.hi == 2.0 and st.g_wr.value == 1.0
+    st.g_wr.on_change(1.8)
+    assert st.work.anatomy[P.WRIST] == 1.8 and st.dirty
+    st.render()

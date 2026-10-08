@@ -451,7 +451,11 @@ class HandGeometry:
         self.anatomy = a
         self.thumb_cmc = THUMB_CMC
         self.mc_base = MC_BASE
-        self.wrist_sides = WRIST_SIDES
+        # the wrist's width (the studio's "Wrist width", anatomy["wrist"]): its two sides further apart or closer;
+        # the cuff and forearm the skins draw follow them
+        from pianist import WRIST, clamp_wrist
+        self.wrist_scale = clamp_wrist(a.get(WRIST, 1.0))
+        self.wrist_sides = tuple((x * self.wrist_scale, y, z) for x, y, z in WRIST_SIDES)
         self.mcp = {}
         for f in range(2, 6):
             d = _sub(MCP[f], MC_BASE[f])

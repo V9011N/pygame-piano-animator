@@ -494,6 +494,11 @@ class PianistStudio:
                            self._group_scale(pianists.METACARPALS), group_setter(pianists.METACARPALS), fmt=pct)
         self.g_ph = Slider("All phalanges", pianists.BONE_MIN, pianists.BONE_MAX,
                            self._group_scale(pianists.PHALANGES), group_setter(pianists.PHALANGES), fmt=pct)
+        def set_wrist(v):
+            self.work.anatomy[pianists.WRIST] = pianists.clamp_wrist(v)
+            self.dirty = True
+        self.g_wr = Slider("Wrist width", pianists.WRIST_MIN, pianists.WRIST_MAX,
+                           self.work.anatomy.get(pianists.WRIST, 1.0), set_wrist, fmt=pct)
         self.bone_slider = None
         if self.sel_bone:
             b = self.sel_bone
@@ -805,7 +810,7 @@ class PianistStudio:
         if self.page == "overview":
             return self.sliders
         if self.page == "anatomy":
-            return [s for s in (self.g_mc, self.g_ph, self.bone_slider) if s]
+            return [s for s in (self.g_mc, self.g_ph, self.g_wr, self.bone_slider) if s]
         if self.page == "behavior" and self.b_slider:
             return [self.b_slider]
         if self.page == "finetune":
@@ -1117,7 +1122,7 @@ class PianistStudio:
             s.blit(f["small"].render(hint, True, TEXT_DIM), (view.x + 16, view.bottom - 26))
         self._panel(s, panel)
         x, y = panel.x + 20, panel.y + 16
-        for sl in (self.g_mc, self.g_ph):
+        for sl in (self.g_mc, self.g_ph, self.g_wr):
             sl.layout(pygame.Rect(x - 8, y, panel.w - 24, 52))
             sl.draw(s, f)
             y += 58
