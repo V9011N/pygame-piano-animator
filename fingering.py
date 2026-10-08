@@ -371,6 +371,7 @@ def apply_pianist(p):
     W.clear()
     W.update(base)
     MAX_SPAN.update(BASE_MAX_SPAN)
+    REACH_SCALE.clear()
     figures.PREFS.update(figures.DEFAULT_PREFS)
     for name, v in _fig_defaults().items():
         setattr(figures, name, v)
@@ -400,6 +401,7 @@ def _apply_preferences(p, base):
         RELAXED[f] = v * k
     stretch = p.b("stretch_bias")                 # -1 shift/cross .. +1 stretch
     scale = reach_scale(p.anatomy)
+    REACH_SCALE.update(scale)
     for pair, v in BASE_MAX_SPAN.items():
         # the anatomical reach; a pianist who prefers shifting uses a little less of it
         MAX_SPAN[pair] = v * scale[pair] * (1.0 + 0.06 * min(0.0, stretch))
@@ -417,6 +419,17 @@ def _apply_preferences(p, base):
     W["cross_thumb_black"] = base["cross_thumb_black"] * b
     figures.PREFS.update(chromatic=p.b("chromatic"), repeated=p.b("repeated"),
                          trill=p.b("trill"), octaves=p.b("octaves"))
+
+
+# This pianist's reach between each pair of fingers against the default hand's (hands.reach_scale; 1 = the
+# default hand). The comfort costs measure a spread in this hand's own units (distance / scale), as the limits
+# (MAX_SPAN) already do: a 13th hand spreading across an octave isn't straining as an average hand would.
+REACH_SCALE = {}
+
+
+def comfy(dist, fa, fb):
+    """A spread between fingers fa and fb, in this hand's units (the default hand's white keys)."""
+    return dist / REACH_SCALE.get((min(fa, fb), max(fa, fb)), 1.0)
 
 
 def is_black(pitch):
@@ -526,7 +539,7 @@ def pair_cost(p1, f1, p2, f2):
         return c
     if (d > 0) == (f2 > f1):
         rel, nat = abs(d), abs(_OFF[f2] - _OFF[f1])
-        c = W["stretch"] * max(0.0, rel - nat) + W["cramp"] * max(0.0, nat - rel)
+        c = W["stretch"] * max(0.0, comfy(rel, f1, f2) - nat) + W["cramp"] * max(0.0, nat - rel)
         limit = MAX_SPAN[(min(f1, f2), max(f1, f2))]
         if rel > limit:
             # Out of reach from where the hand is: the hand has to leap, and
@@ -553,10 +566,11 @@ def chord_pair_cost(pl, fl, ph, fh):
             return IMPOSSIBLE
         return W["cross"] * 2 + W["chord_stretch"] * abs(rel) + \
             (IMPOSSIBLE if rel > MAX_SPAN.get((fh, fl), 12) else 0.0)
-    c = W["chord_stretch"] * max(0.0, rel - nat) + W["chord_cramp"] * max(0.0, nat - rel)
+    spread = comfy(rel, fl, fh)
+    c = W["chord_stretch"] * max(0.0, spread - nat) + W["chord_cramp"] * max(0.0, nat - rel)
     if fh - fl == 1 and fl != 1:
         # neighbouring long fingers (2-3, 3-4, 4-5) held apart: thirds want 1-3 / 2-4 / 3-5
-        c += W["chord_stretch_adj"] * max(0.0, rel - 1.2)
+        c += W["chord_stretch_adj"] * max(0.0, spread - 1.2)
     if rel > MAX_SPAN[(fl, fh)]:
         c += IMPOSSIBLE
     if fl == 1 and fh == 4 and rel >= 6.0 and not is_black(ph):
@@ -589,6 +603,8 @@ def inner_room_cost(pairs):
     if not inner:
         return 0.0
     c = W["inner_room"] if fh == 4 else 0.0
+    if len(inner) >= fh - 2:
+        return c                                 # (every finger between the thumb and fh taken: no other way)
     span = key_pos(hi) - key_pos(lo)
     for p, f in inner:
         r = (key_pos(p) - key_pos(lo)) / span

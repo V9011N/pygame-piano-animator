@@ -753,6 +753,18 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Both are symmetric about D, so they hold in the LH's mirrored frame.
   - `_states(given, ps)` adds (1,1,…) when the two lowest keys in the hand's frame are a thumb pair, (…,5,5) when the two highest are a pinky pair, and both for chords of 5 or more.
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
+  - Hand size in the comfort costs (v26.1.19.SNAPSHOT-20): the pianist's anatomy scaled only the limits
+    (`MAX_SPAN` × `hands.reach_scale`); the comfort costs measured spreads against the default hand's natural
+    spacing, so a 13th hand (the author's "Rach-y": span 28.7 cm, reach 1-5 12.6 white keys) priced an octave
+    chord as the default hand does - at 3:39 of Rachmaninoff's Prelude Op. 3 No. 2 the RH C#4 D#4 F#4 A4 C#5
+    came out 1-1-2-3-5 for both (23.7 against 27.5 for 1-2-3-4-5). Now `REACH_SCALE` (set by `apply_pianist`,
+    empty = the default hand) and `comfy(dist, fa, fb)` = dist / that pair's reach scale: `pair_cost`'s and
+    `chord_pair_cost`'s stretch terms (and the neighbouring-fingers term) measure the spread in the hand's own
+    units; cramp terms don't. And `inner_room_cost`'s `inner_finger` (the key inside an octave wants the finger
+    over it) applies only when there's a choice - fewer inner keys than fingers between the thumb and the top
+    finger: with D#, F#, A inside, 2-3-4 are forced, yet each was charged for its "ideal" finger (8 of the 27.5).
+    Both hands now play that chord 1-2-3-4-5. Five pieces (33265 notes): default hand 26 notes changed (0.1%,
+    the inner rule), thumb on two keys 60 → 55; Rach-y 7.2% changed (its spreads are cheaper), 48 → 21.
   - Costs: `chord_pair_cost` charges `thumb_double` 15 / `pinky_double` 16 for the pair (7 / 8 until
     v26.1.19.SNAPSHOT-14: below the comfort costs of an ordinary in-reach shape - LH F-A-D-E's 5-4-2-1 is 12.1,
     its fourth 4-5 a third (`chord_stretch_adj`) and `inner_room_cost` 4 - so 4-note chords with a free finger got

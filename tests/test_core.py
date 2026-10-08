@@ -1018,3 +1018,26 @@ def test_the_wrist_width_is_part_of_the_anatomy(screen):
     st.g_wr.on_change(1.8)
     assert st.work.anatomy[P.WRIST] == 1.8 and st.dirty
     st.render()
+
+
+def test_a_bigger_hand_finds_spreads_comfortable(monkeypatch):
+    """The comfort costs follow the hand's size (not only its limits): a 13th hand plays C#-D#-F#-A-C# 1-2-3-4-5."""
+    import pianist as P
+    chord = lambda: [Note(p, 0.0, 1.0, 80, 0, RIGHT) for p in (61, 63, 66, 69, 73)]     # C#4 D#4 F#4 A4 C#5
+    big = P.default_pianist()
+    big.anatomy = {b: v * (1.8 if b.startswith("mc") else 1.5) for b, v in P.DEFAULT_ANATOMY.items()}
+    assert big.span_whites() >= 12.0
+    try:
+        F.apply_pianist(None)
+        spread = F.chord_pair_cost(69, 4, 73, 5)            # A-C# with 4-5: a stretch for the default hand
+        assert plan(chord()) == [1, 2, 3, 4, 5]             # (every inner finger taken: no "wrong" one)
+        monkeypatch.setattr(P, "_active", big)              # (planning applies the active pianist)
+        F.apply_pianist(big)
+        assert F.chord_pair_cost(69, 4, 73, 5) < spread / 2   # ...not for the big one
+        assert F.comfy(7.0, 1, 5) < 7.0 and F.REACH_SCALE[(1, 5)] > 1.3
+        assert plan(chord()) == [1, 2, 3, 4, 5]             # no thumb on C# and D#
+        assert F.REACH_SCALE[(1, 5)] > 1.3                  # (planned with the big hand)
+    finally:
+        monkeypatch.setattr(P, "_active", None)
+        F.apply_pianist(None)
+    assert F.REACH_SCALE == {} and F.comfy(7.0, 1, 5) == 7.0                  # (the default hand: as before)
