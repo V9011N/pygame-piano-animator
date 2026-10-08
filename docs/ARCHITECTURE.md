@@ -20,7 +20,19 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `finger_hand(notes, left, context)` is the convenience entry point.
 - `main.py` – the app.
   - `App` owns the window, the synth and the current mode.
-  - `MainMenu` has two options: Play (browse → falling notes) and Fingering editor (browse → editor).
+  - `MainMenu`: Play (browse → falling notes), Fingering editor (browse → editor), Recent, Pianists & hands.
+    Its layout fits the buttons, Quit and the active pianist between the title and the tip above the keyboard
+    (`MENU_*`); in a small window (under `MENU_BUTTON_MIN_H` 54 px a button) the buttons lose their second
+    lines and the title moves up, and the tip is left out if it still doesn't fit.
+  - Recent (v26.1.19.SNAPSHOT-10, `recent.py`): `App.play` / `App.edit` record each launch of a file in
+    settings.json ("recent", newest first, `RECENT_MAX` 5): playing, the MIDI file with the soundfont
+    (`MidiOut.path`; None = the system's synth) or the synced recording and its speed; editing, the MIDI
+    file. The same files again move to the top (another soundfont or speed for the same files counts as the
+    same setup, the newest kept). `RecentView` lists them over the menu (keys 1-5); `App.open_recent` opens
+    one as it was - the editor; or the player with that soundfont (`set_soundfont` if it differs; it's kept
+    as the setting); or `PlaybackSetup` on its speed page with the speed set, then `open_audio`, which plays
+    or says why not (too short). If any of its files is missing: `recent.remove`, and a `Dialog` ("File not
+    found", naming which file - MIDI, audio or soundfont) over the menu. `Dialog` now wraps its message.
   - `Visualizer` is the falling-notes player. Esc returns to the menu.
   - Command line: `main.py file.mid` plays the file, `--edit` opens it in the editor, `--screenshot` saves one frame.
 - `common.py` – shared pieces:
@@ -28,6 +40,101 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - `Transport` (clock, seek, speed, synth on/off);
   - tkinter `pick_file` / `save_file_dialog`;
   - `Button`, `Dialog`, `bottom_layout`.
+- `app_settings.py` – `SettingsScreen` (main menu > Settings, v26.1.19.SNAPSHOT-02), kept in settings.json:
+  - Keyboard position ("keyboard_place"): a live preview; drag the keyboard (or its felt) up or down. Stored as
+    0 (highest: the keys' top at the window's centre) .. 1 (lowest: the keys' bottom half a keyboard height above
+    the window's bottom), `common.keyboard_y_range`; `bottom_layout` places the keys there and gives the hand
+    area what's left below (none = the old default). Reset to default clears it. The pedal clipart shrinks to
+    fit a short hand area (`draw_pianist_badge`).
+  - Keyboard type ("keys", v26.1.19.SNAPSHOT-03): realistic or equal keys - moved here from the main menu's
+    Keys button (`common.set_key_style`).
+  - Frame rate cap ("fps_cap", v26.1.19.SNAPSHOT-03): a slider from `FPS_CAP_MIN` 24 to `FPS_CAP_MAX` 240 fps,
+    its one step further right "uncapped" (kept as null); default 60 (`common.FPS`, as before). `App.run` ticks
+    the clock at the cap (0: no limit); the hands' work ahead in a frame's spare time (`idle`) is budgeted to the
+    cap, or to `UNCAPPED_IDLE_HZ` 240 uncapped. `main.fps_cap_value` clamps what's read.
+  - Soundfont ("soundfont", v26.1.19.SNAPSHOT-04): Browse… for a .sf2 / .sf3, or Use default (the system's MIDI
+    synth, `common.MidiOut`). `sf_synth.make_synth(sound, path)` gives `SoundfontOut` - MidiOut's interface
+    (note_on / note_off by hand: RH channel 0, LH 1; control_change; set_volume as CC 7; pedals_up; silence;
+    close; `name`) over the built-in player `sf2.Synth` (bank 0 preset 0 on both channels, at the mixer's rate)
+    - or the system synth with the reason ("not found", "couldn't be played (...)"), which the row shows ("Now: default - X not found."). `App.set_soundfont` closes the old player and
+    loads the new one behind a progress bar (`run_busy`; at startup too), keeping the volume. The pedals are
+    played in `SoundfontOut`, not left to the soundfont: sustain keeps let-go keys sounding until it lifts,
+    sostenuto keeps the keys down when it went down, soft plays new notes at `SOFT_VELOCITY` 0.7; a key struck
+    again while it rings stops first.
+    `PlaybackSetup`'s first choice names it ("Soundfont: X" / "Play the notes with the X soundfont"), else
+    "Default sound" (the system's MIDI synth). Its name is in the tooltip of the player's "sound on / off".
+    Output (v26.1.19.SNAPSHOT-05): `sf_synth.MixerStream`, a daemon thread that keeps one `CHUNK_FRAMES` 768
+    chunk (17 ms) queued behind the playing one on mixer channel 0 (`set_reserved(1)`),
+    from `Synth.generate` converted to the mixer's format (size 8/-8/16/-16/32, mono/stereo/more) and
+    resampled if the mixer was reopened at another rate (a synced recording's). An `RLock` keeps note and
+    pedal calls off the synth while a chunk is generated. `close()` stops the thread and the channel.
+    `audio_sync.MIXER_LOCK` is held by each of the thread's steps and by `ensure_mixer` while it reopens the
+    mixer (a synced recording at its own rate, e.g. a 48 kHz MP3): touching a channel while the mixer closes
+    under it was a segfault - the program vanished with nothing logged. `audio_sync.mixer_opened` counts the
+    reopenings, so the thread re-takes its channel even when the mixer comes back in the same format.
+    768 frames: playing the densest 15 s of a ballade with the sustain pedal held throughout (up to 128 voices)
+    while the main thread ran Python 10 ms in every 16, 512-frame chunks ran dry 7-9 times; 768 none.
+  - The built-in player (`sf2.py`, v26.1.19.SNAPSHOT-07): TinySoundFont (the package) has Windows wheels only up
+    to Python 3.12 - on 3.13+ pip needs a C++ compiler - and its own output needs PyAudio, so the app plays
+    soundfonts itself, in numpy. `Synth.sfload` reads the RIFF chunks (pdta: phdr/pbag/pgen, inst/ibag/igen,
+    shdr) and keeps the samples on disk (`np.memmap`, viewed as a plain array - memmap indexing is slow);
+    a preset's regions are put together when it is first chosen (`regions`): instrument global zone, then the
+    zone, then the preset's generators added (key/velocity ranges intersected), as SoundFont 2.04 says. .sf3
+    samples (Ogg Vorbis) are decoded then, only the chosen preset's, through pygame's mixer; the decoded length
+    over the stream's own (the last Ogg page's granule position) gives the true rate (SDL's conversion is a
+    little off) and scales the loop points (sf3 counts them from the sample's start). FluidR3Mono's piano
+    (164 zones, 144 samples): 1.8 s. A `Voice` resamples by linear interpolation (step from root key, scale
+    tuning, coarse/fine tune and the sample's pitch correction), loops (modes 1 and 3), and follows the volume
+    envelope: delay, attack (linear amplitude), hold and decay key-scaled (`keynumTo...`), decay and release a
+    steady fall of `ENV_RANGE_DB` 96 dB per decay/release time (as FluidSynth), release at least
+    `MIN_RELEASE_S` 8 ms; over at 96 dB down or the sample's end. Gain: initialAttenuation (cB), velocity
+    linear, CC 7 squared (General MIDI; default 100), constant-power pan. Past `MAX_VOICES` 128 the quietest
+    (released first) go. Not played: modulation envelope, LFOs, filter, modulators, reverb/chorus.
+    Against TinySoundFont on TimGM6mb.sf2 (keys 36-84, velocities 30-120): the same pitch to 0.1 Hz, level
+    within 0.7 dB, release a little faster.
+    Speed (v26.1.19.SNAPSHOT-08): the voices are rendered together, as (voices x frames) arrays (`Synth._render`, one per sample
+    array) - one at a time, Python's overhead per voice was most of the cost (about 45 us each, so 128 voices of
+    a big stereo piano - two voices a note - took 4-12 ms a 768-frame chunk, 44 ms at worst, and held the
+    interpreter from the drawing). The envelope is worked out every `ENV_STEP` 32 frames and drawn straight
+    between (against frame by frame: 123 dB down); voices still in their attack get it frame by frame. 128
+    voices: 2.1 ms a chunk. A preset's .sf3 samples are packed into one array when decoded (`_pack`), and its
+    .sf2 samples read through once when it's chosen (`_warm`, a value from every 4 KB page, behind the
+    progress bar) so a note's first chunk doesn't wait on the disk. Measured on a generated 409 MB stereo
+    piano (29 sample points x 8 velocity layers x 10 s, unlooped), the densest 15 s of a ballade with the pedal
+    held throughout, the main thread busy: chunks median 2.1 ms (was 6.5), 95th percentile 3.7 (11.7), no
+    underruns; frames median 2.1 ms, worst 15 (27); loading 2.6 s (reading the samples).
+  - The player's own process (v26.1.19.SNAPSHOT-09): in the app's process the synth's thread and the drawing
+    shared Python's interpreter lock, each slowing the other. In the real player (hands and drawing) on the
+    Ocean étude from 0:55 for 20 s, a frame's work was median 9.1 ms / 95th percentile 12.1 with no
+    soundfont, 10.8 / 15.1 with the 409 MB piano (chunks 4.2 / 9.9 ms with waits for the lock, 2 underruns).
+    Now `SoundfontOut` starts `_player_process` (multiprocessing "spawn": the same on Windows and elsewhere;
+    `main.py` calls `freeze_support` for the compiled .exe) with its own mixer and `MixerStream`, and sends it
+    sf2.Synth's calls down a pipe (`RemoteSynth`: noteon, noteoff, control_change, notes_off, sounds_off); the
+    pedals stay in `SoundfontOut`. While loading it sends "progress" (its `progress.value()`, every 50 ms) for
+    the loading bar, then "ready" or "error" (`SoundfontError`: the Settings show why). It plays until "quit"
+    or the pipe breaks (the app gone); `close()` waits 1 s, then ends it. `stats()` asks it for chunks and
+    underruns. Same test: frames 9.2-9.7 / 12.3-14.5 ms (as with no soundfont), 0-1 underruns. If the
+    process can't start, the player runs in the app's process as before. The synced recording's mixer is the
+    app's, so reopening it no longer touches the player at all.
+  - Performance profiling ("perf_overlay"): `App.draw_perf` after every frame - FPS (last 30 frames), mean and
+    worst frame time, and a translucent graph of the last `PERF_FRAMES` 120 frame times (`clock.tick`), up to
+    `PERF_MAX_MS` 50 ms, with 60 and 30 fps lines and slow frames dotted red; in the top-left corner below the
+    mode's top bar (`overlay_top`: the player's falling-notes top, the editor's roll top, 0 in the menu).
+- Volume (v26.1.19.SNAPSHOT-02): `MidiOut.volume` / `set_volume` sends channel volume (CC 7) on both hands'
+  channels (`DEFAULT_VOLUME` 0.8, about GM's default 100); a synced recording plays at the same volume
+  (`Visualizer._apply_audio_volume`, 0 while muted). `common.VolumeSlider` (click, drag, scroll) in the player's
+  and the editor's top bars; kept in settings.json ("volume").
+- The player's progress bar holds only the song's name and time (v26.1.19.SNAPSHOT-13): the controls on it
+  were in the way of scrubbing, so a click or drag anywhere along it seeks. The controls sit under it (under the
+  waveform with a synced recording), at the right, on translucent panels (`PANEL_ALPHA` 170 over the notes;
+  `Visualizer._draw_controls`): speed, view, "sound on / off" (a click mutes and unmutes, as M) and the volume
+  (`controls_rect`, `CONTROLS_H` 30). Under them an arrow-keys button (`common.draw_arrow_keys`,
+  `keys_button`) shows or hides the key controls with what each does (`_key_controls`, `keys_rect`; shown or
+  not kept in settings.json, "player_keys", hidden at first). Clicks on the panels never seek. Each control
+  has a tooltip on hover (`_top_items`, `common.draw_tooltip`).
+- Finger numbers on the falling notes: bold, `FINGER_PX_MAX` 17 px (13 before) or as big as fits the narrowest
+  notes (`_finger_size`: a black key's lane), smaller on a note too short for it (down to `FINGER_PX_MIN` 11),
+  with a drop shadow - dark under a light number (plus its thin outline), light under a dark one.
 - `editor.py` – `FingeringEditor`, a horizontal piano roll (DAW style) with the keyboard and animated hands below. See the Fingering editor section.
 - (old) main.py visualizer notes:
   - `Visualizer.hands` is {RIGHT/LEFT: HandAnimator}, drawn with `draw_hands`.
@@ -39,6 +146,48 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - Added by the user: `Etude op25 n06.mid` (thirds; 4 non-hand tracks), `chopin-etude-no-2…op-10.mid`, `Chopin Ballade 1 Full.mid`, `Chopin Prelude 24…`, `chpn-p16.mid`, `Liszt Mazeppa Intro.mid`, `Ravel Ondine Sample…`, `ORIG-MIDI_02_7_10_13…midi` (a performance).
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
+
+## Fonts and frame pacing (v26.1.19.SNAPSHOT-14, -15)
+- Every font comes from the bundled typeface: Source Sans Pro, regular and bold (`assets/fonts`, SIL Open Font
+  License, `OFL.txt` beside them; build.py includes them), through `common.ui_font(size, bold)` at `FONT_SCALE`
+  1.05 of the old Segoe UI sizes (Source Sans runs a little small). Before, `pygame.font.SysFont("segoeui,arial,
+  helvetica")` asked each system by name: Segoe UI on the author's Windows, FreeSans in the Linux container, and
+  on a forum user's machine an italic face for the bold finger numbers. Falls back to SysFont only if the files
+  are missing. Fonts are cached and the cache cleared on `pygame.quit()` (a font used after it segfaults;
+  pygame calls a quit function once, so it's registered again whenever the cache starts over).
+- The frame clock: `App.run` measures each frame with `time.perf_counter` and uses `clock.tick` only for the cap
+  (tick counts whole milliseconds: at 144 fps a 6.94 ms frame moved the song 6 or 7 ms; the song drifted ±1 ms
+  against the wall clock, now ±0.04).
+- Tried in SNAPSHOT-14 and undone in SNAPSHOT-15 (the jitter and flicker got much worse on the author's screen):
+  the cap defaulting to the monitor's refresh rate - a frame's work is 9-12 ms, so at 144 Hz the frames came
+  unevenly, worse than a steady 60 (the default again, `FPS`); and rounding a falling note's top and bottom each
+  on its own, which made its length flick between two values (73 times in 300 frames) and, on a short note, its
+  finger number's size with it. `note_rect` now gives a note one length (its duration, rounded once) and puts
+  its bottom at the nearest pixel: a solid block (the test checks one length over 500 frames).
+- Settings > Font (v26.1.19.SNAPSHOT-16): the bundled typeface by default, or Choose... one installed on the
+  computer (`app_settings.FontPicker`: `pygame.font.get_fonts()`, each name drawn in its own face - pygame-ce's
+  `Font.name` for the label when it has one; type to filter, Enter takes the first shown) or Browse for a file
+  (.ttf / .otf / .ttc). Kept as "font": {"system": name} / {"file": path} / none. `common.set_font_choice`
+  checks it can be used - found, a real font (pygame opens any file: one with no glyph for "Aa1" isn't) and
+  with letters (`has_letters`: a glyph with ink for each of "Aaegmors1", nearly all different shapes - an
+  emoji font's are empty, OpenSymbol's lowercase letters all one box) - else the bundled one and why
+  ("not found", "couldn't be loaded", "has no letters"), shown in the row. A system font's bold is its own bold
+  file if `match_font` finds one that isn't italic, else pygame's synthetic bold (`set_bold`); a font file is
+  made bold that way. Chosen fonts aren't scaled (`FONT_SCALE` is for Source Sans). `App.set_font` refreshes the
+  `fonts` dict in place (every screen holds it) and re-lays out the mode. With another font's widths, buttons
+  shorten text that doesn't fit with an ellipsis (`common.fit_text`), and the Settings rows shrink (to
+  `ROW_H_MIN` 46) to keep the six-row panel above the window's centre.
+- Characters a chosen font lacks (v26.1.19.SNAPSHOT-17): the interface's arrows (← → ↑ ↓ ↵), minus sign,
+  ellipsis and the like drew as the font's "missing" box. A chosen font is a `common.FallbackFont` (a
+  `pygame.font.Font` subclass) holding the bundled typeface at the same size: `render` and `size` split the text
+  into runs it has and runs it hasn't, the latter drawn by the bundled one, all on one baseline (the line as tall
+  as the lower reach of the two). Text it fully covers takes `Font.render` directly. A missing character still
+  measures - as the box - so `has(ch)` compares its drawn shape with a private-use character's (U+E000, which no
+  ordinary font has); cached per character. The bundled typeface itself has every character the source uses
+  (checked: °·×“”•…←↑→↓↵−✓) and isn't wrapped. Tried on a copy of DejaVu Sans with the arrows, minus and
+  ellipsis stripped out (fontTools): boxes before, Source Sans's arrows after.
+- The main menu's layout measures the small font's height (the tip and the active pianist line) instead of
+  assuming 20 px.
 
 ## Performance (v26.1.1)
 Measured headless (SDL dummy video, 1600x900) on the development container; a desktop is faster, but the
@@ -86,11 +235,27 @@ proportions hold. Frame = `update` + `render`, playing (not seeking), 600 frames
 ## Equal keys (common.Keyboard, 2026-10-02)
 A second key style after PASHKULI's suggestion on PianoClack, toggled by "Keys: ..." on the main
 menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setting`):
-- 88 lanes of one width L = keyboard width / (87 + 0.5 + 5/3), with a gap of max(1, L/15) px.
-  Every black key and every white key's back (`Keyboard.tails`) fills its lane, so every
-  falling note has the same width. The white fronts share their group's lanes evenly:
-  C-E = 5 lanes / 3, F-B = 7 lanes / 4 (as in DAW piano rolls and the Osmose). A0's and C8's
-  backs reach the keyboard's edges.
+- 88 lanes, every one exactly the same in whole pixels (v26.1.19.SNAPSHOT-11, after PASHKULI measured a 2560 px
+  screenshot: with a fractional lane width L = width / 89.17 and each edge rounded, lanes, blacks and backs came
+  out 26 or 27 px and fronts 46, 48 or 49, so the notes' lanes and gaps wandered by a pixel). Now the lane
+  pitch P = width // 88 (an integer), the gap g = max(1, round(P / 15)), each lane P - g: every black key and
+  every white key's back (`Keyboard.tails`) fills its lane, so every falling note and every gap is identical.
+  The white fronts share their group's lanes: C-E's three in 5 lanes, F-B's four in 7 (as in DAW piano rolls
+  and the Osmose), all exactly the same width within a group, with every gap exactly g. In whole pixels that
+  needs 5P/3 and 7P/4 both whole, i.e. P a multiple of 12 (2560 px: 24 instead of 29, the keyboard 17% narrower;
+  1920: 12) - so SNAPSHOT-11 gave the leftover pixel or two to the gaps between fronts (1 px wider: distracting).
+  Since v26.1.19.SNAPSHOT-12 the fronts keep their exact fractional edges (`Keyboard.fronts`, left/right):
+  `_white` fills the whole pixels and draws a front's partly covered edge column between the key's and the
+  gap's colours by coverage, so every gap between fronts holds exactly g pixels' worth of gap colour (measured
+  along a drawn row at 1280-3840 wide) and every front's coverage is its exact width (2560: C-E 46.33, F-B
+  48.75). Only the edges inside a group are fractional: the group's outer edges are the lanes' own, so the
+  backs, the blacks, the lanes and the falling notes stay crisp whole pixels. A gap that falls half-way
+  shows as two half-grey columns (softer, the same weight). `key_rects` of a white key is its front rounded
+  (for the hands). C8's front is its back (one lane). A0's back (and front) take what's left of the width: width - 87P,
+  between 1 and `EQUAL_A0_MAX` 2 lanes; beyond that the keys are centred and the rest is an even margin each
+  side (up to ~(87 - P) / 2 px: 25 px at 1920, 0 at 2560). `Keyboard.pitch`, `keys_x` (the keys' left and
+  right edges). At 2560x1440, measured from the drawn pixels: lanes, blacks and backs all 27 px (before 26/27),
+  C-E fronts all 46, F-B all 48 (before 46/48/49).
 - The average white key keeps the realistic width (`white_w`), so the hands keep their scale;
   `key_rects` of a white key is its front, and a finger playing up among the black keys
   (`white_up`) moves over to the key's back (`HandAnimator.key_target`).
@@ -182,7 +347,11 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `R` / `L`: hand only.
 - `midi_loader.read_markers` returns (hand, finger).
 - `save_fingered_midi(src, dst, notes, fingers)`:
-  - rewrites the source file byte for byte, only removing old markers and inserting new ones;
+  - rewrites the source file byte for byte, only removing old markers and inserting new ones - and moving
+    each hand's notes to its own channel (v26.1.19.SNAPSHOT-02): the RH's on the piano's first channel, the LH's
+    on the first channel no other instrument's notes use (never 10, the drums'); a note-off follows its note's
+    channel (a per-track stack per file channel and pitch); the piano channels' controllers, programs, channel
+    pressure and pitch bends are written to both hand channels (the pedal holds for both);
   - matches notes by (pitch, start ±3 ms) using pretty_midi's tempo rules (tempos from track 0 only; a tick-0 tempo replaces 120 bpm).
   - Round trip: all 9 corpus files reload with identical hands and fingers.
 - Old format note (Hanon): `F1`..`F5` markers. The loader keys it by (start time, pitch) onto `Note.finger`, and the planner keeps it.
@@ -191,6 +360,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - 39–60 were read from the scan and encoded as rules (scratchpad `hanon/rules.py`, `hanon/scales.py`). figures.py reuses these rules.
 
 ## Hand separation (hand_split.py)
+- Hands interleaved within a chord (v26.1.19.SNAPSHOT-21): `_inside` charges `INSIDE` 40 per note one hand strikes
+  strictly between keys of the other hand's chord - keys it struck within `INSIDE_T` 0.04 s (each note's own
+  start, so a rolled chord counts) and still holds, or strikes in the same group - and per such key the other
+  hand's new chord closes round. Above every preference (TRACK_SWITCH 12, REPEAT_SPLIT 4), below the file's
+  labelled tracks (TRACK_PRIOR 200): a last resort. In Rachmaninoff's Prelude Op. 3 No. 2 (MAESTRO) the rolled
+  six-note chords at 0:52.7 and 0:54.0 went D#4 to the RH and F#4 to the LH, interleaved (4 notes; 8 with the
+  author's 13th-span pianist, whose wider reach lets each hand take wider chords): now 0. Tried and dropped:
+  any key the other hand holds (in a played recording a hand keeps notes down long after - legato, arpeggios -
+  so Ocean's LH arpeggio, passing up through a dyad the RH held, went to the RH, which then followed it down to
+  G#1: 218 notes changed hand), and a 0.25 / 0.08 s window (still Ocean: the LH's G#3 + A#4 66 ms after the RH's
+  D#4-D#5 octave sent the LH's descent to the RH, 101 notes). Measured against the previous split, five pieces:
+  notes changed hand, default pianist 4 / 0 / 0 / 0 / 0 (prelude, ballade, Brahms, Ocean, Scarbo), 13th-span
+  pianist 9 / 0 / 1 / 1 / 0. Scarbo's tracks are labelled by hand, so its 23 interleavings are the file's.
+  Not covered: a note struck while the other hand holds a chord struck earlier (the 13th-span pianist, 1:45-1:46
+  of the prelude: 4 notes) - that is also an arpeggio passing through, which a rule can't tell apart.
 - A beam search (32 candidates; 24 lost the good split in the Dante Sonata's chord alternations) over onset groups (35 ms tolerance). The lowest k notes go to the LH.
 - Initial hand centres come from the upper/lower quartile of the opening notes.
 - Costs:
@@ -368,7 +552,20 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
 - `Pianist` fields: name, color, anatomy (19 bone ids: mc1-5, pp1-5, mp2-5, dp1-5; in model units, about 1.088 cm each) and behavior.
 - Pianists are saved as JSON in `pianists/` next to the code. The active one is recorded in `pianists/settings.json`, and `pianist.active()` returns it.
 - The built-in "Default" pianist can't be edited; duplicate it to change it.
-- Bone limits are 70-135% of the default length.
+- Bone limits were 70-135% of the default length; metacarpals up to 205% (`pianist.METACARPAL_MAX`, `bone_max`;
+  v26.1.19.SNAPSHOT-18) - for a span of a 13th, as Rachmaninoff's: with every metacarpal at 205% and phalanx at
+  135%, 12.07 white keys, 28.5 cm (200%: 11.94, short of the 12 a 13th needs; 135%: 10.28, an 11th). The
+  planner's thumb-to-little reach (`MAX_SPAN[(1, 5)]`, from `hands.reach_scale`) is then 12.5 white keys (the
+  default hand 8.3): C3-A4 is played 1-5 in either hand; drawn, both hands reach it with the palm wide.
+  Then (the author's call, to shape such hands themselves) every bone up to 250% (`BONE_MAX` and
+  `METACARPAL_MAX` 2.5): all at 250% spans 17.8 white keys (an 18th, 42 cm), planner reach 1-5 18.4.
+- Wrist width (v26.1.19.SNAPSHOT-19): `anatomy["wrist"]`, a share of the default hand's, 75-200%
+  (`pianist.WRIST_MIN` / `WRIST_MAX`, `clamp_wrist`; absent = 100%, so older pianist files are unchanged). Not a
+  bone - it isn't in `DEFAULT_ANATOMY`, which the bone limits and sliders walk. `HandGeometry` scales the two
+  wrist sides (`WRIST_SIDES`, ±2.2 units) apart by it (`wrist_scale`, `wrist_sides`); the skins' cuff, sleeve
+  and forearm are sized from those sides, the studio's skeleton draws from them, and nothing about reach or the
+  span depends on them. The studio's anatomy page has a "Wrist width" slider under the bone groups; Reset all
+  resets it too.
 - Hand span is measured in white keys, key centre to key centre: 8 = a 9th, which is the default. Size classes are Small below 7.6, Medium from 7.6 to 8.6, Large above that.
 - `hands.HandGeometry(anatomy)` builds the model:
   - each knuckle moves along its metacarpal to match its length; phalanges come straight from `bones`;
@@ -571,11 +768,48 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Both are symmetric about D, so they hold in the LH's mirrored frame.
   - `_states(given, ps)` adds (1,1,…) when the two lowest keys in the hand's frame are a thumb pair, (…,5,5) when the two highest are a pinky pair, and both for chords of 5 or more.
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
-  - Costs: `chord_pair_cost` charges `thumb_double` 7 / `pinky_double` 8 for the pair. `shape_cost` and the held-key steal (`held_map` is now finger → set of pitches) accept pairs.
+  - Hand size in the comfort costs (v26.1.19.SNAPSHOT-20): the pianist's anatomy scaled only the limits
+    (`MAX_SPAN` × `hands.reach_scale`); the comfort costs measured spreads against the default hand's natural
+    spacing, so a 13th hand (the author's "Rach-y": span 28.7 cm, reach 1-5 12.6 white keys) priced an octave
+    chord as the default hand does - at 3:39 of Rachmaninoff's Prelude Op. 3 No. 2 the RH C#4 D#4 F#4 A4 C#5
+    came out 1-1-2-3-5 for both (23.7 against 27.5 for 1-2-3-4-5). Now `REACH_SCALE` (set by `apply_pianist`,
+    empty = the default hand) and `comfy(dist, fa, fb)` = dist / that pair's reach scale: `pair_cost`'s and
+    `chord_pair_cost`'s stretch terms (and the neighbouring-fingers term) measure the spread in the hand's own
+    units; cramp terms don't. And `inner_room_cost`'s `inner_finger` (the key inside an octave wants the finger
+    over it) applies only when there's a choice - fewer inner keys than fingers between the thumb and the top
+    finger: with D#, F#, A inside, 2-3-4 are forced, yet each was charged for its "ideal" finger (8 of the 27.5).
+    Both hands now play that chord 1-2-3-4-5. Five pieces (33265 notes): default hand 26 notes changed (0.1%,
+    the inner rule), thumb on two keys 60 → 55; Rach-y 7.2% changed (its spreads are cheaper), 48 → 21.
+  - Costs: `chord_pair_cost` charges `thumb_double` 15 / `pinky_double` 16 for the pair (7 / 8 until
+    v26.1.19.SNAPSHOT-14: below the comfort costs of an ordinary in-reach shape - LH F-A-D-E's 5-4-2-1 is 12.1,
+    its fourth 4-5 a third (`chord_stretch_adj`) and `inner_room_cost` 4 - so 4-note chords with a free finger got
+    the thumb on two keys, 288 of 364 isolated test chords; 15: 224, the rest being shapes with no finger-a-key
+    fingering in reach (MAX_SPAN), e.g. C-D-G-C's fourths on 2-3 / 4-5. In five pieces, 8699 chords: thumb on
+    two 87 → 57, little finger 8 → 4). `shape_cost` and the held-key steal (`held_map` is now finger → set of pitches) accept pairs.
   - The costs are tuned so plain chords stay normal (C-D-F-A: 1-2-3-5; C-E-G-B-C: 1-2-3-4-5). Doubles appear when a normal fingering would overstretch neighbouring fingers or exceed MAX_SPAN, e.g. C#-D#-G#-C#: 1-1-3-5.
   - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
   - PIG test 66.23% (up from 66.17%), Hanon unchanged.
+  - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
+    D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
+    thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.
+    - `fingering.thumb_bridge` (a thumb pair of black keys); `bridge_from` makes the stretch from the bridge to the
+      next finger count from its far key, in `chord_pair_cost` (the planner's chords) and `shape_cost` (held
+      shapes) - the planner's every-pair reach check already did. `HandAnimator._bridge_pair`: `key_target` aims
+      a bridge at its far key, `THUMB_BRIDGE_DEPTH_IN` 1.4 in up it (the playing area runs to 1.6), and
+      `_roll_wide_chords` measures reach from there.
+    - `_key_fix` adds a constraint for a bridge: the straight thumb's MCP joint - on the line from the tip over
+      the near key (`THUMB_BRIDGE_NEAR_IN` 0.3 in from its front), the thumb's two outer bones from the tip - must
+      be within the metacarpal's reach (across, for the base's height) of the thumb's base: the hand comes in
+      over the keys, as a real one does to lay its thumb along them.
+    - `_thumb_bridge` poses it (blended in by `_key_weight`): the tip on the far key, straight to the MCP joint (no
+      bend at the IP joint - bent there it looked painful), the MCP where that line meets the metacarpal's reach,
+      the place of the two nearer along the keyboard.
+    - Results: the near key under the thumb's line 0.34 / 0.38 in in from its front (A#-C#, C#-D#), or under its
+      MCP joint (D#-F#, LH; 0.19 in short of its centre, the joint 0.8 in wide). Measured from the far key, some
+      chords drop the bridge for a plain fingering: the 3:20 chord D#4-F#4-A#4-D#5 is now 1-2-3-5 (29 bridges in
+      the sonata, now 19). Top speed kept; the only new off-key notes are the bridges' near keys (the tip is on the
+      far one by design).
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.

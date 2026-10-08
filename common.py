@@ -6,6 +6,7 @@ transport, file dialogs and a few small widgets.
 from __future__ import annotations
 
 import bisect
+import math
 import os
 import threading
 
@@ -68,16 +69,208 @@ def fmt_time(seconds, frac=False):
     return ("-" if neg else "") + text
 
 
+# The app's typeface, bundled (assets/fonts, SIL Open Font License): the same on every computer. Fonts
+# looked up by name (pygame.font.SysFont) came out differently from one system to the next - another
+# face, or an italic one where a bold was asked for. Only if the files are missing is the system asked.
+# The user can choose another (Settings > Font): one installed on the computer, or a font file.
+FONT_FILES = {False: "SourceSansPro-Regular.ttf", True: "SourceSansPro-Bold.ttf"}
+FONT_SCALE = 1.05            # (Source Sans runs a little smaller than Segoe UI at the same size)
+DEFAULT_FONT_NAME = "Source Sans Pro"
+FONT_TYPES = [("Font files", "*.ttf *.otf *.ttc"), ("All files", "*.*")]
+_FALLBACK_FACE = "segoeui,arial,helvetica"
+_ui_fonts = {}
+_font_choice = None          # None: the bundled typeface; {"system": name} or {"file": path}
+_font_paths = None           # (regular file, bold file or None - made bold by pygame -, scale) for the choice
+
+
+def font_files(choice):
+    """
+    (regular path, bold path or None, scale) for a font choice, or raise
+    FileNotFoundError: the bundled typeface (None), an installed font by its
+    name ({"system": name}, as pygame.font.get_fonts() lists them) or a font
+    file ({"file": path}). Without a bold face of its own, pygame makes one.
+    """
+    from paths import resource
+    if not choice:
+        return resource("assets", "fonts", FONT_FILES[False]), resource("assets", "fonts", FONT_FILES[True]), FONT_SCALE
+    if choice.get("file"):
+        path = choice["file"]
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+        return path, None, 1.0
+    name = choice.get("system") or ""
+    regular = pygame.font.match_font(name)
+    if not regular:
+        raise FileNotFoundError(name)
+    bold = pygame.font.match_font(name, bold=True)
+    if bold and ("italic" in os.path.basename(bold).lower() or bold == regular):
+        bold = None                              # (not a true bold face: made bold from the regular)
+    return regular, bold, 1.0
+
+
+def has_letters(font, text="Aaegmors1"):
+    """
+    Can `font` draw ordinary letters and digits? Not a symbol or emoji font:
+    each glyph there, has ink, and they aren't all one shape (a font of boxes).
+    """
+    try:
+        if not all(m is not None and m[1] > m[0] for m in font.metrics(text)):
+            return False
+        shapes = {pygame.image.tobytes(font.render(ch, False, (255, 255, 255), (0, 0, 0)), "RGB") for ch in text}
+        return len(shapes) >= len(text) - 1
+    except (pygame.error, TypeError, AttributeError):
+        return False
+
+
+def font_choice_name(choice):
+    """A font choice's name to show."""
+    if not choice:
+        return DEFAULT_FONT_NAME
+    if choice.get("file"):
+        return os.path.splitext(os.path.basename(choice["file"]))[0]
+    return choice.get("system") or DEFAULT_FONT_NAME
+
+
+def set_font_choice(choice):
+    """
+    Use `choice` (see font_files) for every font from now on; "" if fine, or
+    why not (the bundled typeface is used then). ui_font's cache starts over:
+    the caller reloads its fonts (load_fonts).
+    """
+    global _font_choice, _font_paths
+    problem = ""
+    try:
+        if not pygame.font.get_init():
+            pygame.font.init()
+        paths = font_files(choice)
+        font = pygame.font.Font(paths[0], 12)
+        if all(m is None for m in font.metrics("Aa1")):
+            raise pygame.error("not a font")             # (pygame opens any file; it has no glyphs at all)
+        if not has_letters(font):
+            raise ValueError("no letters")
+    except (OSError, pygame.error, AttributeError, TypeError, ValueError) as exc:
+        problem = ("not found" if isinstance(exc, FileNotFoundError) else
+                   "has no letters" if isinstance(exc, ValueError) else "couldn't be loaded")
+        choice, paths = None, None
+    _font_choice = choice or None
+    _font_paths = paths if _font_choice else None        # (None: the bundled typeface, which lacks nothing)
+    _ui_fonts.clear()
+    return problem
+
+
+def font_choice():
+    return _font_choice
+
+
+class FallbackFont(pygame.font.Font):
+    """
+    A chosen font (Settings > Font) that borrows from the bundled typeface
+    each character it hasn't got - the arrows, the minus sign, the ellipsis
+    the interface uses - instead of drawing a box. Measured and drawn run by
+    run (a run of characters it has, a run it hasn't), on one baseline.
+    """
+
+    def __init__(self, path, size, fallback):
+        super().__init__(path, size)
+        self.fallback = fallback
+        self._has = {}
+
+    MISSING_PROBE = "\ue000"      # a private-use character: no ordinary font has it, so it draws the "missing" box
+
+    def _shape(self, ch):
+        return pygame.image.tobytes(pygame.font.Font.render(self, ch, False, (255, 255, 255), (0, 0, 0)), "RGB")
+
+    def has(self, ch):
+        """Has the font a glyph of its own for ch? (Missing ones still measure - as its box - so they're compared.)"""
+        got = self._has.get(ch)
+        if got is None:
+            m = pygame.font.Font.metrics(self, ch)
+            if not m or m[0] is None:
+                got = False
+            else:
+                if not hasattr(self, "_missing"):
+                    self._missing = self._shape(self.MISSING_PROBE)
+                got = self._shape(ch) != self._missing
+            self._has[ch] = got
+        return got
+
+    def _runs(self, text):
+        """[(text, font)]: the text in runs this font or the fallback draws."""
+        runs = []
+        for ch in text:
+            f = self if ch.isspace() or self.has(ch) else self.fallback
+            if runs and runs[-1][1] is f:
+                runs[-1][0].append(ch)
+            else:
+                runs.append(([ch], f))
+        return [("".join(chars), f) for chars, f in runs]
+
+    def _plain(self, text):
+        return all(ch.isspace() or self.has(ch) for ch in text)
+
+    def size(self, text):
+        if self._plain(text):
+            return super().size(text)
+        sizes = [pygame.font.Font.size(f, t) for t, f in self._runs(text)]
+        return sum(w for w, _ in sizes), self._line_height()
+
+    def _line_height(self):
+        """Each font's line on the shared baseline: as tall as the lower of the two reaches."""
+        ascent = max(self.get_ascent(), self.fallback.get_ascent())
+        return max(ascent - f.get_ascent() + f.get_height() for f in (self, self.fallback))
+
+    def render(self, text, antialias, color, background=None, *args):
+        if self._plain(text):
+            return super().render(text, antialias, color, background, *args)
+        ascent = max(self.get_ascent(), self.fallback.get_ascent())
+        imgs = []
+        for t, f in self._runs(text):
+            img = pygame.font.Font.render(f, t, antialias, color, background)
+            imgs.append((img, ascent - f.get_ascent()))
+        out = pygame.Surface((sum(i.get_width() for i, _ in imgs), self._line_height()), pygame.SRCALPHA)
+        if background is not None:
+            out.fill(background)
+        x = 0
+        for img, y in imgs:
+            out.blit(img, (x, y))
+            x += img.get_width()
+        return out
+
+
+def ui_font(size, bold=False):
+    """The chosen typeface (the bundled one by default) at `size` (as a Segoe UI size), regular or bold; cached."""
+    key = (size, bool(bold))
+    font = _ui_fonts.get(key)
+    if font is None:
+        if not _ui_fonts:
+            # a font kept past pygame.quit() crashes when used: forget them all then (pygame calls a quit
+            # function once, so it's registered again each time the cache starts over)
+            pygame.register_quit(_ui_fonts.clear)
+        try:
+            regular, bold_file, scale = _font_paths or font_files(None)
+            px = max(1, round(size * scale))
+            if _font_paths is None:
+                font = pygame.font.Font(bold_file if bold else regular, px)
+            else:                                    # (a chosen font: the bundled one fills in what it lacks)
+                fallback = pygame.font.Font(font_files(None)[1 if bold else 0], px)
+                font = FallbackFont(bold_file if bold and bold_file else regular, px, fallback)
+            if bold and not bold_file:
+                font.set_bold(True)
+        except (OSError, FileNotFoundError, pygame.error):
+            font = pygame.font.SysFont(_FALLBACK_FACE, size, bold=bold)
+        _ui_fonts[key] = font
+    return font
+
+
 def load_fonts():
-    face = "segoeui,arial,helvetica"
     return {
-        "small": pygame.font.SysFont(face, 15),
-        "normal": pygame.font.SysFont(face, 17),
-        "big": pygame.font.SysFont(face, 30, bold=True),
-        "title": pygame.font.SysFont(face, 54, bold=True),
-        "finger": pygame.font.SysFont(face, 13, bold=True),
-        "label": pygame.font.SysFont(face, 11, bold=True),
-        "button": pygame.font.SysFont(face, 22, bold=True),
+        "small": ui_font(15),
+        "normal": ui_font(17),
+        "big": ui_font(30, bold=True),
+        "title": ui_font(54, bold=True),
+        "finger": ui_font(13, bold=True),
+        "label": ui_font(11, bold=True),
+        "button": ui_font(22, bold=True),
     }
 
 
@@ -86,10 +279,35 @@ HAND_LEN_WW = 7.0           # room below the keys for the hands and forearms, in
 BOTTOM_MAX_SHARE = 0.5      # the keys + hand area never take more than this share of the height
 
 
+_kb_place = None             # where the keyboard sits (Settings): None = the default, else 0 (highest) .. 1 (lowest)
+
+
+def keyboard_place():
+    return _kb_place
+
+
+def set_keyboard_place(place):
+    global _kb_place
+    _kb_place = None if place is None else min(1.0, max(0.0, float(place)))
+
+
+def keyboard_y_range(size, kb_h):
+    """
+    (highest, lowest) top edge for a keyboard kb_h tall in a window `size`:
+    the top of the keys at the window's centre, or the keys' bottom edge half
+    a keyboard height above the window's bottom.
+    """
+    h = size[1]
+    hi = h // 2
+    lo = h - kb_h - kb_h // 2
+    return hi, max(hi, lo)
+
+
 def bottom_layout(size):
     """
     (keyboard rect, hand-area rect) for a window size: the keys and the hand
-    area always sit at the bottom, in every mode.
+    area always sit at the bottom, in every mode - the keys as high as the
+    Settings put them (set_keyboard_place), the hand area below them.
 
     Everything down here is drawn to one scale (pixels per white key), so it
     keeps its proportions at any window shape: the key length and the hand
@@ -108,7 +326,10 @@ def bottom_layout(size):
     hand_h = max(int(round(ww * HAND_LEN_WW)), min(HAND_AREA_MIN_H, int(h * 0.2)))
     kb_x = (w - kb_w) // 2
     kb_y = h - hand_h - kb_h
-    return pygame.Rect(kb_x, kb_y, kb_w, kb_h), pygame.Rect(0, kb_y + kb_h, w, hand_h)
+    if _kb_place is not None:                   # placed in the Settings: the hand area is what's left below
+        top, low = keyboard_y_range(size, kb_h)
+        kb_y = int(round(top + (low - top) * _kb_place))
+    return pygame.Rect(kb_x, kb_y, kb_w, kb_h), pygame.Rect(0, kb_y + kb_h, w, h - kb_y - kb_h)
 
 
 # --------------------------------------------------------------------------- #
@@ -124,7 +345,7 @@ KEY_STYLES = ("realistic", "equal")
 _key_style = "realistic"
 LANE_WHITE = (33, 33, 42)        # equal keys: the lanes above white keys, a shade lighter
 KEY_GAP = (44, 44, 50)           # equal keys: the gaps between keys
-_EQUAL_SPAN = 87 + 0.5 + 5 / 3   # the keyboard's width in lanes (A0's front half a lane left of its lane .. C8's front)
+EQUAL_A0_MAX = 2.0               # equal keys: A0's back is the width's remainder, at most this many lanes
 
 
 def key_style():
@@ -188,42 +409,71 @@ class Keyboard:
 
     def _layout_equal(self, rect):
         """
-        PASHKULI's equal keys: 88 lanes of one width L, separated by a gap
-        (1 px, or more on big windows); every black key and every white
-        key's back fills one lane, and the white fronts share their group's
-        lanes evenly. The average white key keeps the realistic width, so
-        the hands keep their scale.
+        PASHKULI's equal keys, in whole pixels: 88 lanes of one pitch P (px,
+        an integer), each a lane L = P - gap wide with the gap between; every
+        black key and every white key's back fills its lane exactly, so every
+        falling note is the same width and every gap is too. The white fronts
+        share their group's lanes: C-E's three in 5 lanes, F-B's four in 7, all
+        exactly the same width within a group - the pixel or two left over
+        goes to the gaps between them (so those may be a pixel wider). C8's
+        front is its back (one lane); A0's back takes what's left of the width
+        (at most EQUAL_A0_MAX lanes - beyond that the keyboard is centred, the
+        rest left as a margin each side). The average white key keeps the
+        realistic width (`white_w`), so the hands keep their scale.
         """
         whites = [p for p in range(self.low, self.high + 1) if not is_black_key(p)]
         self.white_w = rect.w / len(whites)
-        L = rect.w / _EQUAL_SPAN
-        g = self.gap = max(1, round(L / 15))
-        self.black_w = L - g
+        n = self.high - self.low + 1                          # 88
+        P = max(2, rect.w // n)
+        g = self.gap = max(1, round(P / 15))
+        L = P - g
+        back = rect.w - (n - 1) * P                           # A0's back: what's left (P at least)
+        margin = max(0, back - int(EQUAL_A0_MAX * P))
+        back -= margin
+        left = rect.x + margin // 2                            # the keyboard's left edge
+        x0 = left + back - P                                   # A0's lane (its lane pitch's left edge)
+        self.pitch = P
+        self.keys_x = (left, x0 + n * P)                      # the keys' left and right edges
+        self.black_w = L
         self.black_h = int(rect.h * 0.63)
         self.key_rects, self.lanes, self.lane_lines = {}, {}, []
-        lane_x = lambda p: rect.x + (p - self.low + 0.5) * L      # left edge of p's lane
+        self.fronts = {}             # white key -> (left, right) of its front, exact
+        lane = lambda p: x0 + (p - self.low) * P               # the left of p's lane pitch (gap halves either side)
+        gl, gr = g // 2, g - g // 2
 
-        def span(a, b, top, h):
-            x0, x1 = round(a) + g // 2, round(b) - (g - g // 2)
-            return pygame.Rect(x0, top, max(1, x1 - x0), h)
+        # the white fronts within a C-E or F-B group: exactly equal, every gap exactly g - so the edges
+        # inside a group fall between pixels (drawn with partly covered edge columns: _white); the group's
+        # outer edges are the lanes' own, whole pixels
+        heads = {}
+        for first, keys, lanes_n in ((0, (0, 2, 4), 5), (5, (5, 7, 9, 11), 7)):
+            k = len(keys)
+            h = (lanes_n * P - k * g) / k
+            for i, pc in enumerate(keys):
+                heads[pc] = (first * P + gl + i * (h + g), h)          # from the C's lane pitch's left edge
 
         for p in range(self.low, self.high + 1):
-            a, b = lane_x(p), lane_x(p) + L
+            a = lane(p)
+            lane_rect = pygame.Rect(a + gl, rect.y, L, self.black_h)
             if is_black_key(p):
-                self.key_rects[p] = span(a, b, rect.y, self.black_h)
-                self.lanes[p] = (self.key_rects[p].x, self.key_rects[p].w)
+                self.key_rects[p] = lane_rect
+                self.lanes[p] = (lane_rect.x, L)
                 continue
-            c = lane_x(p - p % 12)
-            h0, h1 = c + _equal_head(p)[0] * L, c + _equal_head(p)[1] * L
-            if p == self.low:                     # the ends: the back reaches the keyboard's edge
-                a = h0
-            if p == self.high:
-                b = h1
-            self.key_rects[p] = span(h0, h1, rect.y, rect.h)          # the front (where it is played)
-            self.tails[p] = span(a, b, rect.y, self.black_h + g)
-            lane = span(lane_x(p), lane_x(p) + L, rect.y, 1)
-            self.lanes[p] = (lane.x, lane.w)
-            self.lane_shade.append((lane.x, lane.w))
+            off, h = heads[p % 12]
+            hx = lane(p - p % 12) + off
+            tail = pygame.Rect(lane_rect.x, rect.y, L, self.black_h + g)
+            if p == self.high:                                 # C8: its front is its back
+                hx, h = tail.x, L
+            if p == self.low:                                  # A0: its back and front reach the left edge
+                tail.width += tail.x - left
+                tail.x = left
+                h += hx - left
+                hx = left
+            self.fronts[p] = (hx, hx + h)                      # exact (may fall between pixels)
+            rx0, rx1 = round(hx), round(hx + h)
+            self.key_rects[p] = pygame.Rect(rx0, rect.y, rx1 - rx0, rect.h)   # the front (where it is played)
+            self.tails[p] = tail
+            self.lanes[p] = (lane_rect.x, L)
+            self.lane_shade.append((lane_rect.x, L))
 
     # ----- drawing -------------------------------------------------------------
     # The keyboard at rest is drawn once and cached (_base); each frame it is
@@ -236,8 +486,17 @@ class Keyboard:
             color = mix(HAND_COLORS[pressed[p]][0], (255, 255, 255), 0.15)
         r = self.key_rects[p]
         if self.style == "equal":
-            head = pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap)
+            # the front: its whole pixels, then any edge column it only partly covers, in between
+            # the key's and the gap's colours as much as it covers (so every gap reads the same width)
+            fx0, fx1 = self.fronts[p]
+            top = self.rect.y + self.black_h + self.gap
+            h = r.h - self.black_h - self.gap
+            c0, c1 = math.ceil(fx0 - 1e-6), math.floor(fx1 + 1e-6)
+            head = pygame.Rect(c0, top, c1 - c0, h)
             pygame.draw.rect(surf, color, head, border_bottom_left_radius=3, border_bottom_right_radius=3)
+            for col, cover in ((c0 - 1, c0 - fx0), (c1, fx1 - c1)):
+                if cover > 1e-6:
+                    pygame.draw.line(surf, mix(KEY_GAP, color, cover), (col, top), (col, top + h - 3))
             pygame.draw.rect(surf, color, self.tails[p])
         else:
             pygame.draw.rect(surf, color, r, border_bottom_left_radius=3, border_bottom_right_radius=3)
@@ -263,7 +522,9 @@ class Keyboard:
         """The rects a white key covers."""
         r = self.key_rects[p]
         if self.style == "equal":
-            return [pygame.Rect(r.x, self.rect.y + self.black_h + self.gap, r.w, r.h - self.black_h - self.gap),
+            fx0, fx1 = self.fronts[p]
+            c0, c1 = math.floor(fx0 + 1e-6), math.ceil(fx1 - 1e-6)
+            return [pygame.Rect(c0, self.rect.y + self.black_h + self.gap, c1 - c0, r.h - self.black_h - self.gap),
                     self.tails[p]]
         return [r]
 
@@ -292,7 +553,8 @@ class Keyboard:
 
     def _draw_all(self, surf, pressed):
         if self.style == "equal":
-            pygame.draw.rect(surf, KEY_GAP, self.rect)
+            pygame.draw.rect(surf, KEY_GAP, pygame.Rect(self.keys_x[0], self.rect.y,
+                                                        self.keys_x[1] - self.keys_x[0], self.rect.h))
         for p in self.key_rects:
             if not is_black_key(p):
                 self._white(surf, p, pressed)
@@ -374,10 +636,15 @@ def draw_hand_area(surf, rect):
 # --------------------------------------------------------------------------- #
 # Optional sound through the system MIDI synth (e.g. Windows GS Wavetable Synth)
 # --------------------------------------------------------------------------- #
+DEFAULT_VOLUME = 0.8         # (the synth's channel volume 102 of 127, about General MIDI's default 100)
+
+
 class MidiOut:
     def __init__(self, enabled=True):
         self.port = None
         self.muted = False
+        self.volume = DEFAULT_VOLUME             # 0..1, for the synth and a synced recording alike
+        self.path, self.name = None, ""          # (no soundfont: the system's synth - sf_synth.SoundfontOut has one)
         if not enabled:
             return
         try:
@@ -388,6 +655,7 @@ class MidiOut:
                 self.port = pygame.midi.Output(device)
                 for ch in (0, 1):
                     self.port.set_instrument(0, ch)   # acoustic grand piano
+                self.set_volume(self.volume)
         except Exception as exc:  # no synth available: run silently
             print(f"Sound disabled ({exc})")
             self.port = None
@@ -411,6 +679,13 @@ class MidiOut:
         if self.port:
             for ch in (0, 1):
                 self.port.write_short(0xB0 | ch, 123, 0)   # "all notes off"
+
+    def set_volume(self, v):
+        """The volume (0..1): the synth's channel volume (CC 7) on both hands' channels."""
+        self.volume = min(1.0, max(0.0, float(v)))
+        if self.port:
+            for ch in (0, 1):
+                self.port.write_short(0xB0 | ch, 7, int(round(127 * self.volume)))
 
     def control_change(self, number, value):
         """Pedals (sustain 64, sostenuto 66, soft 67) go to both hands' channels."""
@@ -609,12 +884,12 @@ def _tk_root():
     return root
 
 
-def pick_file(title="Open MIDI file", initialdir=None):
-    """Native open dialog; returns '' if cancelled or unavailable."""
+def pick_file(title="Open MIDI file", initialdir=None, filetypes=None):
+    """Native open dialog (MIDI files, or `filetypes`); returns '' if cancelled or unavailable."""
     try:
         from tkinter import filedialog
         root = _tk_root()
-        path = filedialog.askopenfilename(parent=root, title=title, filetypes=_MIDI_TYPES,
+        path = filedialog.askopenfilename(parent=root, title=title, filetypes=filetypes or _MIDI_TYPES,
                                           initialdir=initialdir or None)
         root.destroy()
         return path or ""
@@ -660,6 +935,15 @@ def default_export_name(path):
 # --------------------------------------------------------------------------- #
 # Small widgets
 # --------------------------------------------------------------------------- #
+def fit_text(font, text, width):
+    """`text`, shortened with an ellipsis if it's wider than `width` in `font` (any font the user chooses)."""
+    if width <= 0 or font.size(text)[0] <= width:
+        return text
+    while text and font.size(text + "…")[0] > width:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
 class Button:
     def __init__(self, label, action, font="normal", sub=None, key_hint=None):
         self.label, self.action, self.font, self.sub, self.key_hint = label, action, font, sub, key_hint
@@ -680,9 +964,10 @@ class Button:
         pygame.draw.rect(surf, base, self.rect, border_radius=8)
         pygame.draw.rect(surf, mix(base, (255, 255, 255), 0.18), self.rect, 1, border_radius=8)
         color = TEXT if self.enabled else TEXT_DIM
-        img = fonts[self.font].render(self.label, True, color)
+        room = self.rect.w - 16 - (2 * fonts["small"].size(self.key_hint)[0] + 16 if self.key_hint else 0)
+        img = fonts[self.font].render(fit_text(fonts[self.font], self.label, room), True, color)
         if self.sub:
-            sub = fonts["small"].render(self.sub, True, TEXT_DIM)
+            sub = fonts["small"].render(fit_text(fonts["small"], self.sub, self.rect.w - 24), True, TEXT_DIM)
             gap = 6
             total = img.get_height() + gap + sub.get_height()
             y = self.rect.centery - total // 2
@@ -734,12 +1019,16 @@ class Dialog:
         shade = pygame.Surface((w, h), pygame.SRCALPHA)
         shade.fill((0, 0, 0, 140))
         surf.blit(shade, (0, 0))
-        box = pygame.Rect(0, 0, 520, 190)
+        bw_box = min(560, w - 40)
+        lines = wrap_text(fonts["normal"], self.message, bw_box - 48)
+        line_h = fonts["normal"].get_linesize()
+        box = pygame.Rect(0, 0, bw_box, 190 + max(0, len(lines) - 1) * line_h)
         box.center = (w // 2, h // 2)
         pygame.draw.rect(surf, PANEL, box, border_radius=12)
         pygame.draw.rect(surf, PANEL_EDGE, box, 1, border_radius=12)
         surf.blit(fonts["button"].render(self.title, True, TEXT), (box.x + 24, box.y + 20))
-        surf.blit(fonts["normal"].render(self.message, True, TEXT_DIM), (box.x + 24, box.y + 62))
+        for i, line in enumerate(lines):
+            surf.blit(fonts["normal"].render(line, True, TEXT_DIM), (box.x + 24, box.y + 62 + i * line_h))
         bw, gap = 140, 12
         x = box.right - 24 - len(self.buttons) * bw - (len(self.buttons) - 1) * gap
         mouse = pygame.mouse.get_pos()
@@ -770,7 +1059,11 @@ def draw_pianist_badge(surf, fonts, area, pianist, pedals=None):
     if pedals is not None:
         # above the version in the window's corner (App.draw_version)
         bottom = min(area.bottom - pad, surf.get_height() - fonts["small"].get_height() - 10)
-        return draw_pedals(surf, (area.x + pad + 4, bottom), pedals, scale=min(1.5, max(0.9, surf.get_height() / 800)))
+        scale = min(1.5, max(0.9, surf.get_height() / 800))
+        scale = min(scale, (bottom - area.top - 4) / PEDAL_SIZE[1])      # (a short hand area: smaller, off the keys)
+        if scale < 0.35:
+            return None
+        return draw_pedals(surf, (area.x + pad + 4, bottom), pedals, scale=scale)
     return None
 
 
@@ -852,6 +1145,108 @@ def draw_pedals(surf, bottomleft, state, scale=1.0):
     r = img.get_rect(bottomleft=bottomleft)
     surf.blit(img, r)
     return r
+
+
+class VolumeSlider:
+    """
+    A small volume control for a top bar: a speaker, a short track and a knob.
+    Click or drag along it, or scroll over it. on_change(volume 0..1).
+    """
+    TRACK_W = 80
+
+    def __init__(self, value, on_change):
+        self.value, self.on_change = value, on_change
+        self.rect = pygame.Rect(0, 0, 0, 0)
+        self.dragging = False
+
+    def width(self):
+        return 20 + self.TRACK_W + 44
+
+    def _track(self):
+        return pygame.Rect(self.rect.x + 20, self.rect.centery - 2, self.TRACK_W, 4)
+
+    def _set(self, v):
+        v = min(1.0, max(0.0, v))
+        if abs(v - self.value) > 1e-9:
+            self.value = v
+            self.on_change(v)
+
+    def handle_event(self, event):
+        """True if the event was the slider's."""
+        if self.rect.w <= 0:
+            return False
+        tr = self._track()
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+            self.dragging = True
+            self._set((event.pos[0] - tr.x) / tr.w)
+            return True
+        if event.type == pygame.MOUSEMOTION and self.dragging:
+            self._set((event.pos[0] - tr.x) / tr.w)
+            return True
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.dragging:
+            self.dragging = False
+            return True
+        if event.type == pygame.MOUSEWHEEL and self.rect.collidepoint(pygame.mouse.get_pos()):
+            self._set(round((self.value + 0.05 * event.y) * 20) / 20)
+            return True
+        return False
+
+    def draw(self, surf, fonts, muted=False):
+        r = self.rect
+        cx, cy = r.x + 8, r.centery
+        col = TEXT_DIM if muted or self.value <= 0 else TEXT
+        # a speaker: box and cone, and a wave or two by the volume
+        pygame.draw.rect(surf, col, (cx - 6, cy - 3, 4, 6))
+        pygame.draw.polygon(surf, col, [(cx - 2, cy - 3), (cx + 3, cy - 7), (cx + 3, cy + 7), (cx - 2, cy + 3)])
+        if muted or self.value <= 0:
+            pygame.draw.line(surf, ACCENT, (cx + 6, cy - 4), (cx + 11, cy + 4), 2)
+            pygame.draw.line(surf, ACCENT, (cx + 6, cy + 4), (cx + 11, cy - 4), 2)
+        else:
+            for k in range(1 + (self.value > 0.5)):
+                rr = 5 + 4 * k
+                pygame.draw.arc(surf, col, (cx + 2 - rr, cy - rr, 2 * rr, 2 * rr), -0.9, 0.9, 1)
+        tr = self._track()
+        pygame.draw.rect(surf, (60, 60, 72), tr, border_radius=2)
+        fill = tr.copy()
+        fill.w = int(tr.w * self.value)
+        pygame.draw.rect(surf, mix(ACCENT, (60, 60, 72), 0.3 if muted else 0.0), fill, border_radius=2)
+        pygame.draw.circle(surf, TEXT, (tr.x + fill.w, tr.centery), 6)
+        txt = fonts["small"].render(f"{int(round(self.value * 100))}%", True, TEXT_DIM)
+        surf.blit(txt, txt.get_rect(midleft=(tr.right + 10, cy)))
+
+
+def draw_arrow_keys(surf, rect, color, accent=None):
+    """An arrow-keys icon (four keycaps in an inverted T, each with its arrow) centred in `rect`."""
+    k = max(6, min((rect.w - 10) // 3, (rect.h - 9) // 2))         # a keycap's side
+    gap = 1
+    x0 = rect.centerx - (3 * k + 2 * gap) // 2
+    y0 = rect.centery - (2 * k + gap) // 2
+    caps = {"up": (x0 + k + gap, y0), "left": (x0, y0 + k + gap), "down": (x0 + k + gap, y0 + k + gap),
+            "right": (x0 + 2 * (k + gap), y0 + k + gap)}
+    a = max(2, k // 3)                                               # an arrowhead's half-size
+    for name, (x, y) in caps.items():
+        cap = pygame.Rect(x, y, k, k)
+        pygame.draw.rect(surf, accent or color, cap, 1, border_radius=2)
+        cx, cy = cap.center
+        tri = {"up": [(cx, cy - a), (cx - a, cy + a // 2 + 1), (cx + a, cy + a // 2 + 1)],
+               "down": [(cx, cy + a), (cx - a, cy - a // 2 - 1), (cx + a, cy - a // 2 - 1)],
+               "left": [(cx - a, cy), (cx + a // 2 + 1, cy - a), (cx + a // 2 + 1, cy + a)],
+               "right": [(cx + a, cy), (cx - a // 2 - 1, cy - a), (cx - a // 2 - 1, cy + a)]}[name]
+        pygame.draw.polygon(surf, color, tri)
+
+
+def draw_tooltip(surf, fonts, text, anchor):
+    """A small box with `text` just below the rect `anchor` (kept inside the window)."""
+    img = fonts["small"].render(text, True, TEXT)
+    box = pygame.Rect(0, 0, img.get_width() + 16, img.get_height() + 8)
+    box.midtop = (anchor.centerx, anchor.bottom + 6)
+    box.clamp_ip(surf.get_rect())
+    panel = pygame.Surface(box.size, pygame.SRCALPHA)
+    panel.fill((22, 22, 28, 235))
+    surf.blit(panel, box)
+    pygame.draw.rect(surf, PANEL_EDGE, box, 1, border_radius=4)
+    surf.blit(img, (box.x + 8, box.y + 4))
+    return box
 
 
 class Slider:

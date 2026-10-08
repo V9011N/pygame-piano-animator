@@ -47,8 +47,21 @@ From The Cuphead Show with White Gloves
   right-click to set hand and finger, re-plan groups, see per-note difficulty, and finger note
   by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
   the MIDI file with the fingering embedded (or PIG text).
-- **Pianists & hands**: create pianists with their own hand anatomy (19 bones), technique and
+- **Recent**: the main menu lists the last five setups you opened - a MIDI file with its soundfont or
+  synced recording, or a file in the fingering editor - to open again in one click.
+- **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
+  cap the frame rate (24-240 fps, or uncapped), choose a soundfont (.sf2 / .sf3) to play the notes
+  with instead of the system's MIDI synth, choose the interface font (any installed font or a font
+  file), and show a performance overlay (frame rate and frame
+  times). A volume control sits in the player's and the editor's top bars;
+  hover over the player's controls to see what each does; the arrow-keys button under them lists the keys.
+- **Pianists & hands**: create pianists with their own hand anatomy (19 bones and the wrist width), technique and
   fingering preferences, and a skin (cartoon, white gloves, robot or skeleton).
+
+## Credits
+
+The interface typeface is Source Sans Pro by Adobe, under the SIL Open Font License
+(`assets/fonts/OFL.txt`).
 
 ## Requirements
 
@@ -114,8 +127,9 @@ To change the icon, edit `tools/make_icon.py` and run it (it writes `assets/icon
 
 ## Fingering in MIDI files
 
-Exported files are byte-for-byte copies of the original with a text event before each note:
-`R1`-`R5` / `L1`-`L5` (hand and finger), `F1`-`F5` (finger only) or `R` / `L` (hand only).
+Exported files are copies of the original with a text event before each note:
+`R1`-`R5` / `L1`-`L5` (hand and finger), `F1`-`F5` (finger only) or `R` / `L` (hand only), and
+each hand's notes on its own MIDI channel (the pedals go to both).
 Loading such a file restores the hands and fingers exactly. PIG fingering files (`.txt`) can be
 opened and exported too.
 

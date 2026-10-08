@@ -371,8 +371,11 @@ def _tempo_map(header, tracks):
 def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
     """
     Write a copy of `src_path` to `dst_path` with every note's hand and finger
-    stored as "R3"/"L1"-style text events (see above). Everything else in the
-    file - tempo, pedal, program changes, track layout - is kept byte for byte.
+    stored as "R3"/"L1"-style text events (see above), and each hand's notes
+    on its own channel: the right hand's on the piano's channel, the left
+    hand's on the first channel nothing else uses - the piano's pedals,
+    program changes and pitch bends go to both. Everything else in the file -
+    tempo, the other instruments, track layout - is kept as it was.
     `notes` are the loaded Note objects (with the hand to store) and `fingers`
     maps id(note) -> finger (or None). Returns how many notes were marked.
     """
@@ -393,6 +396,17 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
                 return got[0]
         return None
 
+    # each hand on its own channel: the right hand's on the piano's (first) channel, the
+    # left hand's on the first one nothing else in the file uses (not 10, the drums')
+    piano, other = set(), set()
+    for i in tracks:
+        for t, kind, p in tracks[i]:
+            if kind == 'midi' and p[0] & 0xF0 == 0x90 and p[2] > 0:
+                (piano if find(p[1], to_sec(t)) is not None else other).add(p[0] & 0x0F)
+    rh_ch = min(piano) if piano else 0
+    lh_ch = next((c for c in range(16) if c not in other and c != rh_ch and c != 9), rh_ch)
+    hand_ch = {RIGHT: rh_ch, LEFT: lh_ch}
+
     marked = set()
     out = bytearray(b'MThd' + struct.pack('>I', len(header)) + header)
     for i, (typ, td) in enumerate(chunks):
@@ -400,17 +414,32 @@ def save_fingered_midi(src_path: str, dst_path: str, notes, fingers) -> int:
             out += typ + struct.pack('>I', len(td)) + td
             continue
         new = []
+        sounding = {}                       # (file channel, pitch) -> [hand channel, ...]: its note-offs follow
         for ev in tracks[i]:
             t, kind, p = ev
             if kind == 'meta' and p[0] == 0x01 and _marker(p[1]):
                 continue                                  # old fingering: replaced below
-            if kind == 'midi' and p[0] & 0xF0 == 0x90 and p[2] > 0:
-                n = find(p[1], to_sec(t))
-                if n is not None:
-                    f = fingers.get(id(n))
-                    text = (n.hand + (str(f) if f else "")).encode()
-                    new.append((t, 'meta', (0x01, text)))
-                    marked.add(id(n))       # a note doubled on two tracks is still one note
+            if kind == 'midi':
+                st, ch = p[0] & 0xF0, p[0] & 0x0F
+                if st == 0x90 and p[2] > 0:
+                    n = find(p[1], to_sec(t))
+                    if n is not None:
+                        f = fingers.get(id(n))
+                        text = (n.hand + (str(f) if f else "")).encode()
+                        new.append((t, 'meta', (0x01, text)))
+                        marked.add(id(n))       # a note doubled on two tracks is still one note
+                        hc = hand_ch.get(n.hand, ch)
+                        sounding.setdefault((ch, p[1]), []).append(hc)
+                        ev = (t, kind, bytes([st | hc]) + p[1:])
+                elif st == 0x80 or st == 0x90:            # a note-off: on its note's channel
+                    stack = sounding.get((ch, p[1]))
+                    if stack:
+                        ev = (t, kind, bytes([st | stack.pop(0)]) + p[1:])
+                elif ch in piano and st in (0xA0, 0xB0, 0xC0, 0xD0, 0xE0):
+                    # pedals, programs, pitch bends of the piano's channels: to both hands' channels
+                    for hc in sorted({rh_ch, lh_ch}):
+                        new.append((t, kind, bytes([st | hc]) + p[1:]))
+                    continue
             new.append(ev)
         data = _encode(new)
         out += b'MTrk' + struct.pack('>I', len(data)) + data

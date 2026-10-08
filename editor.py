@@ -56,7 +56,7 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     LEAD_IN, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button, Dialog,
                     Keyboard, Performance, Transport, bottom_layout, default_export_name,
                     draw_felt, draw_hand_area, draw_pianist_badge, fmt_time, mix, pick_file,
-                    run_busy, save_file_dialog)
+                    VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
 from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands
@@ -282,6 +282,7 @@ class FingeringEditor(Transport):
                             Button("Open…", "open", font="small"),
                             Button("Export…", "export", font="small"),
                             Button("Menu", "menu", font="small")]
+        self.volume = VolumeSlider(self.midi.volume, self._set_volume)
         self.layout(self.screen.get_size())
         self.load_song(song, hands)
 
@@ -674,7 +675,18 @@ class FingeringEditor(Transport):
             bw = self.fonts["small"].size(b.label)[0] + 24
             b.rect = pygame.Rect(x - bw, 5, bw, TOP_BAR_H - 10)
             x -= bw + 6
-        self._buttons_left = x
+        vw = self.volume.width()                       # the volume, left of the buttons
+        self.volume.rect = pygame.Rect(x - 10 - vw, 0, vw, TOP_BAR_H)
+        self._buttons_left = self.volume.rect.x - 10
+
+    @property
+    def overlay_top(self):
+        """Where the performance overlay may start (App.draw_perf): the piano roll's top."""
+        return self.roll_rect.top
+
+    def _set_volume(self, v):
+        self.midi.set_volume(v)
+        pianists.set_app_setting("volume", round(v, 3))
 
     @property
     def pps(self):
@@ -785,6 +797,8 @@ class FingeringEditor(Transport):
             path = event.file
             return self._guard(lambda: self._load_path(path))
 
+        if not self.menu and self.volume.handle_event(event):
+            return True
         if self.menu:
             if event.type == pygame.MOUSEMOTION:
                 self.menu.motion(event.pos)
@@ -1116,6 +1130,9 @@ class FingeringEditor(Transport):
             self.menu.draw(s, pygame.mouse.get_pos())
         if self.dialog:
             self.dialog.draw(s, self.fonts)
+        elif (not self.menu and not self.volume.dragging
+              and self.volume.rect.collidepoint(pygame.mouse.get_pos())):
+            draw_tooltip(s, self.fonts, "Volume - click, drag or scroll", self.volume.rect)
 
     def _draw_roll(self, s):
         r = self.roll_rect
@@ -1317,6 +1334,7 @@ class FingeringEditor(Transport):
         mouse = pygame.mouse.get_pos()
         for b in self.top_buttons:
             b.draw(s, self.fonts, mouse)
+        self.volume.draw(s, self.fonts, muted=self.midi.muted)
 
     def _draw_info(self, s):
         r = self.info_rect

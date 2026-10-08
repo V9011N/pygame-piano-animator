@@ -150,8 +150,9 @@ W = {
     "chord_cramp": 0.4,
     "chord_stretch_adj": 1.2,
     "figure": 1.0,             # times the figure's weight, for leaving its standard fingering
-    "thumb_double": 7.0,       # the thumb covering two neighbouring keys in a chord
-    "pinky_double": 8.0,       # the little finger covering two neighbouring white keys
+    "thumb_double": 15.0,      # the thumb covering two neighbouring keys in a chord (only where no finger-a-key
+                               # shape is in reach: at 7 it beat a merely uncomfortable one, e.g. LH F-A-D-E 5-3-1-1)
+    "pinky_double": 16.0,      # the little finger covering two neighbouring white keys (likewise)
     "same_shape": 1.5,         # the same fingers on a chord shape that moves by step (4-2, 4-2, 4-2)
     "shape_shift": 0.5,        # moving a whole chord shape with the same fingers
     "octave_4_white": 1.5,     # an octave's top note with 4 on a white key
@@ -370,6 +371,7 @@ def apply_pianist(p):
     W.clear()
     W.update(base)
     MAX_SPAN.update(BASE_MAX_SPAN)
+    REACH_SCALE.clear()
     figures.PREFS.update(figures.DEFAULT_PREFS)
     for name, v in _fig_defaults().items():
         setattr(figures, name, v)
@@ -399,6 +401,7 @@ def _apply_preferences(p, base):
         RELAXED[f] = v * k
     stretch = p.b("stretch_bias")                 # -1 shift/cross .. +1 stretch
     scale = reach_scale(p.anatomy)
+    REACH_SCALE.update(scale)
     for pair, v in BASE_MAX_SPAN.items():
         # the anatomical reach; a pianist who prefers shifting uses a little less of it
         MAX_SPAN[pair] = v * scale[pair] * (1.0 + 0.06 * min(0.0, stretch))
@@ -416,6 +419,17 @@ def _apply_preferences(p, base):
     W["cross_thumb_black"] = base["cross_thumb_black"] * b
     figures.PREFS.update(chromatic=p.b("chromatic"), repeated=p.b("repeated"),
                          trill=p.b("trill"), octaves=p.b("octaves"))
+
+
+# This pianist's reach between each pair of fingers against the default hand's (hands.reach_scale; 1 = the
+# default hand). The comfort costs measure a spread in this hand's own units (distance / scale), as the limits
+# (MAX_SPAN) already do: a 13th hand spreading across an octave isn't straining as an average hand would.
+REACH_SCALE = {}
+
+
+def comfy(dist, fa, fb):
+    """A spread between fingers fa and fb, in this hand's units (the default hand's white keys)."""
+    return dist / REACH_SCALE.get((min(fa, fb), max(fa, fb)), 1.0)
 
 
 def is_black(pitch):
@@ -480,6 +494,23 @@ def double_ok(p1, p2, f):
     return (f == 1 and thumb_pair(p1, p2)) or (f == 5 and pinky_pair(p1, p2))
 
 
+def thumb_bridge(a, b):
+    """The thumb on two black keys (C#-D#, D#-F#, A#-C#...): it lies across the white keys between them."""
+    return thumb_pair(a, b) and is_black(a) and is_black(b)
+
+
+def bridge_from(ps, fs, k):
+    """
+    Where finger fs[k] stretches to the next finger from: its key ps[k] - or,
+    for the upper key of a thumb bridging two black keys (thumb_bridge), the
+    lower one, where its tip is (it lies across to it, the near key under its
+    side). ps, fs: a chord in the RH frame, in pitch order.
+    """
+    if fs[k] == 1 and k > 0 and fs[k - 1] == 1 and thumb_bridge(ps[k - 1], ps[k]):
+        return ps[k - 1]
+    return ps[k]
+
+
 def unary_cost(pitch, f):
     c = W["finger_4"] if f == 4 else W["finger_5"] if f == 5 else 0.0
     if is_black(pitch):
@@ -508,7 +539,7 @@ def pair_cost(p1, f1, p2, f2):
         return c
     if (d > 0) == (f2 > f1):
         rel, nat = abs(d), abs(_OFF[f2] - _OFF[f1])
-        c = W["stretch"] * max(0.0, rel - nat) + W["cramp"] * max(0.0, nat - rel)
+        c = W["stretch"] * max(0.0, comfy(rel, f1, f2) - nat) + W["cramp"] * max(0.0, nat - rel)
         limit = MAX_SPAN[(min(f1, f2), max(f1, f2))]
         if rel > limit:
             # Out of reach from where the hand is: the hand has to leap, and
@@ -535,10 +566,11 @@ def chord_pair_cost(pl, fl, ph, fh):
             return IMPOSSIBLE
         return W["cross"] * 2 + W["chord_stretch"] * abs(rel) + \
             (IMPOSSIBLE if rel > MAX_SPAN.get((fh, fl), 12) else 0.0)
-    c = W["chord_stretch"] * max(0.0, rel - nat) + W["chord_cramp"] * max(0.0, nat - rel)
+    spread = comfy(rel, fl, fh)
+    c = W["chord_stretch"] * max(0.0, spread - nat) + W["chord_cramp"] * max(0.0, nat - rel)
     if fh - fl == 1 and fl != 1:
         # neighbouring long fingers (2-3, 3-4, 4-5) held apart: thirds want 1-3 / 2-4 / 3-5
-        c += W["chord_stretch_adj"] * max(0.0, rel - 1.2)
+        c += W["chord_stretch_adj"] * max(0.0, spread - 1.2)
     if rel > MAX_SPAN[(fl, fh)]:
         c += IMPOSSIBLE
     if fl == 1 and fh == 4 and rel >= 6.0 and not is_black(ph):
@@ -571,6 +603,8 @@ def inner_room_cost(pairs):
     if not inner:
         return 0.0
     c = W["inner_room"] if fh == 4 else 0.0
+    if len(inner) >= fh - 2:
+        return c                                 # (every finger between the thumb and fh taken: no other way)
     span = key_pos(hi) - key_pos(lo)
     for p, f in inner:
         r = (key_pos(p) - key_pos(lo)) / span
@@ -592,11 +626,12 @@ def shape_cost(pairs):
     """
     pairs = sorted(pairs)
     c = 0.0
-    for (p1, f1), (p2, f2) in zip(pairs, pairs[1:]):
+    for k, ((p1, f1), (p2, f2)) in enumerate(zip(pairs, pairs[1:])):
         if f1 == f2:
             if double_ok(p1, p2, f1):
                 continue
             return IMPOSSIBLE
+        p1 = bridge_from([p for p, _ in pairs], [f for _, f in pairs], k)
         if f2 < f1:
             if 1 in (f1, f2) and key_pos(p2) - key_pos(p1) <= 2.5:
                 c += 3.0
@@ -823,8 +858,8 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                 for s_, f in zip(sug, st):
                     if s_ and (f not in s_[0] if isinstance(s_[0], frozenset) else s_[0] != f):
                         c += W["figure"] * s_[1]
-                for (pl, fl), (ph, fh) in zip(zip(ps, st), list(zip(ps, st))[1:]):
-                    c += chord_pair_cost(pl, fl, ph, fh)
+                for k in range(1, len(st)):
+                    c += chord_pair_cost(bridge_from(ps, st, k - 1), st[k - 1], ps[k], st[k])
                 c += inner_room_cost(list(zip(ps, st)))
                 # every pair of fingers within its reach, not only neighbours
                 # (an octave 1-3 with 2 between them passes each neighbour's check)

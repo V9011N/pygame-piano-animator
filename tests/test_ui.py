@@ -148,15 +148,41 @@ def test_equal_keys_toggle_and_layout(screen):
     import common
     import pianist
     app = app_on(screen)
-    menu = app.mode
     assert common.key_style() == "realistic"
-    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=menu.keys_button.rect.center))
+    app.settings()                                               # (the keyboard type is in the Settings)
+    app.mode.render()
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.mode.keys.rect.center))
     assert common.key_style() == "equal" and pianist.app_setting("keys") == "equal"
     try:
         kb = common.Keyboard(pygame.Rect(0, 0, 1400, 150))
         assert kb.style == "equal"
         widths = {w for _, w in kb.lanes.values()}
-        assert max(widths) - min(widths) <= 1                      # every lane the same width
+        assert len(widths) == 1                                    # every lane exactly the same width...
+        xs = [kb.lanes[p][0] for p in range(21, 109)]
+        assert {b - a for a, b in zip(xs, xs[1:])} == {kb.pitch}   # ...and the same step (so the same gaps)
+        blacks = {kb.key_rects[p].w for p in range(21, 109) if midi_loader.is_black_key(p)}
+        tails = {kb.tails[p].w for p in kb.tails if p not in (21, 108)}
+        assert blacks == tails == widths
+        for group in ((0, 2, 4), (5, 7, 9, 11)):                   # the fronts: exactly alike within a group...
+            fronts = {round(kb.fronts[p][1] - kb.fronts[p][0], 6) for p in range(22, 108) if p % 12 in group}
+            assert len(fronts) == 1
+        gaps = {round(kb.fronts[q][0] - kb.fronts[p][1], 6)          # ...and every gap between them the lanes' gap
+                for p, q in zip(sorted(kb.fronts), sorted(kb.fronts)[1:])}
+        assert gaps == {kb.gap}
+        # drawn: every gap between fronts holds exactly `gap` pixels' worth of the gap colour
+        surf = pygame.Surface((1400, 150))
+        kb.draw(surf, {})
+        row = [surf.get_at((x, 140))[0] for x in range(kb.keys_x[0], kb.keys_x[1])]
+        dark = [(common.WHITE_KEY[0] - v) / (common.WHITE_KEY[0] - common.KEY_GAP[0]) for v in row]
+        runs, cur = [], 0.0
+        for d in dark:
+            if d > 0.005:
+                cur += d
+            elif cur:
+                runs.append(cur)
+                cur = 0.0
+        assert len(runs) == 51 and all(abs(r - kb.gap) < 0.03 for r in runs)
+        assert kb.key_rects[108] == pygame.Rect(kb.tails[108].x, 0, kb.tails[108].w, 150)    # C8: front = back
         xs = [kb.lanes[p][0] for p in range(21, 109)]
         assert all(b > a for a, b in zip(xs, xs[1:]))              # in pitch order, never overlapping
         for p in range(21, 109):
@@ -164,7 +190,14 @@ def test_equal_keys_toggle_and_layout(screen):
                 assert kb.lanes[p] == (kb.key_rects[p].x, kb.key_rects[p].w)   # black key = its lane
             else:                                                  # a white key's back is its lane
                 assert abs(kb.tails[p].centerx - (kb.lanes[p][0] + kb.lanes[p][1] / 2)) <= 1 or p in (21, 108)
-        assert kb.key_rects[21].left <= 1 and kb.key_rects[108].right >= 1398
+        # A0's back takes what's left of the width (at most EQUAL_A0_MAX lanes), the rest an even margin
+        left, right = kb.key_rects[21].left, kb.tails[108].right
+        assert kb.tails[21].left == left and kb.pitch <= kb.tails[21].w <= common.EQUAL_A0_MAX * kb.pitch
+        assert abs(left - (1400 - (right + kb.gap - kb.gap // 2))) <= 1
+        for w in (1280, 1600, 1920, 2560, 3840):                   # and the same at any width
+            k = common.Keyboard(pygame.Rect(0, 0, w, 150))
+            assert len({lw for _, lw in k.lanes.values()}) == 1
+            assert len({round(k.fronts[p][1] - k.fronts[p][0], 6) for p in range(22, 108) if p % 12 in (5, 7, 9, 11)}) == 1
         app.play(midi_path("demo_song.mid"))
         app.mode.seek(3.0)
         app.mode.render()
@@ -257,3 +290,153 @@ def test_pedals_light_up_and_keep_clear_of_the_version(screen):
         assert c[0] > 150 and c[1] > 130 and c[2] < c[1] - 30      # brass
     version_top = screen.get_height() - app.fonts["small"].get_height() - 4    # (App.draw_version)
     assert r.bottom <= version_top
+
+
+def test_keyboard_placement_limits():
+    import common
+    size = (1280, 800)
+    try:
+        default, _ = common.bottom_layout(size)
+        common.set_keyboard_place(0.0)                           # highest: the top of the keys at the centre
+        kb, hand = common.bottom_layout(size)
+        assert kb.y == size[1] // 2 and hand.top == kb.bottom and hand.bottom == size[1]
+        common.set_keyboard_place(1.0)                           # lowest: half a keyboard above the bottom
+        kb, hand = common.bottom_layout(size)
+        assert size[1] - kb.bottom == kb.h // 2 and hand.h == size[1] - kb.bottom
+        common.set_keyboard_place(None)
+        assert common.bottom_layout(size)[0] == default
+    finally:
+        common.set_keyboard_place(None)
+
+
+def test_settings_screen_drags_the_keyboard_and_toggles_profiling(screen):
+    import common
+    import pianist
+    app = app_on(screen)
+    try:
+        app.mode.render()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=app.mode.settings_button.rect.center))
+        st = app.mode
+        assert type(st).__name__ == "SettingsScreen"
+        st.render()
+        kb, _ = st._kb()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=kb.center))
+        app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(kb.centerx, 0), rel=(0, 0), buttons=(1, 0, 0)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(kb.centerx, 0)))
+        assert common.keyboard_place() == 0.0 and pianist.app_setting("keyboard_place") == 0.0
+        assert st._kb()[0].y == screen.get_height() // 2               # (it can't go higher)
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=st.perf.rect.center))
+        assert app.perf_overlay and pianist.app_setting("perf_overlay") is True
+        for _ in range(5):
+            app._frame_ms.append(16)
+        st.render()
+        app.draw_perf()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=st.reset.rect.center))
+        assert common.keyboard_place() is None
+        key(app, pygame.K_ESCAPE)
+        assert type(app.mode).__name__ == "MainMenu"
+        assert app_on(screen).perf_overlay                             # remembered
+    finally:
+        common.set_keyboard_place(None)
+
+
+def test_the_progress_bar_is_clear_and_the_controls_sit_under_it(screen):
+    import pianist
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    bar = v.bar_rect
+    # nothing on the bar but the name and time: every control is below it, on the right
+    for rect, _ in v._top_items:
+        assert rect.top >= bar.bottom and rect.right > screen.get_width() // 2
+    assert v.controls_rect.top >= v.fall_rect.top and v.keys_button.top >= v.controls_rect.bottom
+    # so a click anywhere along the bar seeks - even at its right end, where the controls were
+    for x in (bar.right - 12, bar.right - 200, bar.centerx):
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(x, bar.centery)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(x, bar.centery)))
+        assert abs(v.t - v.song.duration * x / bar.w) < 0.6
+    # the arrow-keys button shows the key controls (kept for next time); a click on them doesn't seek
+    assert not v.show_keys and v.keys_rect.w == 0
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_button.center))
+    v.render()
+    assert v.show_keys and v.keys_rect.h > 200 and pianist.app_setting("player_keys") is True
+    t0 = v.t
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_rect.center))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=v.keys_rect.center))
+    assert v.t == t0 and not v.dragging_bar
+    assert any(k == "Space" for k, _ in v._key_controls()) and all(d for _, d in v._key_controls())
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.keys_button.center))
+    v.render()
+    assert not v.show_keys and v.keys_rect.w == 0
+    # "sound on / off": a click mutes and unmutes, as M does (a stand-in soundfont player to hear it)
+    from test_soundfont import player
+    v.midi = app.midi = player("Grand.sf2")
+    v.render()
+    assert v.sound_rect.w and any("Grand soundfont" in tip for _, tip in v._top_items)
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=v.sound_rect.center))
+    assert app.midi.muted
+    key(app, pygame.K_m)
+    assert not app.midi.muted
+
+
+def test_volume_and_top_bar_tooltips(screen):
+    import pianist
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    tips = [tip for _, tip in v._top_items]
+    assert any("Volume" in t for t in tips) and any("key controls" in t for t in tips) and all(tips)
+    assert any("hands" in d for _, d in v._key_controls())
+    r = v.volume._track()
+    t0 = v.t
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 4, r.centery)))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4, r.centery)))
+    assert abs(app.midi.volume - 0.25) < 0.03 and abs(pianist.app_setting("volume") - 0.25) < 0.03
+    assert v.t == t0 and not v.dragging_bar                          # (the click didn't seek: it's in the panel)
+    # the finger numbers fit the narrowest notes
+    px = v._finger_size(v.keyboard)
+    narrow = min(w for _, w in v.keyboard.lanes.values())
+    assert v._finger_font(px).size("8")[0] + 3 <= narrow or px == 11
+    # the editor has the same volume
+    app.edit(midi_path("demo_song.mid"))
+    ed = app.mode
+    ed.render()
+    assert abs(ed.volume.value - 0.25) < 0.03
+    r = ed.volume._track()
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.right, r.centery)))
+    assert app.midi.volume == 1.0
+
+
+def test_frame_rate_cap_setting(screen):
+    import pianist
+    app = app_on(screen)
+    assert app.fps_cap == 60                                         # the default
+    app.settings()
+    st = app.mode
+    st.render()
+    tr = st.fps.track
+    for x, want in ((tr.x - 4, 24), (tr.right + 4, None), (tr.x + tr.w // 2, None)):
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(x, tr.centery)))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(x, tr.centery)))
+        if want is None and x < tr.right:
+            assert 24 < app.fps_cap < 240                            # somewhere in between
+        else:
+            assert app.fps_cap == want, (x, app.fps_cap)             # all the way right: uncapped
+    assert pianist.app_setting("fps_cap") == app.fps_cap
+    app.set_fps_cap(None)
+    assert app_on(screen).fps_cap is None                            # remembered, uncapped too
+    import main
+    assert main.fps_cap_value(500) == 240 and main.fps_cap_value(5) == 24 and main.fps_cap_value("x") == 60
+
+
+def test_a_falling_note_keeps_its_length_and_moves_smoothly():
+    """No flicker: frame after frame a note's box is exactly the same length, and it moves on steadily."""
+    pps = 173.3                                      # (pixels a second: not a whole number)
+    rects = [main.note_rect(10, 20, 700, 5.0, 5.37, t, pps) for t in [i / 144 for i in range(500)]]
+    assert len({r.h for r in rects}) == 1                # one length, every frame (no flicker)
+    steps = [b.bottom - a.bottom for a, b in zip(rects, rects[1:])]
+    assert all(s in (1, 2) for s in steps)           # 1.2 px a frame: never still, never back
+    for i, r in enumerate(rects):                    # and within half a pixel of where it truly is
+        assert abs(r.bottom - (700 - (5.0 - i / 144) * pps)) <= 0.5

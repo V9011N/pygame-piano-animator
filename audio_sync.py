@@ -16,6 +16,7 @@ so the audio heard at song time t is at offset + t / speed seconds
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pygame
@@ -28,6 +29,11 @@ PEAK_T = 0.005               # s, the waveform is kept as the loudest sample in 
 WAVE_H = 56                  # px, the waveform strip under the player's top bar
 WAVE_COLOR = (96, 150, 210)  # the recording's waveform
 WAVE_DIM = (62, 82, 108)     # ...where it lies outside the MIDI
+# Held while the mixer is reopened, and by anything feeding it from another
+# thread (sf_synth.MixerStream): a channel touched while the mixer closes
+# under it crashes the whole program, with no Python error to show.
+MIXER_LOCK = threading.RLock()
+mixer_opened = 0             # how many times ensure_mixer has opened it
 
 
 def pick_audio_file(title="Choose the audio file to sync", initialdir=None):
@@ -103,15 +109,18 @@ def ensure_mixer(rate=None):
     the recording's own rate, the device converting as it plays, which
     keeps time.
     """
-    cur = pygame.mixer.get_init()
-    if cur and (rate is None or cur[0] == rate):
-        return
-    if cur:
-        pygame.mixer.quit()
-    if rate is None:
-        pygame.mixer.init()
-    else:
-        pygame.mixer.init(frequency=rate, allowedchanges=0)
+    global mixer_opened
+    with MIXER_LOCK:
+        cur = pygame.mixer.get_init()
+        if cur and (rate is None or cur[0] == rate):
+            return
+        if cur:
+            pygame.mixer.quit()
+        mixer_opened += 1
+        if rate is None:
+            pygame.mixer.init()
+        else:
+            pygame.mixer.init(frequency=rate, allowedchanges=0)
 
 
 class SyncAudio:
@@ -203,8 +212,8 @@ class PlaybackSetup:
         self.page = "sound"
         self.message = ""
         self.speed = 1.0
-        self.default_button = Button("Default sound", "default", font="button", key_hint="1",
-                                     sub="Play the notes through the MIDI synth (speed changeable)")
+        self.default_button = Button("Default sound", "default", font="button", key_hint="1")
+        self._label_sound()
         self.sync_button = Button("Sync an audio file", "sync", font="button", key_hint="2",
                                   sub="Play a recording in time with the notes and hands")
         self.back_button = Button("Back", "back", font="normal", key_hint="Esc")
@@ -213,6 +222,16 @@ class PlaybackSetup:
                              fmt=lambda v: f"{int(round(v * 100))}%", step=0.05,
                              lo_label="25%", hi_label=f"{int(SPEED_MAX * 100)}%")
         self.layout(app.screen.get_size())
+
+    def _label_sound(self):
+        """The first choice names what plays the notes: the soundfont chosen in the Settings, or the default."""
+        name = getattr(self.app.midi, "name", "")
+        if name:
+            self.default_button.label = f"Soundfont: {name}"
+            self.default_button.sub = f"Play the notes with the {name} soundfont (speed changeable)"
+        else:
+            self.default_button.label = "Default sound"
+            self.default_button.sub = "Play the notes through the system's MIDI synth (speed changeable)"
 
     def _set_speed(self, v):
         self.speed = round(v, 2)
@@ -308,6 +327,7 @@ class PlaybackSetup:
         s, f = self.app.screen, self.app.fonts
         w, h = s.get_size()
         s.fill(BG)
+        self._label_sound()
         title = f["title"].render(self.song.title, True, TEXT)
         top = self.default_button.rect.y
         s.blit(title, title.get_rect(midbottom=(w // 2, top - 56)))

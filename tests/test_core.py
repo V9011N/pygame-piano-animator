@@ -60,6 +60,15 @@ def test_thumb_covers_two_black_keys_instead_of_rolling():
     assert plan(chord) == [1, 1, 3, 5]
 
 
+def test_a_finger_takes_two_keys_only_when_nothing_else_reaches():
+    # a free finger and every key in reach: one finger a key (not the thumb on the top two)
+    chord = [Note(p, 0.0, 1.0, 80, 0, LEFT) for p in (53, 57, 62, 64)]     # LH F-A-D-E
+    assert plan(chord, hand=LEFT) == [5, 4, 2, 1]
+    chord = [Note(p, 0.0, 1.0, 80, 0, LEFT) for p in (48, 52, 57, 59)]     # LH C-E-A-B
+    assert plan(chord, hand=LEFT).count(1) == 1
+    # out of reach one finger a key: the thumb on two (test_thumb_covers_two_black_keys_instead_of_rolling)
+
+
 def test_plain_chord_keeps_one_finger_per_note():
     chord = [Note(p, 0.0, 1.0, 80, 0, RIGHT) for p in (60, 62, 65, 69)]   # C-D-F-A
     assert plan(chord) == [1, 2, 3, 5]
@@ -893,3 +902,160 @@ def test_a_finger_reaching_for_its_key_is_not_pulled():
     linked, _ = _tip_heights(ns, 1.0, times)
     assert a._reaching(4, times[0]) == 1.0
     assert all(abs(x - y) < 1e-6 for x, y in zip(linked[4], free[4]))
+
+
+def test_thumb_bridging_two_black_keys_reaches_from_the_far_one():
+    # the thumb on A#3-C#4 lies across to A#3: the little finger's stretch is from there
+    from fingering import IMPOSSIBLE, MAX_SPAN, bridge_from, key_pos, shape_cost
+    assert bridge_from([58, 61, 70], [1, 1, 5], 1) == 58
+    assert bridge_from([60, 62, 70], [1, 1, 5], 1) == 62           # (two white keys: no bridge)
+    p5 = next(p for p in range(62, 100)
+              if key_pos(p) - key_pos(61) <= MAX_SPAN[(1, 5)] < key_pos(p) - key_pos(58))
+    assert shape_cost([(61, 1), (p5, 5)]) < IMPOSSIBLE              # from the near key it would reach...
+    assert shape_cost([(58, 1), (61, 1), (p5, 5)]) >= IMPOSSIBLE    # ...but the thumb's tip is on the far one
+
+
+def test_thumb_bridge_lies_straight_across_both_black_keys():
+    import math
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    ns = [Note(p, 0.5, 2.0, 80, 0, RIGHT, finger=f) for p, f in ((82, 1), (85, 1), (90, 3), (94, 5))]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    for t in [0.2 + i / 60 for i in range(40)]:
+        a.pose(t, kb)
+    ch = a.pose(1.0, kb)["struct"]["chains"][1]                     # CMC, MCP, IP, tip
+    far, near = (a.key_target(p, 1)[0] for p in (82, 85))
+    tip, ip, mcp = ch[3], ch[2], ch[1]
+    assert abs(tip[0] - far) < 0.15 * a.ppi                          # the tip on the far key
+    v1 = (ip[0] - tip[0], ip[1] - tip[1], ip[2] - tip[2])
+    v2 = (mcp[0] - ip[0], mcp[1] - ip[1], mcp[2] - ip[2])
+    cos = sum(x * y for x, y in zip(v1, v2)) / math.dist(ip, tip) / math.dist(mcp, ip)
+    assert cos > math.cos(math.radians(3))                           # straight: no bend at the IP joint
+    # the thumb lies over the near key, in along it from its front: its line crosses the key,
+    # or its MCP joint (half the thumb's width either side) covers it
+    from skins import FINGER_W_IN
+    front = kb.rect.h - kb.black_h
+    u = (near - tip[0]) / (mcp[0] - tip[0])
+    assert u > 0.0
+    if u <= 1.0:
+        assert tip[1] + u * (mcp[1] - tip[1]) >= front
+    else:
+        assert near - mcp[0] <= 0.5 * FINGER_W_IN[1] * a.ppi and mcp[1] >= front
+
+
+def test_export_puts_each_hand_on_its_own_channel(tmp_path):
+    # one track, one channel: C4-E4 (right hand) and C2 (left hand) under the pedal
+    src, dst = tmp_path / "one.mid", tmp_path / "one_fingered.mid"
+    src.write_bytes(_smf([[(0, b"\xb0\x40\x7f"), (0, b"\x90\x24\x50"), (0, b"\x90\x3c\x50"),
+                           (480, b"\x80\x3c\x40"), (0, b"\x90\x40\x50"), (480, b"\x80\x40\x40"),
+                           (0, b"\x90\x24\x00"), (0, b"\xb0\x40\x00")]]))
+    import dataclasses
+    s = midi_loader.load_song(str(src))
+    notes = [dataclasses.replace(n, hand=LEFT if n.pitch < 48 else RIGHT) for n in s.notes]
+    midi_loader.save_fingered_midi(str(src), str(dst), notes, {id(n): 1 for n in notes})
+    _, _, tracks = midi_loader._smf_tracks(str(dst))
+    ons, offs, pedal = {}, {}, set()
+    for t, kind, p in [e for evs in tracks.values() for e in evs]:
+        if kind != 'midi':
+            continue
+        st, ch = p[0] & 0xF0, p[0] & 0x0F
+        if st == 0x90 and p[2] > 0:
+            ons[p[1]] = ch
+        elif st in (0x80, 0x90):
+            offs[p[1]] = ch
+        elif st == 0xB0:
+            pedal.add(ch)
+    assert ons[0x3c] == ons[0x40] == 0 and ons[0x24] == 1            # right hand 1st channel, left 2nd
+    assert offs == ons                                               # each note let go on its own channel
+    assert pedal == {0, 1}                                           # the pedal for both hands
+    back = midi_loader.load_song(str(dst))
+    assert sorted((n.pitch, n.hand, n.finger) for n in back.notes) == [(36, LEFT, 1), (60, RIGHT, 1), (64, RIGHT, 1)]
+
+
+def test_the_largest_hand_spans_at_least_a_thirteenth():
+    """Bones up to 250%: a span of a 13th at least (Rachmaninoff's), played as a chord, not rolled."""
+    import pianist as P
+    assert P.clamp_bone("mc3", 99.0) == P.DEFAULT_ANATOMY["mc3"] * P.METACARPAL_MAX
+    assert P.clamp_bone("pp3", 99.0) == P.DEFAULT_ANATOMY["pp3"] * P.BONE_MAX == P.DEFAULT_ANATOMY["pp3"] * 2.5
+    big = P.default_pianist()
+    big.anatomy = {b: P.clamp_bone(b, 99.0) for b in P.DEFAULT_ANATOMY}
+    assert big.span_whites() >= 12.0
+    try:
+        F.apply_pianist(big)
+        assert F.MAX_SPAN[(1, 5)] >= 12.0
+        for hand in (RIGHT, LEFT):
+            assert sorted(plan([Note(p, 0.0, 1.0, 80, 0, hand) for p in (48, 69)], hand=hand)) == [1, 5]   # C3-A4
+    finally:
+        F.apply_pianist(None)
+
+
+def test_the_wrist_width_is_part_of_the_anatomy(screen):
+    """Wrist width: 75%..200% of the default, kept with the pianist, moves the wrist's two sides."""
+    import pianist as P
+    from hands import HandGeometry, WRIST_SIDES
+    assert P.clamp_wrist(9.0) == 2.0 and P.clamp_wrist(0.1) == 0.75
+    p = P.default_pianist()
+    p.anatomy[P.WRIST] = 1.6
+    back = P.Pianist.from_json(p.id, p.to_json())
+    assert back.anatomy[P.WRIST] == 1.6
+    d = p.to_json()
+    d["anatomy"] = dict(d["anatomy"], **{P.WRIST: 5.0})
+    assert P.Pianist.from_json(p.id, d).anatomy[P.WRIST] == 2.0                   # (kept within its limits)
+    assert P.WRIST not in P.Pianist.from_json("old", {"name": "Old"}).anatomy       # (older files: 100%)
+    g, g0 = HandGeometry(back.anatomy), HandGeometry()
+    assert g0.wrist_sides == WRIST_SIDES
+    width = lambda geo: geo.wrist_sides[1][0] - geo.wrist_sides[0][0]
+    assert abs(width(g) - 1.6 * width(g0)) < 1e-9 and g.span_units() == g0.span_units()   # (the span is the fingers')
+    # the studio's slider
+    import main
+    app = main.App(screen, sound=False)
+    app.studio()
+    st = app.mode
+    st._start_new("Wide")
+    st._open_anatomy()
+    st.render()
+    assert st.g_wr.lo == 0.75 and st.g_wr.hi == 2.0 and st.g_wr.value == 1.0
+    st.g_wr.on_change(1.8)
+    assert st.work.anatomy[P.WRIST] == 1.8 and st.dirty
+    st.render()
+
+
+def test_a_bigger_hand_finds_spreads_comfortable(monkeypatch):
+    """The comfort costs follow the hand's size (not only its limits): a 13th hand plays C#-D#-F#-A-C# 1-2-3-4-5."""
+    import pianist as P
+    chord = lambda: [Note(p, 0.0, 1.0, 80, 0, RIGHT) for p in (61, 63, 66, 69, 73)]     # C#4 D#4 F#4 A4 C#5
+    big = P.default_pianist()
+    big.anatomy = {b: v * (1.8 if b.startswith("mc") else 1.5) for b, v in P.DEFAULT_ANATOMY.items()}
+    assert big.span_whites() >= 12.0
+    try:
+        F.apply_pianist(None)
+        spread = F.chord_pair_cost(69, 4, 73, 5)            # A-C# with 4-5: a stretch for the default hand
+        assert plan(chord()) == [1, 2, 3, 4, 5]             # (every inner finger taken: no "wrong" one)
+        monkeypatch.setattr(P, "_active", big)              # (planning applies the active pianist)
+        F.apply_pianist(big)
+        assert F.chord_pair_cost(69, 4, 73, 5) < spread / 2   # ...not for the big one
+        assert F.comfy(7.0, 1, 5) < 7.0 and F.REACH_SCALE[(1, 5)] > 1.3
+        assert plan(chord()) == [1, 2, 3, 4, 5]             # no thumb on C# and D#
+        assert F.REACH_SCALE[(1, 5)] > 1.3                  # (planned with the big hand)
+    finally:
+        monkeypatch.setattr(P, "_active", None)
+        F.apply_pianist(None)
+    assert F.REACH_SCALE == {} and F.comfy(7.0, 1, 5) == 7.0                  # (the default hand: as before)
+
+
+def test_hand_split_keeps_notes_out_of_the_other_hands_chord():
+    """A note struck inside the other hand's chord (struck with it) is a last resort; one passing through later isn't."""
+    import hand_split as HS
+    rh = HS._Hand(70.0).after(2.0, [Note(63, 2.01, 2.5, 80, 0, RIGHT), Note(75, 2.02, 2.5, 80, 0, RIGHT)])  # D#4 + D#5
+    lh = HS._Hand(50.0)
+    inside, below = [Note(66, 2.04, 2.3, 80, 0, LEFT)], [Note(57, 2.04, 2.3, 80, 0, LEFT)]               # F#4, A3
+    assert HS._inside(rh, lh, 2.04, [], inside) == HS.INSIDE      # F#4 between the RH's D#4 and D#5, just struck
+    assert HS._inside(rh, lh, 2.04, [], below) == 0.0             # A3: below it, fine
+    assert HS._inside(rh, lh, 2.04, inside, []) == 0.0            # (the RH itself may take it)
+    late = [Note(66, 2.15, 2.3, 80, 0, LEFT)]
+    assert HS._inside(rh, lh, 2.15, [], late) == 0.0              # an arpeggio passing through the held chord later
+    # a chord closing round a key the other hand has just struck
+    lh2 = HS._Hand(50.0).after(2.0, [Note(66, 2.0, 2.5, 80, 0, LEFT)])
+    closing = [Note(63, 2.03, 2.5, 80, 0, RIGHT), Note(75, 2.03, 2.5, 80, 0, RIGHT)]
+    assert HS._inside(HS._Hand(70.0), lh2, 2.03, closing, []) == HS.INSIDE
+    assert HS.INSIDE > HS.TRACK_SWITCH and HS.INSIDE > HS.REPEAT_SPLIT   # above every preference

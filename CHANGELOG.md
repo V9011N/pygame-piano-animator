@@ -3,6 +3,23 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.19 - Settings, soundfonts, bigger hands
+- New Settings screen: drag the keyboard up or down, keyboard type, frame rate cap (24-240 fps or uncapped),
+  performance overlay, soundfont and interface font.
+- Soundfonts (.sf2 / .sf3) play through a built-in player: nothing extra to install, smooth even with large
+  soundfonts and dense music.
+- A Recent list on the main menu reopens your last five setups (with their soundfont or synced recording).
+- Player: the progress bar holds only the name and time, so scrubbing works anywhere on it; speed, view, sound
+  and volume sit beneath it, with an arrow-keys button listing the key controls. Volume control in the editor
+  too, and tooltips on the player's controls.
+- Bigger finger numbers with a drop shadow; one bundled typeface that looks the same on every computer.
+- Equal keys are exact to the pixel: every lane, key and gap the same width.
+- Pianists: bones up to 250% of the default, and a wrist width setting (75-200%).
+- Fingering: the thumb lies straight across two black keys; fewer thumb or little-finger doubles; comfort
+  follows the pianist's hand size; one hand's notes stay out of the other hand's chord.
+- The fingering editor's export puts each hand on its own MIDI channel.
+- Fixed: a crash when syncing a recording with a soundfont.
+
 ## v26.1.18 - Linked fingers, trills in one hand
 - The middle, ring and little fingers are linked like real tendons: when the middle finger curves down the ring
   finger goes some way with it (and the other way round), and the little finger takes both with it - unless

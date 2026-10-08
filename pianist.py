@@ -47,9 +47,27 @@ DEFAULT_ANATOMY = {
     "mc4": 6.332, "pp4": 4.2, "mp4": 2.6, "dp4": 1.9,
     "mc5": 5.974, "pp5": 3.3, "mp5": 1.8, "dp5": 1.7,
 }
-# Each bone may be 70%..135% of the default: from a small (child's or
-# petite adult's) hand to a very large one, in any proportion.
-BONE_MIN, BONE_MAX = 0.70, 1.35
+# Each bone may be 70%..250% of the default: from a small (child's or
+# petite adult's) hand to well past the largest pianists' (Rachmaninoff's 13th
+# needs about 205% metacarpals with 135% phalanges; everything at 250% spans an
+# 18th), in any proportion. (The metacarpals have a limit of their own,
+# METACARPAL_MAX, should they ever need a different one.)
+BONE_MIN, BONE_MAX = 0.70, 2.50
+METACARPAL_MAX = 2.50
+
+
+# The wrist's width, as a share of the default hand's (anatomy["wrist"]; none = 100%): 75%..200%. Not a bone, so
+# it isn't in DEFAULT_ANATOMY (which the bone sliders and limits walk).
+WRIST, WRIST_MIN, WRIST_MAX = "wrist", 0.75, 2.0
+
+
+def clamp_wrist(v):
+    return max(WRIST_MIN, min(WRIST_MAX, float(v)))
+
+
+def bone_max(bid):
+    """The most a bone may be, as a share of its default length."""
+    return METACARPAL_MAX if BONE_INFO[bid][1] == "mc" else BONE_MAX
 
 
 def bone_name(bid):
@@ -59,7 +77,7 @@ def bone_name(bid):
 
 def clamp_bone(bid, v):
     d = DEFAULT_ANATOMY[bid]
-    return max(d * BONE_MIN, min(d * BONE_MAX, v))
+    return max(d * BONE_MIN, min(d * bone_max(bid), v))
 
 
 # --------------------------------------------------------------------------- #
@@ -293,6 +311,11 @@ class Pianist:
         for k, v in (d.get("anatomy") or {}).items():
             if k in anatomy:
                 anatomy[k] = clamp_bone(k, float(v))
+            elif k == WRIST:
+                try:
+                    anatomy[WRIST] = clamp_wrist(v)
+                except (TypeError, ValueError):
+                    pass
         behavior = dict(DEFAULT_BEHAVIOR)
         for k, v in (d.get("behavior") or {}).items():
             spec = BEHAVIOR.get(k)
