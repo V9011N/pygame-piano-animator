@@ -25,6 +25,14 @@ pianist's hands can actually do:
   * order  - the right hand normally stays above the left, and the hands
              need room: a third split between two hands is really one hand's
              double note;
+  * inside - a note struck between keys of the other hand's chord (keys it
+             struck within INSIDE_T, rolled or not, and still holds), or a
+             chord closing round such a key of the other hand: the hands
+             interleaved. Priced above every preference (INSIDE per note), so
+             it's a last resort - when no other split keeps to the hands'
+             reach and speed. (Keys held on from earlier don't count: in a
+             played recording a hand keeps notes down long after - legato,
+             arpeggios - and those bracket its own next notes.);
   * range  - a mild preference for the right hand high and the left hand low;
   * voices - in files split into several (unlabelled) tracks, a track's
              notes tend to stay in one hand;
@@ -77,6 +85,8 @@ TRACK_FREE_T = 0.5       # within this of a move needing more than
 TOO_FAST_TRACK = 0.5     # 50% over the top speed
 WIDE_T = 0.15            # ... or groups this close together spanning more than SPAN_MAX ...
 WIDE_STREAK = 4          # ... this many times in a row
+INSIDE = 40.0            # per note struck inside the other hand's chord (or a chord closing round its held key)
+INSIDE_T = 0.04          # ... a chord being the keys a hand struck within this (rolled or not) and still holds
 
 
 def _groups(notes):
@@ -98,7 +108,7 @@ class _Hand:
         self.last_t = last_t          # when it last played
         self.last_lo = last_lo        # range of the last group it played
         self.last_hi = last_hi
-        self.held = held              # ((end_time, pitch), ...) still sounding
+        self.held = held              # ((end_time, pitch, start_time), ...) still sounding
         self.last_ps = last_ps        # the keys of the last group it played
 
     def after(self, t, notes):
@@ -109,7 +119,7 @@ class _Hand:
         m = sum(ps) / len(ps)
         # the hand centres on what it just played, remembering a little of before
         c = m if self.last_lo is None else 0.7 * m + 0.3 * self.center
-        return _Hand(c, t, min(ps), max(ps), held + tuple((n.end, n.pitch) for n in notes), tuple(ps))
+        return _Hand(c, t, min(ps), max(ps), held + tuple((n.end, n.pitch, n.start) for n in notes), tuple(ps))
 
 
 class _Part:
@@ -146,7 +156,7 @@ def _hand_cost(hand, t, part, side, other):
     lo, hi = part.lo, part.hi
     c = 0.0
     # --- how many notes and how wide, including what this hand still holds
-    held = [p for e, p in hand.held if e > t + HELD_TOL]
+    held = [p for e, p, _ in hand.held if e > t + HELD_TOL]
     nall = part.n + len(held)
     if part.n > 5:
         c += 100.0
@@ -279,6 +289,28 @@ def _crowding(rh, lh, t, rn, ln):
     return 0.0
 
 
+def _inside(rh, lh, t, rn, ln):
+    """
+    The hands interleaved: each note one hand strikes strictly between the
+    keys of the other's chord (struck within INSIDE_T, still down, or struck
+    now), and each such key of one hand that the other's new chord closes
+    round. INSIDE apiece.
+    """
+    rd = [p for e, p, s in rh.held if e > t + HELD_TOL and t - s <= INSIDE_T + 1e-9]
+    ld = [p for e, p, s in lh.held if e > t + HELD_TOL and t - s <= INSIDE_T + 1e-9]
+    rnp, lnp = [n.pitch for n in rn], [n.pitch for n in ln]
+    r_all, l_all = rd + rnp, ld + lnp
+    if len(r_all) < 2 and len(l_all) < 2:
+        return 0.0
+    inside = lambda keys, p: len(keys) >= 2 and min(keys) < p < max(keys)
+    k = sum(inside(l_all, p) for p in rnp) + sum(inside(r_all, p) for p in lnp)
+    if lnp:
+        k += sum(inside(l_all, q) for q in rd)
+    if rnp:
+        k += sum(inside(r_all, q) for q in ld)
+    return INSIDE * k
+
+
 _BASE_SPANS = (SPAN_FREE, SPAN_MAX, SPAN_HELD_MAX)
 
 
@@ -379,6 +411,7 @@ def split_hands(notes, pianist=None, prefer=None):
                 if repeat and k != pk:
                     c += REPEAT_SPLIT
                 c += _crowding(rh, lh, t, rn, ln)
+                c += _inside(rh, lh, t, rn, ln)
                 if prefer:
                     c += sum(weight[id(n)] for n in ln if prefer.get(id(n), LEFT) != LEFT) + \
                         sum(weight[id(n)] for n in rn if prefer.get(id(n), RIGHT) != RIGHT)

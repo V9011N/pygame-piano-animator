@@ -360,6 +360,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - 39–60 were read from the scan and encoded as rules (scratchpad `hanon/rules.py`, `hanon/scales.py`). figures.py reuses these rules.
 
 ## Hand separation (hand_split.py)
+- Hands interleaved within a chord (v26.1.19.SNAPSHOT-21): `_inside` charges `INSIDE` 40 per note one hand strikes
+  strictly between keys of the other hand's chord - keys it struck within `INSIDE_T` 0.04 s (each note's own
+  start, so a rolled chord counts) and still holds, or strikes in the same group - and per such key the other
+  hand's new chord closes round. Above every preference (TRACK_SWITCH 12, REPEAT_SPLIT 4), below the file's
+  labelled tracks (TRACK_PRIOR 200): a last resort. In Rachmaninoff's Prelude Op. 3 No. 2 (MAESTRO) the rolled
+  six-note chords at 0:52.7 and 0:54.0 went D#4 to the RH and F#4 to the LH, interleaved (4 notes; 8 with the
+  author's 13th-span pianist, whose wider reach lets each hand take wider chords): now 0. Tried and dropped:
+  any key the other hand holds (in a played recording a hand keeps notes down long after - legato, arpeggios -
+  so Ocean's LH arpeggio, passing up through a dyad the RH held, went to the RH, which then followed it down to
+  G#1: 218 notes changed hand), and a 0.25 / 0.08 s window (still Ocean: the LH's G#3 + A#4 66 ms after the RH's
+  D#4-D#5 octave sent the LH's descent to the RH, 101 notes). Measured against the previous split, five pieces:
+  notes changed hand, default pianist 4 / 0 / 0 / 0 / 0 (prelude, ballade, Brahms, Ocean, Scarbo), 13th-span
+  pianist 9 / 0 / 1 / 1 / 0. Scarbo's tracks are labelled by hand, so its 23 interleavings are the file's.
+  Not covered: a note struck while the other hand holds a chord struck earlier (the 13th-span pianist, 1:45-1:46
+  of the prelude: 4 notes) - that is also an arpeggio passing through, which a rule can't tell apart.
 - A beam search (32 candidates; 24 lost the good split in the Dante Sonata's chord alternations) over onset groups (35 ms tolerance). The lowest k notes go to the LH.
 - Initial hand centres come from the upper/lower quartile of the opening notes.
 - Costs:

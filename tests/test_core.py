@@ -1041,3 +1041,21 @@ def test_a_bigger_hand_finds_spreads_comfortable(monkeypatch):
         monkeypatch.setattr(P, "_active", None)
         F.apply_pianist(None)
     assert F.REACH_SCALE == {} and F.comfy(7.0, 1, 5) == 7.0                  # (the default hand: as before)
+
+
+def test_hand_split_keeps_notes_out_of_the_other_hands_chord():
+    """A note struck inside the other hand's chord (struck with it) is a last resort; one passing through later isn't."""
+    import hand_split as HS
+    rh = HS._Hand(70.0).after(2.0, [Note(63, 2.01, 2.5, 80, 0, RIGHT), Note(75, 2.02, 2.5, 80, 0, RIGHT)])  # D#4 + D#5
+    lh = HS._Hand(50.0)
+    inside, below = [Note(66, 2.04, 2.3, 80, 0, LEFT)], [Note(57, 2.04, 2.3, 80, 0, LEFT)]               # F#4, A3
+    assert HS._inside(rh, lh, 2.04, [], inside) == HS.INSIDE      # F#4 between the RH's D#4 and D#5, just struck
+    assert HS._inside(rh, lh, 2.04, [], below) == 0.0             # A3: below it, fine
+    assert HS._inside(rh, lh, 2.04, inside, []) == 0.0            # (the RH itself may take it)
+    late = [Note(66, 2.15, 2.3, 80, 0, LEFT)]
+    assert HS._inside(rh, lh, 2.15, [], late) == 0.0              # an arpeggio passing through the held chord later
+    # a chord closing round a key the other hand has just struck
+    lh2 = HS._Hand(50.0).after(2.0, [Note(66, 2.0, 2.5, 80, 0, LEFT)])
+    closing = [Note(63, 2.03, 2.5, 80, 0, RIGHT), Note(75, 2.03, 2.5, 80, 0, RIGHT)]
+    assert HS._inside(HS._Hand(70.0), lh2, 2.03, closing, []) == HS.INSIDE
+    assert HS.INSIDE > HS.TRACK_SWITCH and HS.INSIDE > HS.REPEAT_SPLIT   # above every preference
