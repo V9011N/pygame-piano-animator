@@ -3274,7 +3274,75 @@ def _within(base, target, reach):
     return tuple(b + (t - b) * reach / d for b, t in zip(base, target))
 
 
-def static_skeleton(geo, shape="stretched", curl=1.0):
+FINGER_BEND_RAD = (0.6, 0.8, 0.5)     # static_skeleton bends: radians at MCP, PIP, DIP for bend 1
+THUMB_SWING_RAD = 0.8                 # the thumb's swing out from the palm (about the CMC) for bend -1
+THUMB_TUCK_MIN = 0.2                  # bend 1 swings it in to point just short of the index knuckle
+THUMB_TUCK_SHY = 0.26                 # (by this much), at least THUMB_TUCK_MIN
+THUMB_FLEX_RAD = (0.0, 0.25, 0.3)     # and flexes it at CMC, MCP, IP
+BEND_RANGE = {"finger": (-0.5, 1.0), "thumb": (-0.6, 1.0)}
+
+
+def clamp_bend(finger, b):
+    lo, hi = BEND_RANGE["thumb" if finger == 1 else "finger"]
+    return max(lo, min(hi, b))
+
+
+def _flex(pts, angles):
+    """pts (a finger chain) bent down at each joint by angles[i] radians (negative: up), each
+    joint turning everything beyond it about the horizontal axis across the finger."""
+    pts = [tuple(p) for p in pts]
+    dx, dy = pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1]
+    n = math.hypot(dx, dy)
+    if n < 1e-9:
+        return pts
+    d = (dx / n, dy / n)
+    for i, th in enumerate(angles):
+        if not th or i >= len(pts) - 1:
+            continue
+        c, s = math.cos(th), math.sin(th)
+        px, py, pz = pts[i]
+        for j in range(i + 1, len(pts)):
+            rx, ry, rz = pts[j][0] - px, pts[j][1] - py, pts[j][2] - pz
+            along = rx * d[0] + ry * d[1]
+            side = (rx - along * d[0], ry - along * d[1])
+            a2, z2 = along * c + rz * s, -along * s + rz * c
+            pts[j] = (px + side[0] + a2 * d[0], py + side[1] + a2 * d[1], pz + z2)
+    return pts
+
+
+def _swing(pts, ang):
+    """pts turned about the vertical axis through pts[0], by ang radians toward +x."""
+    c, s = math.cos(ang), math.sin(ang)
+    px, py, _ = pts[0]
+    out = [pts[0]]
+    for x, y, z in pts[1:]:
+        rx, ry = x - px, y - py
+        out.append((px + rx * c + ry * s, py - rx * s + ry * c, z))
+    return out
+
+
+def bend_chain(finger, pts, b, toward=None):
+    """A finger's chain (MCP..tip; the thumb's CMC..tip) curved in by b (clamp_bend's range):
+    fingers curl down (negative: lift), the thumb swings into the palm and flexes (negative: out).
+    toward: the index knuckle, which the fully tucked thumb points just short of (any further
+    and the palm, seen from above, hides it)."""
+    b = clamp_bend(finger, b)
+    if not b:
+        return list(pts)
+    if finger == 1:
+        if b < 0:
+            return _swing(pts, b * THUMB_SWING_RAD)
+        now = math.atan2(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1])
+        room = THUMB_TUCK_MIN
+        if toward is not None:
+            room = max(room, math.atan2(toward[0] - pts[0][0], toward[1] - pts[0][1]) - THUMB_TUCK_SHY - now)
+        return _flex(_swing(pts, b * room), [b * a for a in THUMB_FLEX_RAD])
+    if b < 0:
+        return _flex(pts, [b * FINGER_BEND_RAD[0] * 1.3, b * 0.2, 0.0])
+    return _flex(pts, [b * a for a in FINGER_BEND_RAD])
+
+
+def static_skeleton(geo, shape="stretched", curl=1.0, bends=None):
     """
     A still right hand, in model units (wrist centre at the origin, +x toward
     the little finger, +y toward the fingertips, +z up; z = 0 is the key
@@ -3286,8 +3354,10 @@ def static_skeleton(geo, shape="stretched", curl=1.0):
            'natural'   - the relaxed curve the animation rests in;
            'span'      - thumb and little finger stretched as far as is
                          comfortable (how the hand span is measured).
+    bends: {finger: b} curls a finger further in from that shape (bend_chain).
     """
     bones, joints, tips, chains = [], [], {}, {}
+    bends = bends or {}
 
     def straight(base, ang_deg, lengths, z_drop=0.0):
         a = math.radians(ang_deg)
@@ -3324,6 +3394,8 @@ def static_skeleton(geo, shape="stretched", curl=1.0):
                               list(geo.bones[f]), (0.0, 0.0, 1.0), FINGER_COUPLING, FINGER_BEND_MAX)
         else:
             pts = straight(mcp, splay[f], geo.bones[f], z_drop=mcp[2] - 0.3)
+        if bends.get(f):
+            pts = bend_chain(f, pts, bends[f])
         for (a, b), kind, bid in zip(zip(pts, pts[1:]), ("proximal", "middle", "distal"),
                                      (f"pp{f}", f"mp{f}", f"dp{f}")):
             bones.append((a, b, kind, bid))
@@ -3336,6 +3408,8 @@ def static_skeleton(geo, shape="stretched", curl=1.0):
                           list(geo.bones[1]), bulge, THUMB_COUPLING, THUMB_BEND_MAX)
     else:
         pts = straight(cmc, splay[1], geo.bones[1], z_drop=cmc[2] - 0.3)
+    if bends.get(1):
+        pts = bend_chain(1, pts, bends[1], toward=geo.mcp[2])
     for (a, b), kind, bid in zip(zip(pts, pts[1:]), ("metacarpal", "proximal", "distal"),
                                  ("mc1", "pp1", "dp1")):
         bones.append((a, b, kind, bid))

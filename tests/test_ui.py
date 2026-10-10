@@ -440,3 +440,49 @@ def test_a_falling_note_keeps_its_length_and_moves_smoothly():
     assert all(s in (1, 2) for s in steps)           # 1.2 px a frame: never still, never back
     for i, r in enumerate(rects):                    # and within half a pixel of where it truly is
         assert abs(r.bottom - (700 - (5.0 - i / 144) * pps)) <= 0.5
+
+
+def test_bend_chain_curls_fingers_down_and_tucks_the_thumb():
+    import math
+    import pianist
+    from hands import BEND_RANGE, HandGeometry, clamp_bend, curl_factor, static_skeleton
+    p = pianist.Pianist("x")
+    geo = HandGeometry(p.anatomy)
+    for shape in ("stretched", "natural"):
+        flat = static_skeleton(geo, shape, curl_factor(p))
+        bent = static_skeleton(geo, shape, curl_factor(p), {2: 1.0, 5: -0.5, 1: 1.0})
+        t0, t1 = flat["tips"], bent["tips"]
+        assert t1[2][2] < t0[2][2] - 0.5                    # the index curls down
+        assert t1[5][2] > t0[5][2] + 0.5                    # the little finger lifts
+        assert t1[3] == t0[3] and t1[4] == t0[4]            # the others stay put
+        assert t1[1][0] > t0[1][0]                          # the thumb swings in toward the palm
+        assert t1[1][0] < geo.mcp[2][0]                     # but not past the index knuckle
+        for f in (1, 2):                                    # bones keep their lengths
+            for a, b, c, d in zip(flat["struct"]["chains"][f], flat["struct"]["chains"][f][1:],
+                                  bent["struct"]["chains"][f], bent["struct"]["chains"][f][1:]):
+                assert math.isclose(math.dist(a, b), math.dist(c, d), rel_tol=1e-9)
+    assert clamp_bend(2, 5) == BEND_RANGE["finger"][1] and clamp_bend(1, -5) == BEND_RANGE["thumb"][0]
+
+
+def test_overview_scrolls_a_hovered_finger_and_the_shape_button_resets(screen):
+    app = app_on(screen)
+    app.studio()
+    st = app.mode
+    st._start_new("Bendy")
+    st.render()
+    _, pts = st._finger_lines[2]
+    pos = ((pts[-2][0] + pts[-1][0]) // 2, (pts[-2][1] + pts[-1][1]) // 2)
+    st.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
+    assert st.hover_finger == 2
+    for _ in range(3):                                      # scrolling down curls it in
+        st.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1))
+        st.render()
+    assert st.hover_finger == 2 and abs(st.bends[2] - 0.3) < 1e-9
+    st.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=8))
+    assert st.bends[2] == -0.5                              # up: straightens, then lifts (clamped)
+    st.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(2, screen.get_height() // 2),
+                                       rel=(0, 0), buttons=(0, 0, 0)))
+    assert st.hover_finger is None
+    st._action("shape")
+    assert st.bends == {} and st.shape == "natural"
+    assert "bends" not in st.work.to_json()                 # (a preview: nothing saved)

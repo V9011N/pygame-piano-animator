@@ -27,7 +27,7 @@ import pianist as pianists
 from common import (ACCENT, BAR_BG, BG, PANEL, PANEL_EDGE, TEXT, TEXT_DIM, TOP_BAR_H, Button,
                     Dialog, Slider, TextInput, mix, wrap_text)
 from hands import (INCHES_PER_UNIT, WHITE_DEPTH_IN, WHITE_KEY_IN, HandGeometry, bone_width,
-                   halo_for, joint_radius, static_skeleton, curl_factor)
+                   clamp_bend, halo_for, joint_radius, static_skeleton, curl_factor)
 from midi_loader import is_black_key, note_name
 import skins
 from version import VERSION
@@ -114,6 +114,9 @@ def fit_view(skel, rect, margin=0.9):
     def to_screen(p):
         return (int(round(rect.centerx + (p[0] - cx) * sc)), int(round(rect.centery - (p[1] - cy) * sc)))
     return to_screen, sc
+
+
+BEND_STEP = 0.1                 # one wheel notch over a finger in the overview
 
 
 def _dist_to_seg(p, a, b):
@@ -218,6 +221,11 @@ class PianistStudio:
         self.visited = set()
         self.dirty = False
         self.shape = "stretched"
+        self.bends = {}                  # overview preview: {finger: bend} from the wheel (not saved)
+        self.hover_finger = None
+        self._finger_lines = {}          # finger -> its screen polyline, from the last overview drawn
+        self._mouse = (-1, -1)           # where the pointer was last seen moving
+        self._hover_at = None
         self.sel_bone = None
         self.hover_bone = None
         self.span_view = False
@@ -299,6 +307,7 @@ class PianistStudio:
         self.is_new = True
         self.visited = set()
         self.dirty = True
+        self.bends = {}
         self._open_overview()
 
     def edit_selected(self):
@@ -310,6 +319,7 @@ class PianistStudio:
         self.is_new = False
         self.visited = {"anatomy", "behavior"}
         self.dirty = False
+        self.bends = {}
         self._open_overview()
 
     def duplicate_selected(self):
@@ -744,6 +754,13 @@ class PianistStudio:
         if page == "finetune" and event.type == pygame.MOUSEWHEEL:
             self._ft_scroll(-event.y * 60)               # (the wheel scrolls; it doesn't move sliders)
             return True
+        if page == "overview" and event.type in (pygame.MOUSEMOTION, pygame.MOUSEWHEEL):
+            if event.type == pygame.MOUSEMOTION:
+                self._mouse = event.pos
+            self._update_hover()
+            if event.type == pygame.MOUSEWHEEL and self.hover_finger is not None:
+                self._bend_finger(self.hover_finger, -event.y)
+                return True
         for s in self._page_sliders():
             if s.handle_event(event):
                 return True
@@ -860,6 +877,7 @@ class PianistStudio:
             self.delete_selected()
         elif a == "shape":
             self.shape = "natural" if self.shape == "stretched" else "stretched"
+            self.bends = {}
         elif a == "anatomy":
             self._open_anatomy()
         elif a == "behavior":
@@ -1052,10 +1070,40 @@ class PianistStudio:
         return str(v)
 
     # overview ---------------------------------------------------------------------------
-    def _draw_hand_view(self, s, rect, shape, interactive=False, pianist=None):
+    def _bend_finger(self, finger, steps):
+        """The wheel over a finger in the overview: steps > 0 (scrolling down) curls it in -
+        a finger down, the thumb into the palm; steps < 0 straightens it, then lifts it out."""
+        b = clamp_bend(finger, self.bends.get(finger, 0.0) + BEND_STEP * steps)
+        if abs(b) < 1e-6:
+            self.bends.pop(finger, None)
+        else:
+            self.bends[finger] = round(b, 4)
+
+    def _update_hover(self):
+        """The finger under the pointer - kept while the pointer stays put, so a finger curling
+        out from under it keeps taking the wheel."""
+        if self._mouse != self._hover_at or self.hover_finger not in self._finger_lines:
+            self.hover_finger = self._finger_at(self._mouse)
+            self._hover_at = self._mouse
+
+    def _finger_at(self, pos):
+        """The finger (1-5) whose drawn chain is nearest pos, within reach of it, or None."""
+        best, best_d = None, None
+        for f, line in self._finger_lines.items():
+            reach, pts = line
+            d = min(_dist_to_seg(pos, a, b) for a, b in zip(pts, pts[1:]))
+            if d <= reach and (best_d is None or d < best_d):
+                best, best_d = f, d
+        return best
+
+    def _draw_hand_view(self, s, rect, shape, interactive=False, pianist=None, bends=None):
         p = pianist or self.work
-        skel = static_skeleton(HandGeometry(p.anatomy), shape, curl_factor(p))
-        to_screen, sc = fit_view(skel, rect, 0.88)
+        geo = HandGeometry(p.anatomy)
+        skel = static_skeleton(geo, shape, curl_factor(p))
+        to_screen, sc = fit_view(skel, rect, 0.88)      # (fitted unbent, so curling doesn't rescale)
+        if bends:
+            skel = static_skeleton(geo, shape, curl_factor(p), bends)
+        self._last_skel = skel
         if interactive:
             # anatomy: always the bones, so each can be clicked
             bone = tuple(p.skin_settings()["colors"]["skeleton"]["bone"])
@@ -1066,13 +1114,41 @@ class PianistStudio:
             self._segs = []
         return to_screen, sc
 
+    def _overview_fingers(self, s, to_screen, sc, view):
+        """Each finger's screen polyline (for hovering), and the hovered one highlighted."""
+        chains = self._last_skel["struct"]["chains"]
+        reach = max(6, 0.32 / INCHES_PER_UNIT * sc)          # (about a finger's half width)
+        self._finger_lines = {}
+        for f, chain in chains.items():
+            pts = [to_screen(q) for q in (chain if f == 1 else chain[1:])]
+            if view.collidepoint(pts[-1]) or any(view.collidepoint(q) for q in pts):
+                self._finger_lines[f] = (reach, pts)
+        self._update_hover()
+        f = self.hover_finger
+        if f is None:
+            return
+        _, pts = self._finger_lines[f]
+        glow = pygame.Surface(s.get_size(), pygame.SRCALPHA)
+        w = max(4, int(reach * 1.6))
+        pygame.draw.lines(glow, (*ACCENT, 70), False, pts, w)
+        for q in pts:
+            pygame.draw.circle(glow, (*ACCENT, 70), q, w // 2)
+        pygame.draw.lines(glow, (*ACCENT, 200), False, pts, 2)
+        s.blit(glow, (0, 0))
+
     def _draw_overview(self, s):
         body, panel, view = self._geom()
         pygame.draw.rect(s, (28, 28, 35), view)
-        self._draw_hand_view(s, view.inflate(-40, -40), self.shape)
+        to_screen, sc = self._draw_hand_view(s, view.inflate(-40, -40), self.shape, bends=self.bends)
+        self._overview_fingers(s, to_screen, sc, view)
         cap = "Stretched out" if self.shape == "stretched" else "Natural resting curve"
+        if self.bends:
+            cap += " (curled)"
         s.blit(self.fonts["small"].render(f"{cap}  ·  right hand (the left is its mirror image)", True, TEXT_DIM),
                (view.x + 16, view.bottom - 26))
+        tip = "Point at a finger and scroll to curl it in or out"
+        img = self.fonts["small"].render(tip, True, TEXT_DIM)
+        s.blit(img, (view.x + 16, view.y + 12))
         self._panel(s, panel)
         f = self.fonts
         x = panel.x + 20

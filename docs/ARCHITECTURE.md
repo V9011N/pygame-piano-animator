@@ -606,6 +606,15 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `common.Performance` feeds `Transport`, which sends note on/off events in time order along with the pedal CCs (64/66/67 from `MidiSong.controls`).
   - The keyboard shows the performed keys.
 - The Studio has four pages: browser (search, size chips, sort), overview (RGB sliders, stretched/natural view, Save that stays disabled for a new pianist until Anatomy and Behavior have both been visited), anatomy (clickable bones and table, group sliders, span-over-keys view with the thumb on C4) and behavior.
+- Overview finger curling (v26.1.20): pointing at a finger or the thumb highlights it (`_finger_at`, distance to its
+  drawn chain within about half a finger's width; kept while the pointer stays put, so a finger curling out from under
+  it keeps the wheel), and the wheel bends it, `BEND_STEP` 0.1 a notch, down = in. `PianistStudio.bends` {finger: b}
+  goes to `static_skeleton(..., bends)` → `hands.bend_chain`: a finger (b -0.5..1) turns down at MCP/PIP/DIP by
+  b x `FINGER_BEND_RAD` (0.6, 0.8, 0.5 rad), negative b lifting mostly at the MCP; the thumb (b -0.6..1) swings about
+  the vertical through its CMC - in, toward pointing `THUMB_TUCK_SHY` short of the index knuckle (at least
+  `THUMB_TUCK_MIN`; any further and the palm hides it from above), plus a little flexion; out, by
+  `THUMB_SWING_RAD`. The view is fitted to the unbent hand so curling doesn't rescale it. A preview only (never saved);
+  the Natural curve / Stretched out button clears it, as does opening another pianist.
 - Badges: the active pianist appears in the bottom-right of the hand area (player and editor), in the menu line and in the Studio's top bar. The pedals sit bottom-left
   (v26.1.16, `common.draw_pedals`): a pedal box with soft, sostenuto and sustain pedals (CC 67, 66, 64, from
   `MidiSong.control_state`), each lit red while down (64+) and dipped a little - drawn 3x and smoothscaled (hard

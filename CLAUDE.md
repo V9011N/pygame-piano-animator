@@ -52,7 +52,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing, `build_hands` / `load_with_hands` |
 | `skins.py` | Skinned hand drawing (cartoon, gloves, robot) from the pose structure |
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
-| `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
+| `hand_editor.py` | "Pianists & hands" studio (browser, overview - with fingers curled by the wheel, `hands.bend_chain` - anatomy, behaviour pages) |
 | `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
 | `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Hand-thesia` or a portable `pianists` folder beside the .exe when compiled) |
 | `build.py` | Nuitka single-file build (`dist/Hand-thesia.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
