@@ -211,6 +211,8 @@ KEY_FIX_RELEASE_T = 0.05    # s, ...and stops this soon after it is let go (the 
 KEY_FIX_K = 12.0            # how much a key being held outweighs keeping the smoothed hand where it was
 ROLL_TURN_DEG = (-40, 20)    # drawn_reach: the hand's turn (the wrist's range about the forearm's own)
 ROLL_DEPTH_IN = 1.6         # ...and how far apart along the keys two fingertips of one chord can be
+ROLL_PLAN_SLACK_WK = 0.75  # a chord past the planner's span for a pair by more than this (white keys) is rolled
+                            # unchecked; less, it's rolled only if the drawn hand can't hold it (_chord_fits)
 ROLL_SUSPECT_WK = 0.4       # a chord within this of drawn_reach (white keys) is checked by _chord_fits
 ROLL_MISS_WK = {False: 0.45, True: 0.22}  # _chord_fits: how far (white keys) a held fingertip may land from its
                                           # key's aim and still be on it - white key / black key (about half its width)
@@ -1917,10 +1919,12 @@ class HandAnimator:
                 continue
             fs = [(pos(n), self.fingering[id(n)], n) for n in ns]
             pairs = [(abs(p2 - p1), f1, f2) for i, (p1, f1, _) in enumerate(fs) for p2, f2, _ in fs[i + 1:] if f1 != f2]
-            too_wide = any(d > reach(f1, f2) for d, f1, f2 in pairs)
-            # within the planner's spans, the drawn hand may still not hold them all at once: then a
-            # fingertip lands beside its key (worst between black keys) unless the chord is rolled
-            if not too_wide and any(suspect(f1, f2, d) for d, f1, f2 in pairs):
+            # far past the planner's spans: rolled. Near them, either side, the drawn hand decides - within
+            # them it may still not hold them all at once (a fingertip would land beside its key, worst
+            # between black keys), and just past them it often can (a fourth on 2-3 rolled for a
+            # hundredth of a key)
+            too_wide = any(d > reach(f1, f2) + ROLL_PLAN_SLACK_WK for d, f1, f2 in pairs)
+            if not too_wide and any(d > reach(f1, f2) or suspect(f1, f2, d) for d, f1, f2 in pairs):
                 too_wide = not self._chord_fits(ns)
             if not too_wide:
                 continue

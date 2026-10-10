@@ -876,6 +876,11 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     0.3, or a depth slack of 0.1 with 0.3, rejects none, 0.22 without depth slack also rejects 0:19.31 (1 px).
     Rolled chords: Polonaise RH 4 -> 6, LH 0; Scarbo and Liszt HR 10 as before SNAPSHOT-02 (RH 12 / 2, LH 0 / 3).
     Load time unchanged within noise (the fit runs only for suspects).
+  - v26.1.20.SNAPSHOT-06: the planner's pairwise spans no longer roll a chord outright unless a pair is past them by
+    more than `ROLL_PLAN_SLACK_WK` 0.75 white keys; nearer, `_chord_fits` decides either way. (Polonaise 1:02.85 RH
+    F4-G#4-C#5-F5, 1-2-3-5, author's Ninthie pianist: G#4-C#5 is 2.93 white keys against 2-3's 2.70 x 0.99 + 0.25
+    = 2.92, so it was rolled; the drawn hand holds it.) Polonaise, chords no longer rolled: Ninthie 2, default 1, all
+    landing on their keys (worst 2 px past an edge); none newly rolled.
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.

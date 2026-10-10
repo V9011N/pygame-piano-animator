@@ -1147,3 +1147,12 @@ def test_seen_from_above_a_finger_never_bends_sideways_at_its_middle_joints():
         h = math.hypot(tx, ty)
         for p in pts[1:3]:
             assert abs(p[0] * ty - p[1] * tx) / h < 0.01 * sum(L), (target, p)
+
+
+def test_a_chord_just_past_the_planners_span_is_held_if_the_drawn_hand_can(monkeypatch):
+    # F4-G#4-C#5-F5 (1-2-3-5): with a hand whose 2-3 span scales 0.99, G#4-C#5 was a hundredth of a key
+    # past the planner's span and the chord was rolled, though the hand holds it easily
+    monkeypatch.setattr(hands, "reach_scale", lambda anatomy: {k: 0.99 for k in F.BASE_MAX_SPAN})
+    ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate((65, 68, 73, 77))]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 2, 3, 5))})
+    assert a.rolled == 0
