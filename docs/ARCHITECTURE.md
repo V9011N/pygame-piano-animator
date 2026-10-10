@@ -845,6 +845,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       forward and down.
     - Ninthie, first minute, shape spikes (a joint jumping > 0.25 finger lengths for a frame and back): 29 -> 25;
       the four ~0.8 ones (0:09.08, 0:09.1, 0:16.33, 0:30.12, all LH index) gone (SNAPSHOT-01 had 47).
+    - SNAPSHOT-05: leaning the bulge forward tilted the chain's plane off the vertical, so seen from above the PIP
+      and DIP joints bowed sideways (Ninthie, first 40 s: 1056 samples with a joint > 0.08 finger lengths off the
+      knuckle-tip line, up to 0.18; SNAPSHOT-03 had none). Now with `forward` the plane is always vertical: through
+      the target's horizontal direction, turned toward the hand's forward only for a target nearly straight under
+      the knuckle (`STEEP_FORWARD`[3]: forward weighs up to 0.12 of the finger's length, fading out by 0.24 of it
+      across), the joints bowing forward in it; what the target is then off the plane is made up along the finger
+      (each joint shifted by its share of the length). Ninthie: 0 such samples, mean 0.0; shape spikes 24.
 - **Chords past the drawn hand** (v26.1.20.SNAPSHOT-02; same piece, 0:22.65 RH, default pianist): C#4+D#4 (thumb
   bridge, tip on C#4), G4, A#4, D#5 - within the planner's 1-5 span (`BASE_MAX_SPAN` 8.3 + 0.25 white keys; C#4-D#5
   is 8.14) but past the drawn hand's: no hand position reached them all (brute force: the little finger 18 px off

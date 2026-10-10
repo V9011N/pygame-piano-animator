@@ -130,8 +130,9 @@ PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 FINGER_COUPLING = 0.6       # DIP bends 0.6 as much as PIP (the author's hand playing: ~0.5; 0.75 hooked the tips)
 FINGER_BEND_MAX = 1.7       # rad, PIP limit
 FINGER_LIFT_MAX = math.radians(40)   # a playing finger's first bone rises at most this steeply from its knuckle
-STEEP_FORWARD = (0.5, 0.85, 2.0)   # solve_chain: from a target this steeply below (sine, eased in up to the
-                            # second) the bulge leans the hand's way by up to the third, times its length
+STEEP_FORWARD = (0.5, 0.85, 2.0, 0.12)   # solve_chain: from a target this steeply below (sine, eased in up
+                            # to the second) the finger's joints bow forward (up to the third) and its plane turns
+                            # the hand's way as if the target were up to the fourth share of its length further on
 TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -556,23 +557,37 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None,
     horizontal - a target close in would otherwise fold the chain back on
     itself with the knuckle reared up (_lower_knuckle).
 
-    forward (horizontal unit vector, the hand's forward): for a target
-    steeply below the base, the chain's plane - from the bulge and the
-    direction to the target - is ill-defined (the two nearly parallel) and
-    swung about with the target's slightest offset, folding the finger out
-    sideways for a frame; the bulge leans forward there (STEEP_FORWARD), so
-    the finger curls forward and down.
+    forward (horizontal unit vector, the hand's forward; with an upward
+    bulge, a finger): the chain stays in a vertical plane - seen from above
+    a finger never bends sideways at its middle joints. For a target steeply
+    below the base that plane, through the target, is ill-defined and swung
+    about with the target's slightest offset (the finger folded out sideways
+    for a frame), so there it turns toward the hand's forward
+    (STEEP_FORWARD), the joints bowing forward: the finger curls forward and
+    down. The little the target is then off the plane is made up along the
+    finger, a share at each joint by its distance along it.
     """
     L1, L2, L3 = lengths
     d = _sub(target, base)
     r = _norm(d)
     if r < 1e-6:
         d, r = (0.0, 1e-6, 0.0), 1e-6
-    e1 = _mul(d, 1.0 / r)
+    side, off = None, 0.0
     if forward is not None:
-        steep = _smooth((-e1[2] - STEEP_FORWARD[0]) / (STEEP_FORWARD[1] - STEEP_FORWARD[0]))
-        if steep > 0.0:
-            bulge = _add(bulge, _mul((forward[0], forward[1], 0.0), STEEP_FORWARD[2] * steep))
+        steep = _smooth((-d[2] / r - STEEP_FORWARD[0]) / (STEEP_FORWARD[1] - STEEP_FORWARD[0]))
+        lean = STEEP_FORWARD[2] * steep
+        # (forward only settles the plane's way when the target is nearly straight under the base)
+        span = L1 + L2 + L3
+        w = STEEP_FORWARD[3] * span * steep * max(0.0, 1.0 - math.hypot(d[0], d[1]) / (2 * STEEP_FORWARD[3] * span))
+        hx, hy = d[0] + forward[0] * w, d[1] + forward[1] * w
+        hl = math.hypot(hx, hy)
+        ux, uy = (hx / hl, hy / hl) if hl > 1e-9 else forward
+        side = (-uy, ux, 0.0)
+        off = _dot(d, side)
+        d = _sub(d, _mul(side, off))                 # into the vertical plane along (ux, uy)
+        r = max(1e-6, _norm(d))
+        bulge = (ux * lean, uy * lean, 1.0)
+    e1 = _mul(d, 1.0 / r)
     e2 = _sub(bulge, _mul(e1, _dot(bulge, e1)))
     n = _norm(e2)
     if n < 1e-6:
@@ -612,6 +627,13 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None,
         pts.append(p)
     if lift_max is not None and r < L1 + L2 + L3:
         pts = _lower_knuckle(pts, r, lengths, e1, e2, lift_max, bend_max)
+    if off:
+        acc, total = 0.0, float(L1 + L2 + L3)
+        out = [pts[0]]
+        for p, q, L in zip(pts, pts[1:], lengths):
+            acc += L
+            out.append(_add(q, _mul(side, off * acc / total)))
+        pts = out
     return pts
 
 

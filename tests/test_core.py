@@ -1133,3 +1133,17 @@ def test_a_finger_lifted_far_above_its_knuckle_keeps_its_reach(screen):
             x, y, _ = a._limit_tip(f, (wx + rx, wy + ry, z), wx, wy, psi)
             bx, by = wx + a.base_local[f][0], wy + a.base_local[f][1]
             assert math.hypot(x - bx, y - by) > 0.3 * a.length[f], (f, z)
+
+
+def test_seen_from_above_a_finger_never_bends_sideways_at_its_middle_joints():
+    # SNAPSHOT-04 leant the bending plane forward for steep targets, tilting it: the middle joints bowed sideways
+    L = [2.0, 1.2, 0.9]
+    # (nearer than a quarter of its length to straight under the knuckle, it curls forward on purpose)
+    for target in ((1.0, 0.4, -2.4), (-0.9, 0.7, -2.2), (1.1, -0.4, -2.4), (1.2, 2.0, -1.0), (0.4, 1.0, -2.0)):
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX, (0.0, 1.0))
+        assert math.dist(pts[-1], target) < 1e-6
+        tx, ty = target[0], target[1]
+        h = math.hypot(tx, ty)
+        for p in pts[1:3]:
+            assert abs(p[0] * ty - p[1] * tx) / h < 0.01 * sum(L), (target, p)
