@@ -833,6 +833,18 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     chain is left as it was (`_lower_knuckle`).
   - The first minute, both hands, every 1/30 s: first bone over 45 deg 819 -> 0 samples (of 14408), tip above the
     knuckle 1171 -> 0; 95th percentile rise 47 -> 37 deg.
+  - Follow-up (author's "Ninthie" pianist: long metacarpals, cross_height 0.7; Polonaise 0:09.1 / 0:16.3 LH index
+    leaving Eb-Ab-Eb): lifted in an arc over the thumb its target rose ~3 in above the key surface; at that height
+    `_clamp_tip`'s reach had no room across and pulled the tip in under the knuckle, and the below-knuckle cap then
+    dropped it straight down - a target right under the knuckle, where `solve_chain`'s plane (from the bulge and
+    the direction to the target, nearly parallel) swung with the target's slightest offset: the finger folded out
+    sideways for a frame or two.
+    - `_limit_tip` clamps with the height `_finger_pose` will draw (capped `TIP_BELOW_KNUCKLE` below the knuckle).
+    - `solve_chain(..., forward)` (the hand's forward, fingers in performance): for a target steeply below the base
+      the bulge leans forward (`STEEP_FORWARD`: from sine 0.5, eased in by 0.85, up to 2x), so the finger curls
+      forward and down.
+    - Ninthie, first minute, shape spikes (a joint jumping > 0.25 finger lengths for a frame and back): 29 -> 25;
+      the four ~0.8 ones (0:09.08, 0:09.1, 0:16.33, 0:30.12, all LH index) gone (SNAPSHOT-01 had 47).
 - **Chords past the drawn hand** (v26.1.20.SNAPSHOT-02; same piece, 0:22.65 RH, default pianist): C#4+D#4 (thumb
   bridge, tip on C#4), G4, A#4, D#5 - within the planner's 1-5 span (`BASE_MAX_SPAN` 8.3 + 0.25 white keys; C#4-D#5
   is 8.14) but past the drawn hand's: no hand position reached them all (brute force: the little finger 18 px off

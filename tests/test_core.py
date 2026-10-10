@@ -1107,3 +1107,29 @@ def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
         ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate(ps)]
         a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, fs)})
         assert a.rolled == 0, ps
+
+
+def test_a_finger_reaching_straight_down_curls_forward_not_sideways():
+    # a target nearly under the knuckle: without the hand's forward, the chain's plane follows the target's
+    # slightest sideways offset (the finger folded out sideways for a frame); with it, the finger curls forward
+    L = [2.0, 1.2, 0.9]
+    for target in ((0.05, 0.02, -2.0), (-0.04, -0.03, -2.2), (0.0, 0.1, -1.9)):
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX, (0.0, 1.0))
+        assert pts[1][1] > 3 * abs(pts[1][0]), (target, pts[1])
+        assert math.dist(pts[-1], target) < 1e-6
+
+
+def test_a_finger_lifted_far_above_its_knuckle_keeps_its_reach(screen):
+    # lifted high (an arc over the thumb), the reach clamp once pulled the tip in under the knuckle
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a = hands.HandAnimator(midi_loader.load_song(midi_path("demo_song.mid")), RIGHT)
+    a._ensure_layout(kb)
+    wx, wy, psi = 700.0, -40.0, 0.0
+    for f in range(2, 6):
+        rx, ry = a.rest_local[f]
+        for z in (0.0, 2 * a.base_local[f][2], 5 * a.base_local[f][2]):
+            x, y, _ = a._limit_tip(f, (wx + rx, wy + ry, z), wx, wy, psi)
+            bx, by = wx + a.base_local[f][0], wy + a.base_local[f][1]
+            assert math.hypot(x - bx, y - by) > 0.3 * a.length[f], (f, z)

@@ -130,6 +130,8 @@ PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 FINGER_COUPLING = 0.6       # DIP bends 0.6 as much as PIP (the author's hand playing: ~0.5; 0.75 hooked the tips)
 FINGER_BEND_MAX = 1.7       # rad, PIP limit
 FINGER_LIFT_MAX = math.radians(40)   # a playing finger's first bone rises at most this steeply from its knuckle
+STEEP_FORWARD = (0.5, 0.85, 2.0)   # solve_chain: from a target this steeply below (sine, eased in up to the
+                            # second) the bulge leans the hand's way by up to the third, times its length
 TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -539,7 +541,7 @@ def reach_scale(anatomy=None):
 # --------------------------------------------------------------------------- #
 # Inverse kinematics
 # --------------------------------------------------------------------------- #
-def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None):
+def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None, forward=None):
     """
     Three-bone planar chain from `base` toward `target`.
 
@@ -553,6 +555,13 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None)
     lift_max (rad): the first bone rises at most this steeply above the
     horizontal - a target close in would otherwise fold the chain back on
     itself with the knuckle reared up (_lower_knuckle).
+
+    forward (horizontal unit vector, the hand's forward): for a target
+    steeply below the base, the chain's plane - from the bulge and the
+    direction to the target - is ill-defined (the two nearly parallel) and
+    swung about with the target's slightest offset, folding the finger out
+    sideways for a frame; the bulge leans forward there (STEEP_FORWARD), so
+    the finger curls forward and down.
     """
     L1, L2, L3 = lengths
     d = _sub(target, base)
@@ -560,6 +569,10 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None)
     if r < 1e-6:
         d, r = (0.0, 1e-6, 0.0), 1e-6
     e1 = _mul(d, 1.0 / r)
+    if forward is not None:
+        steep = _smooth((-e1[2] - STEEP_FORWARD[0]) / (STEEP_FORWARD[1] - STEEP_FORWARD[0]))
+        if steep > 0.0:
+            bulge = _add(bulge, _mul((forward[0], forward[1], 0.0), STEEP_FORWARD[2] * steep))
     e2 = _sub(bulge, _mul(e1, _dot(bulge, e1)))
     n = _norm(e2)
     if n < 1e-6:
@@ -2785,7 +2798,13 @@ class HandAnimator:
         # a finger already down on its key may stretch a touch further
         # rather than slide off it while the hand is still moving
         slack = math.radians(PRESS_SLACK_DEG[f]) if tip[2] < 0 else 0.0
-        x, y = self._clamp_tip(f, tip[0], tip[1], tip[2], wx, wy, psi, slack, comp=comp, stretch=stretch, low=low)
+        z = tip[2]
+        if f != 1:
+            # no higher than _finger_pose will draw it (TIP_BELOW_KNUCKLE): lifted far above the
+            # knuckle (an arc over the thumb) the reach left no room across and pulled the tip in
+            # under the knuckle, hooking the finger straight down for a frame or two
+            z = min(z, self.base_local[f][2] * low - TIP_BELOW_KNUCKLE * self.length[f])
+        x, y = self._clamp_tip(f, tip[0], tip[1], z, wx, wy, psi, slack, comp=comp, stretch=stretch, low=low)
         return (x, y, tip[2])
 
     # ----- full pose ------------------------------------------------------------
@@ -3398,6 +3417,7 @@ class HandAnimator:
         bones.append((wr, wu, "carpal"))
 
         chains = {}
+        fwd = rot(0.0, 1.0, psi)                 # the hand's forward, across the keys
         for f in range(2, 6):
             mcp = world(geo.mcp[f])
             bones.append((bases[f], mcp, "metacarpal"))
@@ -3406,7 +3426,7 @@ class HandAnimator:
             # lifted (on its way over to a key, or out of a chord) a finger stays curved below its
             # knuckle - its tip above the knuckle pointed the finger up into the air
             tip = (tip[0], tip[1], min(tip[2], mcp[2] - TIP_BELOW_KNUCKLE * sum(lengths)))
-            pts = solve_chain(mcp, tip, lengths, up, FINGER_COUPLING, FINGER_BEND_MAX, FINGER_LIFT_MAX)
+            pts = solve_chain(mcp, tip, lengths, up, FINGER_COUPLING, FINGER_BEND_MAX, FINGER_LIFT_MAX, fwd)
             chains[f] = [bases[f]] + list(pts)
             for (a, b), kind in zip(zip(pts, pts[1:]), ("proximal", "middle", "distal")):
                 bones.append((a, b, kind))
