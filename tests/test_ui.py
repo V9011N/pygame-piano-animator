@@ -456,7 +456,11 @@ def test_bend_chain_curls_fingers_down_and_tucks_the_thumb():
         assert t1[5][2] > t0[5][2] + 0.5                    # the little finger lifts
         assert t1[3] == t0[3] and t1[4] == t0[4]            # the others stay put
         assert t1[1][0] > t0[1][0]                          # the thumb swings in toward the palm
-        assert t1[1][0] < geo.mcp[2][0]                     # but not past the index knuckle
+        def turns(chain):                                   # each thumb joint's turn toward +x (rad)
+            d = [math.atan2(q[0] - p[0], q[1] - p[1]) for p, q in zip(chain, chain[1:])]
+            return [b - a for a, b in zip(d, d[1:])]
+        flat_t, bent_t = turns(flat["struct"]["chains"][1]), turns(bent["struct"]["chains"][1])
+        assert all(b > a + 0.3 for a, b in zip(flat_t, bent_t))   # every joint curls, not just the base
         for f in (1, 2):                                    # bones keep their lengths
             for a, b, c, d in zip(flat["struct"]["chains"][f], flat["struct"]["chains"][f][1:],
                                   bent["struct"]["chains"][f], bent["struct"]["chains"][f][1:]):

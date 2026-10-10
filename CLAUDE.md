@@ -72,6 +72,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while
   typing in sequential mode (`_rebuild_due`). `editor.notes` is the song's own list - update
   `editor.index` when replacing a note object.
+- A drawn finger never points up past its knuckle or rears its knuckle up (`TIP_BELOW_KNUCKLE`, `solve_chain`'s
+  `lift_max`), and a chord the drawn hand can't hold (`hands.drawn_reach`, not just the planner's spans) is rolled.
 - Nothing in a hand moves faster than the pianist's top speed (`max_speed`): the hand split, the
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),

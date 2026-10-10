@@ -129,6 +129,8 @@ PREP = {1: 1.3, 2: 2.6, 3: 2.6, 4: 2.6, 5: 2.4}       # raised, ready to strike
 # Joint behaviour
 FINGER_COUPLING = 0.6       # DIP bends 0.6 as much as PIP (the author's hand playing: ~0.5; 0.75 hooked the tips)
 FINGER_BEND_MAX = 1.7       # rad, PIP limit
+FINGER_LIFT_MAX = math.radians(40)   # a playing finger's first bone rises at most this steeply from its knuckle
+TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
 
@@ -204,6 +206,11 @@ IDLE_SMOOTH_T = 0.25        # ...and averaged over +-this many seconds
 KEY_FIX_T = 0.12            # s, a finger's key starts counting this long before the strike...
 KEY_FIX_RELEASE_T = 0.05    # s, ...and stops this soon after it is let go (the finger lifts away)
 KEY_FIX_K = 12.0            # how much a key being held outweighs keeping the smoothed hand where it was
+ROLL_TURN_DEG = (-40, 20)    # drawn_reach: the hand's turn (the wrist's range about the forearm's own)
+ROLL_DEPTH_IN = 1.6         # ...and how far apart along the keys two fingertips of one chord can be
+ROLL_KEY_SLACK = {False: 0.45, True: 0.1}   # white keys a chord may exceed drawn_reach by, per end on a
+                                            # white / black key (how far off its centre a tip still looks on it)
+THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys, this share as much
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
 KEY_FIX_ITERS = 6
@@ -529,7 +536,7 @@ def reach_scale(anatomy=None):
 # --------------------------------------------------------------------------- #
 # Inverse kinematics
 # --------------------------------------------------------------------------- #
-def solve_chain(base, target, lengths, bulge, coupling, bend_max):
+def solve_chain(base, target, lengths, bulge, coupling, bend_max, lift_max=None):
     """
     Three-bone planar chain from `base` toward `target`.
 
@@ -539,6 +546,10 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max):
     joint 3 by coupling*b; b is found so the tip lands on the target. Returns
     [base, joint1, joint2, tip]. Out-of-reach targets give a straight chain
     pointing at the target.
+
+    lift_max (rad): the first bone rises at most this steeply above the
+    horizontal - a target close in would otherwise fold the chain back on
+    itself with the knuckle reared up (_lower_knuckle).
     """
     L1, L2, L3 = lengths
     d = _sub(target, base)
@@ -583,7 +594,91 @@ def solve_chain(base, target, lengths, bulge, coupling, bend_max):
         ang -= bend
         p = _add(p, _add(_mul(e1, L * math.cos(ang)), _mul(e2, L * math.sin(ang))))
         pts.append(p)
+    if lift_max is not None and r < L1 + L2 + L3:
+        pts = _lower_knuckle(pts, r, lengths, e1, e2, lift_max, bend_max)
     return pts
+
+
+def _lower_knuckle(pts, r, lengths, e1, e2, lift_max, bend_max):
+    """
+    solve_chain's chain with its first bone no steeper than lift_max: the
+    first bone tipped down (as little as it takes, in the chain's plane) and
+    the other two bent to the target as a two-bone chain, curling the same
+    way. The chain unchanged if no such shape is found.
+    """
+    L1, L2, L3 = lengths
+    base = pts[0]
+    u = _mul(_sub(pts[1], base), 1.0 / L1)
+    cap = math.sin(lift_max)
+    if u[2] <= cap:
+        return pts
+    phi0 = math.atan2(_dot(u, e2), _dot(u, e1))
+
+    def rise(phi):                       # the first bone's world rise (sine) at plane angle phi
+        return math.cos(phi) * e1[2] + math.sin(phi) * e2[2]
+
+    lo, hi = min(0.0, phi0), phi0
+    if rise(lo) > cap:
+        return pts
+    for _ in range(24):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if rise(mid) <= cap else (lo, mid)
+    for k in range(9):                   # from the cap back toward the original slope
+        phi = lo + (phi0 - lo) * k / 8
+        j1 = (L1 * math.cos(phi), L1 * math.sin(phi))
+        dx, dy = r - j1[0], -j1[1]
+        r2 = math.hypot(dx, dy)
+        if not (abs(L2 - L3) + 1e-6 < r2 < L2 + L3 - 1e-6):
+            continue
+        a = (L2 * L2 - L3 * L3 + r2 * r2) / (2 * r2)
+        h = math.sqrt(max(0.0, L2 * L2 - a * a))
+        ux, uy = dx / r2, dy / r2
+        for sgn in (1.0, -1.0):
+            j2 = (j1[0] + a * ux - sgn * h * uy, j1[1] + a * uy + sgn * h * ux)
+            d1 = (math.cos(phi), math.sin(phi))
+            d2 = ((j2[0] - j1[0]) / L2, (j2[1] - j1[1]) / L2)
+            d3 = ((r - j2[0]) / L3, (-j2[1]) / L3)
+            b2 = -math.atan2(d1[0] * d2[1] - d1[1] * d2[0], d1[0] * d2[0] + d1[1] * d2[1])
+            b3 = -math.atan2(d2[0] * d3[1] - d2[1] * d3[0], d2[0] * d3[0] + d2[1] * d3[1])
+            if -1e-6 <= b2 <= bend_max + 0.35 and -1e-6 <= b3 <= bend_max:
+                world = lambda q: _add(base, _add(_mul(e1, q[0]), _mul(e2, q[1])))
+                return [base, world(j1), world(j2), world((r, 0.0))]
+    return pts
+
+
+def drawn_reach(geo, lift_in, fa, fb):
+    """
+    How far apart (white keys, centre to centre) fingers fa < fb of the drawn
+    hand can hold keys down: each fingertip anywhere in its splay and reach
+    range while pressing (its pressing slack included), the hand turned
+    anywhere in the wrist's range, the two tips no more than ROLL_DEPTH_IN
+    apart along the keys. The fingering's spans (BASE_MAX_SPAN)
+    are a real hand's; a chord wider than this is rolled even within them, or
+    the drawn finger would land beside its key.
+    """
+    u = INCHES_PER_UNIT
+    pts = {}
+    for f in (fa, fb):
+        bx, by, bz = (c * u for c in geo.base(f))
+        full = sum(geo.bones[f]) * u
+        dz = bz + lift_in + KEY_TRAVEL_IN
+        hmax = math.sqrt(max(0.0, (0.99 * full) ** 2 - dz * dz))
+        hmin = min(REACH_MIN[f] * full, hmax)
+        sl = PRESS_SLACK_DEG[f]
+        lo, hi = (math.radians(SPLAY_LIMIT_DEG[f][0] - sl), math.radians(SPLAY_LIMIT_DEG[f][1] + sl))
+        pts[f] = [(bx + h * math.sin(lo + (hi - lo) * i / 16), by + h * math.cos(lo + (hi - lo) * i / 16))
+                  for i in range(17) for h in (hmin + (hmax - hmin) * j / 6 for j in range(7))]
+    best = 0.0
+    for k in range(25):
+        psi = math.radians(ROLL_TURN_DEG[0] + (ROLL_TURN_DEG[1] - ROLL_TURN_DEG[0]) * k / 24)
+        c, s = math.cos(psi), math.sin(psi)
+        A = [(x * c - y * s, x * s + y * c) for x, y in pts[fa]]
+        B = [(x * c - y * s, x * s + y * c) for x, y in pts[fb]]
+        for ax, ay in A:
+            for bx_, by_ in B:
+                if bx_ - ax > best and abs(by_ - ay) <= ROLL_DEPTH_IN:
+                    best = bx_ - ax
+    return best / WHITE_KEY_IN
 
 
 # --------------------------------------------------------------------------- #
@@ -1517,7 +1612,9 @@ class HandAnimator:
                 mx, my = kx + (nx - kx) * (l2 + l3) / d, ky + (py - ky) * (l2 + l3) / d
                 dz = self.base_local[1][2] * low + self.travel              # (the base is higher: across, less)
                 reach = math.sqrt(max(0.0, l1 * l1 - dz * dz))
-                cons.append((mx, [my], self.base_local[1], -math.pi, math.pi, 0.0, reach, KEY_FIX_K * w))
+                # (a nicety, not a key: it gives way when it would keep another finger off its key)
+                cons.append((mx, [my], self.base_local[1], -math.pi, math.pi, 0.0, reach,
+                             THUMB_BRIDGE_FIX_K * KEY_FIX_K * w))
         if not cons:
             return wx, wy, psi
         arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
@@ -1751,9 +1848,19 @@ class HandAnimator:
         scale = reach_scale(self.pianist.anatomy)
         so, eo = self.start_of, self.end_of
 
-        def reach(f1, f2):
+        drawn = {}
+
+        def reach(f1, f2, n1=None, n2=None):
             a, b = min(f1, f2), max(f1, f2)
-            return fg.BASE_MAX_SPAN[(a, b)] * scale[(a, b)] + 0.25
+            plan = fg.BASE_MAX_SPAN[(a, b)] * scale[(a, b)] + 0.25
+            if n1 is None:
+                return plan
+            # the drawn hand may reach less far than the planner's real one: a chord past it lands
+            # a fingertip beside its key (worst between black keys) unless it's rolled
+            if (a, b) not in drawn:
+                drawn[(a, b)] = drawn_reach(self.geo, self.curl_lift_in, a, b)
+            slack = sum(ROLL_KEY_SLACK[all(is_black_key(p) for p in self._pk_tuple(n))] for n in (n1, n2))
+            return min(plan, drawn[(a, b)] + slack)
 
         def pos(n):
             """Where the note's finger is: between the two keys it covers, if a pair - the far one for a thumb bridge."""
@@ -1770,8 +1877,8 @@ class HandAnimator:
             if len(ns) < 2:
                 continue
             fs = [(pos(n), self.fingering[id(n)], n) for n in ns]
-            too_wide = any(f1 != f2 and abs(p2 - p1) > reach(f1, f2)
-                           for i, (p1, f1, _) in enumerate(fs) for p2, f2, _ in fs[i + 1:])
+            too_wide = any(f1 != f2 and abs(p2 - p1) > reach(f1, f2, n1, n2)
+                           for i, (p1, f1, n1) in enumerate(fs) for p2, f2, n2 in fs[i + 1:])
             if not too_wide:
                 continue
             self.rolled += 1
@@ -1792,6 +1899,10 @@ class HandAnimator:
                     so[id(top)] = min(latest, max(so[id(top)], eo[id(n)] + need))
             for n in order:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
+
+    def _pk_tuple(self, note):
+        pk = self._pk(note)
+        return pk if isinstance(pk, tuple) else (pk,)
 
     def finger_for(self, note):
         """Planned finger for a note (None if it isn't played by this hand, or is slid in a glissando)."""
@@ -3219,8 +3330,12 @@ class HandAnimator:
         for f in range(2, 6):
             mcp = world(geo.mcp[f])
             bones.append((bases[f], mcp, "metacarpal"))
-            pts = solve_chain(mcp, tips[f], [L * S for L in geo.bones[f]], up,
-                              FINGER_COUPLING, FINGER_BEND_MAX)
+            lengths = [L * S for L in geo.bones[f]]
+            tip = tips[f]
+            # lifted (on its way over to a key, or out of a chord) a finger stays curved below its
+            # knuckle - its tip above the knuckle pointed the finger up into the air
+            tip = (tip[0], tip[1], min(tip[2], mcp[2] - TIP_BELOW_KNUCKLE * sum(lengths)))
+            pts = solve_chain(mcp, tip, lengths, up, FINGER_COUPLING, FINGER_BEND_MAX, FINGER_LIFT_MAX)
             chains[f] = [bases[f]] + list(pts)
             for (a, b), kind in zip(zip(pts, pts[1:]), ("proximal", "middle", "distal")):
                 bones.append((a, b, kind))
@@ -3278,7 +3393,9 @@ FINGER_BEND_RAD = (0.6, 0.8, 0.5)     # static_skeleton bends: radians at MCP, P
 THUMB_SWING_RAD = 0.8                 # the thumb's swing out from the palm (about the CMC) for bend -1
 THUMB_TUCK_MIN = 0.2                  # bend 1 swings it in to point just short of the index knuckle
 THUMB_TUCK_SHY = 0.26                 # (by this much), at least THUMB_TUCK_MIN
-THUMB_FLEX_RAD = (0.0, 0.25, 0.3)     # and flexes it at CMC, MCP, IP
+THUMB_FLEX_RAD = (0.0, 0.25, 0.3)     # and flexes it down at CMC, MCP, IP
+THUMB_CURL_RAD = (0.5, 0.55, 0.6)     # and in toward the palm at each joint (CMC share of the swing, MCP, IP; rad)
+THUMB_SPREAD_RAD = 0.15               # bend -1: its MCP and IP joints straighten back out this much
 BEND_RANGE = {"finger": (-0.5, 1.0), "thumb": (-0.6, 1.0)}
 
 
@@ -3310,12 +3427,12 @@ def _flex(pts, angles):
     return pts
 
 
-def _swing(pts, ang):
-    """pts turned about the vertical axis through pts[0], by ang radians toward +x."""
+def _swing(pts, ang, at=0):
+    """pts beyond pts[at] turned about the vertical axis through it, by ang radians toward +x."""
     c, s = math.cos(ang), math.sin(ang)
-    px, py, _ = pts[0]
-    out = [pts[0]]
-    for x, y, z in pts[1:]:
+    px, py, _ = pts[at]
+    out = list(pts[:at + 1])
+    for x, y, z in pts[at + 1:]:
         rx, ry = x - px, y - py
         out.append((px + rx * c + ry * s, py - rx * s + ry * c, z))
     return out
@@ -3331,12 +3448,20 @@ def bend_chain(finger, pts, b, toward=None):
         return list(pts)
     if finger == 1:
         if b < 0:
-            return _swing(pts, b * THUMB_SWING_RAD)
+            pts = _swing(pts, b * THUMB_SWING_RAD)
+            for j in (1, 2):
+                pts = _swing(pts, b * THUMB_SPREAD_RAD, j)
+            return pts
         now = math.atan2(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1])
         room = THUMB_TUCK_MIN
         if toward is not None:
             room = max(room, math.atan2(toward[0] - pts[0][0], toward[1] - pts[0][1]) - THUMB_TUCK_SHY - now)
-        return _flex(_swing(pts, b * room), [b * a for a in THUMB_FLEX_RAD])
+        # every joint curls in: the CMC swings across the palm, the MCP and IP joints bend the
+        # thumb round toward it, and all of it flexes down a little
+        pts = _swing(pts, b * room * THUMB_CURL_RAD[0])
+        for j, a in ((1, THUMB_CURL_RAD[1]), (2, THUMB_CURL_RAD[2])):
+            pts = _swing(pts, b * a, j)
+        return _flex(pts, [b * a for a in THUMB_FLEX_RAD])
     if b < 0:
         return _flex(pts, [b * FINGER_BEND_RAD[0] * 1.3, b * 0.2, 0.0])
     return _flex(pts, [b * a for a in FINGER_BEND_RAD])

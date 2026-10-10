@@ -612,8 +612,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   goes to `static_skeleton(..., bends)` → `hands.bend_chain`: a finger (b -0.5..1) turns down at MCP/PIP/DIP by
   b x `FINGER_BEND_RAD` (0.6, 0.8, 0.5 rad), negative b lifting mostly at the MCP; the thumb (b -0.6..1) swings about
   the vertical through its CMC - in, toward pointing `THUMB_TUCK_SHY` short of the index knuckle (at least
-  `THUMB_TUCK_MIN`; any further and the palm hides it from above), plus a little flexion; out, by
-  `THUMB_SWING_RAD`. The view is fitted to the unbent hand so curling doesn't rescale it. A preview only (never saved);
+  `THUMB_TUCK_MIN`; any further and the palm hides it from above) - and (v26.1.20.SNAPSHOT-02) curls at every joint:
+  `THUMB_CURL_RAD` (the CMC's share of that swing, then 0.55 / 0.6 rad about the vertical at the MCP and IP joints),
+  plus a little flexion down; out, by `THUMB_SWING_RAD`, its MCP and IP joints straightening `THUMB_SPREAD_RAD`. The view is fitted to the unbent hand so curling doesn't rescale it. A preview only (never saved);
   the Natural curve / Stretched out button clears it, as does opening another pianist.
 - Badges: the active pianist appears in the bottom-right of the hand area (player and editor), in the menu line and in the Studio's top bar. The pedals sit bottom-left
   (v26.1.16, `common.draw_pedals`): a pedal box with soft, sostenuto and sustain pedals (CC 67, 66, 64, from
@@ -819,6 +820,33 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       chords drop the bridge for a plain fingering: the 3:20 chord D#4-F#4-A#4-D#5 is now 1-2-3-5 (29 bridges in
       the sonata, now 19). Top speed kept; the only new off-key notes are the bridges' near keys (the tip is on the
       far one by design).
+    - v26.1.20.SNAPSHOT-02: the bridge's MCP constraint is weighted `THUMB_BRIDGE_FIX_K` 0.15 of a key's - a nicety
+      that gives way to the keys (at full weight it pulled the hand in and kept the other fingers off theirs).
+- **Fingers that reared up or folded in** (v26.1.20.SNAPSHOT-02; Chopin Polonaise Op. 53, MAESTRO 2011, 0:30 LH,
+  default pianist): idle fingers in a wide stretch drew their tips above their knuckles - travelling to a key, the arc
+  over (`_tip_target`, up to 1.5 units) lifted the tip past the knuckle and the finger pointed up into the air (index
+  60 deg up) - or, the tip close in, `solve_chain`'s coupled curl folded the finger back under a knuckle reared 77 deg.
+  - `_finger_pose` keeps every tip `TIP_BELOW_KNUCKLE` 0.12 of the finger's length below its knuckle.
+  - `solve_chain(..., lift_max)` (`FINGER_LIFT_MAX` 40 deg, fingers in performance only): a first bone steeper than
+    that is tipped down in the chain's plane, as little as it takes, and the other two solved as a plain two-bone
+    chain to the same tip, curling the same way (PIP within the bend limit + 0.35, DIP within it); otherwise the
+    chain is left as it was (`_lower_knuckle`).
+  - The first minute, both hands, every 1/30 s: first bone over 45 deg 819 -> 0 samples (of 14408), tip above the
+    knuckle 1171 -> 0; 95th percentile rise 47 -> 37 deg.
+- **Chords past the drawn hand** (v26.1.20.SNAPSHOT-02; same piece, 0:22.65 RH, default pianist): C#4+D#4 (thumb
+  bridge, tip on C#4), G4, A#4, D#5 - within the planner's 1-5 span (`BASE_MAX_SPAN` 8.3 + 0.25 white keys; C#4-D#5
+  is 8.14) but past the drawn hand's: no hand position reached them all (brute force: the little finger 18 px off
+  at best), and held together it landed between D#5 and E5, twitching as the fit traded fingers.
+  - `hands.drawn_reach(geo, lift_in, fa, fb)`: how far apart two fingertips of the drawn hand can hold keys (white
+    keys) - each tip anywhere in its pressing splay (+ `PRESS_SLACK_DEG`) and reach (0.99 of its length at the key's
+    depth below its base), the hand turned through `ROLL_TURN_DEG` (-40..20), the tips at most `ROLL_DEPTH_IN` 1.6 in
+    apart along the keys. Default pianist: 1-2 6.2, 1-3 7.5, 1-4 7.8, 1-5 7.8, 2-3 3.7, 2-4 4.3, 2-5 5.3, 3-4 3.4,
+    3-5 4.7, 4-5 3.7 (a brute-force fit of the real IK reaches about 0.1-0.2 further).
+  - `_roll_wide_chords` rolls a chord when any pair is past the smaller of the planner's reach and drawn_reach plus
+    `ROLL_KEY_SLACK` per end (0.45 on a white key, 0.1 on a black one - a tip that far off its key's centre still
+    looks on it). Rolled chords: Polonaise RH 4 -> 12, LH 0 -> 2; Scarbo RH 12 -> 18, LH 0 -> 9; Liszt HR 10 RH 2 -> 7,
+    LH 3 -> 5. Pressed fingertips off their key in the Polonaise's first two minutes: 0:22.65's gone; what's left is a
+    fast LH leap at 0:27-0:28 (6-7 px, held back by the top speed). The Rach-y pianist (a 13th) had none either way.
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.

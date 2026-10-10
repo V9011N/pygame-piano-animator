@@ -1059,3 +1059,51 @@ def test_hand_split_keeps_notes_out_of_the_other_hands_chord():
     closing = [Note(63, 2.03, 2.5, 80, 0, RIGHT), Note(75, 2.03, 2.5, 80, 0, RIGHT)]
     assert HS._inside(HS._Hand(70.0), lh2, 2.03, closing, []) == HS.INSIDE
     assert HS.INSIDE > HS.TRACK_SWITCH and HS.INSIDE > HS.REPEAT_SPLIT   # above every preference
+
+
+def test_a_close_target_folds_the_finger_without_rearing_its_knuckle():
+    # a fingertip pulled in close to its knuckle: the first bone stays below FINGER_LIFT_MAX, tip on target
+    L = [2.0, 1.2, 0.9]
+    for target in ((0.0, 1.2, -0.3), (0.2, 1.6, -0.2), (-0.3, 1.1, -0.1)):
+        free = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX)
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX)
+        rise = math.asin(pts[1][2] / L[0])
+        assert rise <= hands.FINGER_LIFT_MAX + 1e-6 < math.asin(free[1][2] / L[0]), target
+        assert math.dist(pts[-1], target) < 1e-6
+        for a, b, l in zip(pts, pts[1:], L):
+            assert math.isclose(math.dist(a, b), l, rel_tol=1e-9)
+
+
+def test_playing_fingers_stay_below_their_knuckles(screen):
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    an = hands.build_hands(s)
+    for a in an.values():
+        t = 0.0
+        while t < min(s.duration, 20.0):
+            ch = a.pose(t, kb)["struct"]["chains"]
+            for f in range(2, 6):
+                mcp, j1, _, tip = ch[f][1:]
+                assert tip[2] < mcp[2], (t, f)                    # never pointing up into the air
+                rise = math.atan2(j1[2] - mcp[2], math.hypot(j1[0] - mcp[0], j1[1] - mcp[1]))
+                assert rise <= hands.FINGER_LIFT_MAX + 0.02, (t, f, math.degrees(rise))
+            t += 0.05
+
+
+def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
+    # a thumb across C#4-D#4 (its tip on C#4) and the little finger on D#5: within the planner's
+    # thumb-to-little-finger span, but past the drawn hand - held together, a tip landed between keys
+    import pianist
+    geo = hands.HandGeometry(pianist.default_pianist().anatomy)
+    assert hands.drawn_reach(geo, 0.0, 1, 5) < F.BASE_MAX_SPAN[(1, 5)]
+    ns = [Note(61, 1.0, 1.3, 80, 0, RIGHT), Note(63, 1.002, 1.3, 80, 0, RIGHT), Note(70, 1.004, 1.3, 80, 0, RIGHT),
+          Note(75, 1.006, 1.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT,
+                           fingering={id(ns[0]): 1, id(ns[1]): 1, id(ns[2]): 3, id(ns[3]): 5})
+    assert a.rolled == 1
+    # an octave on the same black keys is held as it is
+    ns = [Note(63, 1.0, 1.3, 80, 0, RIGHT), Note(70, 1.004, 1.3, 80, 0, RIGHT), Note(75, 1.006, 1.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(ns[0]): 1, id(ns[1]): 3, id(ns[2]): 5})
+    assert a.rolled == 0
