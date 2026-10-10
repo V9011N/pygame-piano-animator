@@ -1093,17 +1093,17 @@ def test_playing_fingers_stay_below_their_knuckles(screen):
 
 
 def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
-    # a thumb across C#4-D#4 (its tip on C#4) and the little finger on D#5: within the planner's
+    # a thumb across C#4-D#4 (its tip on C#4), G4, A#4 and the little finger on D#5: within the planner's
     # thumb-to-little-finger span, but past the drawn hand - held together, a tip landed between keys
     import pianist
     geo = hands.HandGeometry(pianist.default_pianist().anatomy)
     assert hands.drawn_reach(geo, 0.0, 1, 5) < F.BASE_MAX_SPAN[(1, 5)]
-    ns = [Note(61, 1.0, 1.3, 80, 0, RIGHT), Note(63, 1.002, 1.3, 80, 0, RIGHT), Note(70, 1.004, 1.3, 80, 0, RIGHT),
-          Note(75, 1.006, 1.3, 80, 0, RIGHT)]
-    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT,
-                           fingering={id(ns[0]): 1, id(ns[1]): 1, id(ns[2]): 3, id(ns[3]): 5})
+    ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate((61, 63, 67, 70, 75))]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 1, 2, 3, 5))})
     assert a.rolled == 1
-    # an octave on the same black keys is held as it is
-    ns = [Note(63, 1.0, 1.3, 80, 0, RIGHT), Note(70, 1.004, 1.3, 80, 0, RIGHT), Note(75, 1.006, 1.3, 80, 0, RIGHT)]
-    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(ns[0]): 1, id(ns[1]): 3, id(ns[2]): 5})
-    assert a.rolled == 0
+    # an octave on the same black keys is held as it is, and so is C#-D#-F#-C# (1-2-3-5): the drawn
+    # hand holds it, though index to little finger is near the quick pairwise bound (it was rolled)
+    for ps, fs in (((63, 70, 75), (1, 3, 5)), ((73, 75, 78, 85), (1, 2, 3, 5))):
+        ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate(ps)]
+        a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, fs)})
+        assert a.rolled == 0, ps

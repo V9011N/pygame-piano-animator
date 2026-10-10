@@ -208,8 +208,11 @@ KEY_FIX_RELEASE_T = 0.05    # s, ...and stops this soon after it is let go (the 
 KEY_FIX_K = 12.0            # how much a key being held outweighs keeping the smoothed hand where it was
 ROLL_TURN_DEG = (-40, 20)    # drawn_reach: the hand's turn (the wrist's range about the forearm's own)
 ROLL_DEPTH_IN = 1.6         # ...and how far apart along the keys two fingertips of one chord can be
-ROLL_KEY_SLACK = {False: 0.45, True: 0.1}   # white keys a chord may exceed drawn_reach by, per end on a
-                                            # white / black key (how far off its centre a tip still looks on it)
+ROLL_SUSPECT_WK = 0.4       # a chord within this of drawn_reach (white keys) is checked by _chord_fits
+ROLL_MISS_WK = {False: 0.45, True: 0.22}  # _chord_fits: how far (white keys) a held fingertip may land from its
+                                          # key's aim and still be on it - white key / black key (about half its width)
+ROLL_DEPTH_SLACK_WK = 0.15  # ...and past either end of the key's playing area
+ROLL_FIT_WW = 30            # _chord_fits' reference keyboard: pixels per white key
 THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys, this share as much
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
@@ -652,9 +655,9 @@ def drawn_reach(geo, lift_in, fa, fb):
     hand can hold keys down: each fingertip anywhere in its splay and reach
     range while pressing (its pressing slack included), the hand turned
     anywhere in the wrist's range, the two tips no more than ROLL_DEPTH_IN
-    apart along the keys. The fingering's spans (BASE_MAX_SPAN)
-    are a real hand's; a chord wider than this is rolled even within them, or
-    the drawn finger would land beside its key.
+    apart along the keys. A quick, cautious bound (it leaves out the hand
+    flattening over wide chords): a chord near or past it for some pair is
+    checked properly by HandAnimator._chord_fits.
     """
     u = INCHES_PER_UNIT
     pts = {}
@@ -785,6 +788,8 @@ class HandAnimator:
         so = self.start_of = {id(n): n.start for _, ns in self.groups for n in ns}
         eo = self.end_of = {id(n): n.end for _, ns in self.groups for n in ns}
         self.rolled = 0
+        self._ref_kb = None
+        self._layout_sig = None
         self._roll_wide_chords()
         for f in self.by_finger:
             self.by_finger[f].sort(key=lambda n: so[id(n)])
@@ -1850,17 +1855,16 @@ class HandAnimator:
 
         drawn = {}
 
-        def reach(f1, f2, n1=None, n2=None):
+        def reach(f1, f2):
             a, b = min(f1, f2), max(f1, f2)
-            plan = fg.BASE_MAX_SPAN[(a, b)] * scale[(a, b)] + 0.25
-            if n1 is None:
-                return plan
-            # the drawn hand may reach less far than the planner's real one: a chord past it lands
-            # a fingertip beside its key (worst between black keys) unless it's rolled
+            return fg.BASE_MAX_SPAN[(a, b)] * scale[(a, b)] + 0.25
+
+        def suspect(f1, f2, d):
+            """Near or past the drawn hand's reach for the pair (drawn_reach is a quick, cautious bound)."""
+            a, b = min(f1, f2), max(f1, f2)
             if (a, b) not in drawn:
                 drawn[(a, b)] = drawn_reach(self.geo, self.curl_lift_in, a, b)
-            slack = sum(ROLL_KEY_SLACK[all(is_black_key(p) for p in self._pk_tuple(n))] for n in (n1, n2))
-            return min(plan, drawn[(a, b)] + slack)
+            return d > drawn[(a, b)] - ROLL_SUSPECT_WK
 
         def pos(n):
             """Where the note's finger is: between the two keys it covers, if a pair - the far one for a thumb bridge."""
@@ -1877,8 +1881,12 @@ class HandAnimator:
             if len(ns) < 2:
                 continue
             fs = [(pos(n), self.fingering[id(n)], n) for n in ns]
-            too_wide = any(f1 != f2 and abs(p2 - p1) > reach(f1, f2, n1, n2)
-                           for i, (p1, f1, n1) in enumerate(fs) for p2, f2, n2 in fs[i + 1:])
+            pairs = [(abs(p2 - p1), f1, f2) for i, (p1, f1, _) in enumerate(fs) for p2, f2, _ in fs[i + 1:] if f1 != f2]
+            too_wide = any(d > reach(f1, f2) for d, f1, f2 in pairs)
+            # within the planner's spans, the drawn hand may still not hold them all at once: then a
+            # fingertip lands beside its key (worst between black keys) unless the chord is rolled
+            if not too_wide and any(suspect(f1, f2, d) for d, f1, f2 in pairs):
+                too_wide = not self._chord_fits(ns)
             if not too_wide:
                 continue
             self.rolled += 1
@@ -1900,9 +1908,72 @@ class HandAnimator:
             for n in order:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
 
-    def _pk_tuple(self, note):
-        pk = self._pk(note)
-        return pk if isinstance(pk, tuple) else (pk,)
+    def _chord_fits(self, ns):
+        """
+        Can the drawn hand hold all of chord ns down at once? Searched over the
+        hand's place and turn (a coarse grid, then twice finer about the best),
+        each fingertip clamped into its pressing splay and reach as _clamp_tip
+        does (the hand as low as _low has it), anywhere along its key's playing area: it fits if some hand has
+        every tip within ROLL_MISS_WK of where its key is aimed (along the
+        keyboard; a bridging thumb at its far key). On a reference keyboard
+        (ROLL_FIT_WW pixels per white key, the user's key style).
+        """
+        import numpy as np
+        if self._ref_kb is None:
+            from common import KEY_LEN_WW, Keyboard
+            import pygame
+            self._ref_kb = Keyboard(pygame.Rect(0, 0, 52 * ROLL_FIT_WW, int(KEY_LEN_WW * ROLL_FIT_WW)))
+        self._ensure_layout(self._ref_kb)
+        wk = self.kb.white_w
+        keys = [(n, self.fingering[id(n)], self._pk(n)) for n in ns]
+        keys = [(n, f, pk, self.key_target(pk, f)[0]) for n, f, pk in keys if self._has_key(pk)]
+        if len(keys) < 2:
+            return True
+        # stretched over a wide chord the hand flattens and drops its knuckles (as _low)
+        span = (max(k[3] for k in keys) - min(k[3] for k in keys)) / wk
+        low = 1.0 - FLAT_DROP * _smooth((span - FLAT_SPAN_WK[0]) / (FLAT_SPAN_WK[1] - FLAT_SPAN_WK[0]))
+        items = []
+        for n, f, pk, kx in keys:
+            ylo, yhi = self._key_depths(pk)
+            black = all(is_black_key(p) for p in (pk if isinstance(pk, tuple) else (pk,)))
+            sl = math.radians(PRESS_SLACK_DEG[f])
+            lo, hi = self.splay[f]
+            blx, bly, blz = self.base_local[f]
+            hmin, hmax = self._reach_range(f, blz * low + self.travel, 0.99)
+            ds = ROLL_DEPTH_SLACK_WK * wk
+            items.append((kx, np.linspace(ylo - ds, yhi + ds, 9), blx, bly, lo - sl, hi + sl, hmin, hmax,
+                          ROLL_MISS_WK[black] * wk))
+
+        def worst(WX, WY, PSI):
+            c, s = np.cos(PSI)[:, None], np.sin(PSI)[:, None]
+            out = np.full(WX.shape, -np.inf)
+            for kx, ys, blx, bly, lo, hi, hmin, hmax, allow in items:
+                bx = WX[:, None] + blx * c - bly * s
+                by = WY[:, None] + blx * s + bly * c
+                dx, dy = kx - bx, ys[None, :] - by
+                lx, ly = dx * c + dy * s, -dx * s + dy * c          # into the hand frame
+                a, h = np.arctan2(lx, ly), np.hypot(lx, ly)
+                ac = np.clip(a, lo, hi)
+                h = np.where(ac != a, h * np.maximum(0.0, np.cos(a - ac)), h)
+                h = np.clip(h, hmin, hmax)
+                miss = np.hypot(h * np.sin(ac) - lx, h * np.cos(ac) - ly).min(axis=1) - allow
+                out = np.maximum(out, miss)
+            return out
+
+        cx = sum(it[0] for it in items) / len(items)
+        axes = [np.linspace(cx - 3 * wk, cx + 3 * wk, 25), np.linspace(-5 * wk, 3 * wk, 17),
+                np.radians(np.linspace(-50, 30, 17))]
+        best = None
+        for _ in range(3):
+            g = np.meshgrid(*axes, indexing="ij")
+            W = worst(*(x.ravel() for x in g))
+            i = int(np.argmin(W))
+            best = W[i]
+            if best <= 0.0:
+                return True
+            q = [x.ravel()[i] for x in g]
+            axes = [np.linspace(v - 1.5 * (ax[1] - ax[0]), v + 1.5 * (ax[1] - ax[0]), 9) for v, ax in zip(q, axes)]
+        return bool(best <= 0.0)
 
     def finger_for(self, note):
         """Planned finger for a note (None if it isn't played by this hand, or is slid in a glissando)."""

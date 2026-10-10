@@ -842,11 +842,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     depth below its base), the hand turned through `ROLL_TURN_DEG` (-40..20), the tips at most `ROLL_DEPTH_IN` 1.6 in
     apart along the keys. Default pianist: 1-2 6.2, 1-3 7.5, 1-4 7.8, 1-5 7.8, 2-3 3.7, 2-4 4.3, 2-5 5.3, 3-4 3.4,
     3-5 4.7, 4-5 3.7 (a brute-force fit of the real IK reaches about 0.1-0.2 further).
-  - `_roll_wide_chords` rolls a chord when any pair is past the smaller of the planner's reach and drawn_reach plus
-    `ROLL_KEY_SLACK` per end (0.45 on a white key, 0.1 on a black one - a tip that far off its key's centre still
-    looks on it). Rolled chords: Polonaise RH 4 -> 12, LH 0 -> 2; Scarbo RH 12 -> 18, LH 0 -> 9; Liszt HR 10 RH 2 -> 7,
-    LH 3 -> 5. Pressed fingertips off their key in the Polonaise's first two minutes: 0:22.65's gone; what's left is a
-    fast LH leap at 0:27-0:28 (6-7 px, held back by the top speed). The Rach-y pianist (a 13th) had none either way.
+  - SNAPSHOT-02 rolled when a pair passed drawn_reach plus a per-end slack; pairwise, that both missed chords that
+    only fail with several fingers at once and rolled ones the hand holds fine (1:31.58 RH C#5-D#5-F#5-C#6, 1-2-3-5:
+    index to little finger 5.86 white keys against drawn_reach's 5.3).
+  - v26.1.20.SNAPSHOT-03: drawn_reach is only a filter (a pair within `ROLL_SUSPECT_WK` 0.4 of it). Such a chord is
+    rolled unless `HandAnimator._chord_fits`: numpy search over the hand's place and turn (25 x 17 x 17 grid, then
+    twice 9^3 finer about the best) on a reference keyboard (`ROLL_FIT_WW` 30 px per white key, the user's key style),
+    each tip clamped into its pressing splay and reach as `_clamp_tip` does, the hand as low as `_low` puts it for
+    the chord's span (a flattened hand reaches further - leaving that out rejected the 1:31 chord), anywhere along
+    the key's playing area +- `ROLL_DEPTH_SLACK_WK` 0.15; it fits if some hand has every tip within `ROLL_MISS_WK`
+    of its key's aim (0.45 white key on a white key, 0.22 on a black one).
+  - Calibration (default pianist, Polonaise): with rolling switched off for the flagged chords, the two the fit
+    rejects are the two that really land a tip off its key (0:22.65 5 px, 1:03.71 4 px); a black-key allowance of
+    0.3, or a depth slack of 0.1 with 0.3, rejects none, 0.22 without depth slack also rejects 0:19.31 (1 px).
+    Rolled chords: Polonaise RH 4 -> 6, LH 0; Scarbo and Liszt HR 10 as before SNAPSHOT-02 (RH 12 / 2, LH 0 / 3).
+    Load time unchanged within noise (the fit runs only for suspects).
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.
