@@ -786,6 +786,23 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       1 frame (default pianist: 0). Quick top flips (a change of top hand under 1 s apart): HR 10 8 -> 0, Op. 25
       No. 12 3 -> 0, Scarbo 46 -> 9, Dante 1 -> 0; Ballade 1, Polonaise, Scriabin Op. 28, the Bach and
       Rachmaninoff files unchanged.
+  - Layers settled ahead while the hands are in contact (v26.1.20.SNAPSHOT-09; HR 10 3:24-3:25: the LH leapt in, the
+    hands overlapped from 3:24.2, but the RH's episode only began lifting it - and putting it on top - at 3:25.27:
+    it rose through the LH in one frame). `arrange_crossing` asks `_layer_top` first:
+    - Contact: the hands' footprints overlap (`contact_overlap`, `CONTACT_GRID` 0.05 s, cached on the RH's
+      animator). `HandAnimator.footprint(t)` is from the notes, free to look far ahead (a placement solved
+      seconds ahead stalled a frame for up to 1.4 s): the keys of its latest chord (and the next within
+      `CONTACT_NEXT_T` 0.3 s; the next only when it has been silent `CROSS_STALE`), or - holding no key, its next
+      notes within `CONTACT_AHEAD_T` 1.2 s (an idle hand sets off up to 1.1 s ahead) - those; widened by
+      `CONTACT_PAD_WK` 2.5 white keys on the thumb side and 1 on the little finger's, at least the hand's own width;
+      None while idle with nothing near. Gaps under `CONTACT_BRIDGE` 0.3 s are bridged (contact seen a little
+      early, the swap done with the hands apart).
+    - The stretch of contact (scanned `CONTACT_SCAN` 6 s either way, cached per step) takes its first crossing
+      episode's top hand from its very start - before that episode begins. With later episodes of the other hand
+      on top, the swap comes at the step where the hands overlap least between them. Not in contact: as before
+      (the most-lifted hand). Only the hand on top is lifted.
+    - Layer swaps while the drawn hands overlapped (1/30 s, Ninthie): HR 10 3:15-4:12 2 -> 0, Op. 25 No. 12 0-160 s
+      12 -> 1, Dante 0-200 s 9 -> 0, Scarbo 0-260 s 18 -> 6. `arrange_crossing` 0.05-0.2 ms a frame.
   - `draw_hands` calls `arrange_crossing`: the crossing hand is drawn on layer 1, and its wrist, palm and forearm are raised by up to 0.8 in (`_lift_pose`). The lift fades to 0 at the fingertips and ramps in and out over 0.4 s.
   - `skins.draw_skinned` and `draw_skeletons` draw layer by layer, and the top hand's shadow falls on the lower hand.
 - **Idle hand keeps out of the way** (2026-09-28): hands cross only when the notes make them.

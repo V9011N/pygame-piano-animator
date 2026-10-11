@@ -77,7 +77,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   `lift_max`), and a chord is rolled when the drawn hand can't hold it (`HandAnimator._chord_fits` decides near the planner's spans,
   either side).
 - Hands crossing: the crosser goes over (`crossing_episodes`); hands interlocked (trilling on top of each other) lie
-  by depth instead - the one playing further in (black keys) on top - and the layers never flip for a blip.
+  by depth instead - the one playing further in (black keys) on top - and the layers never flip for a blip, nor
+  swap while the hands overlap (`_layer_top` settles each stretch of contact ahead, from the notes).
 - Nothing in a hand moves faster than the pianist's top speed (`max_speed`): the hand split, the
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),

@@ -1176,3 +1176,31 @@ def test_interlocked_hands_lie_one_over_the_other_by_depth():
     # the black and white keys the other way round: the LH (further in) on top
     eps = trill((63, 66), (62, 65))
     assert eps and all(e[2] == LEFT for e in eps), eps
+
+
+def test_the_hands_never_swap_layers_while_they_overlap(screen):
+    # the LH leaps in from far below to trill on D5 / F5 against the RH's D#5 / F#5 (the RH on top, by depth):
+    # the RH must be on top from before the hands touch, not rise through the LH once they overlap
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(36, 0.5, 0.8, 80, 1, LEFT), Note(40, 0.9, 1.2, 80, 1, LEFT)]
+    ns += [Note(p, 0.5 + 0.3 * i, 0.75 + 0.3 * i, 80, 0, RIGHT) for i, p in enumerate((63, 66, 63, 66, 63))]
+    for i in range(14):
+        t = 2.0 + 0.12 * i
+        ns.append(Note((63, 66)[(i // 2) % 2], t, t + 0.1, 80, 0, RIGHT) if i % 2 else
+                  Note((62, 65)[(i // 2) % 2], t, t + 0.1, 80, 1, LEFT))
+    an = hands.build_hands(song_of(ns, 4.0))
+    swaps, touched = [], False
+    prev = None
+    for i in range(int(3.8 * 60)):
+        t = i / 60
+        poses = [a.pose(t, kb) for a in an.values()]
+        top = hands.arrange_crossing(poses)[-1]["hand"]
+        xs = {p["hand"]: [q[0] for c in p["struct"]["chains"].values() for q in c] for p in poses}
+        overlap = min(max(xs[RIGHT]), max(xs[LEFT])) - max(min(xs[RIGHT]), min(xs[LEFT]))
+        touched = touched or overlap > 0
+        if prev is not None and top != prev and overlap > 0:
+            swaps.append((round(t, 3), prev, top))
+        prev = top
+    assert touched and not swaps, swaps
+    assert top == RIGHT

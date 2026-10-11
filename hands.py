@@ -2071,6 +2071,8 @@ class HandAnimator:
         sx = kb.key_rects[sp].centerx if sp in kb.key_rects else kb.rect.centerx
         self.shoulder_x = self._mx(sx)
         self.forearm_len = 16 * self.ppi
+        self._foot = None
+        self._contact_cache, self._contact_spans = {}, {}    # (_layer_top's, the right hand's: both lay out together)
 
     def _pk(self, note):
         """The key(s) a note's finger aims at: its pitch, or (lo, hi) when it covers two."""
@@ -2855,7 +2857,46 @@ class HandAnimator:
         if target is not None:
             px, py = self._pose_wrist(p)
             p = _shift_pose(p, target[0] - px, target[1] - py, self.mirror)
-        return p
+        return dict(p, anim=self)
+
+    def footprint(self, t):
+        """
+        (left, right) screen x the hand covers at t, for contact (_layer_top),
+        from its notes - free to look far ahead, where a placement solved
+        there stalled a frame: the keys of its latest chord (its next one when
+        that's near, CONTACT_NEXT_T, or the hand has been silent CROSS_STALE),
+        widened by CONTACT_PAD_WK (thumb side, little finger side), at least the
+        hand's own width. Idle, it keeps out of the other's way: None - unless
+        its next notes are near (CONTACT_AHEAD_T), when it's there already (a
+        hand leaping in is foreseen while it's still on its way).
+        """
+        if not self.groups:
+            return None
+        if self._foot is None:
+            xs = [self.rest_local[f][0] for f in range(1, 6)] + [self.base_local[f][0] for f in range(1, 6)]
+            self._foot = max(xs) - min(xs)
+        ts = self._group_ts
+        i = bisect.bisect_right(ts, t) - 1
+        idx = [j for j in (i, i + 1) if 0 <= j < len(ts)]
+        held = i >= 0 and any(n.end > t for n in self.groups[i][1])
+        soon = i + 1 < len(ts) and ts[i + 1] - t <= CONTACT_AHEAD_T
+        if not held and soon:
+            idx = [i + 1]                     # (on its way to its next notes, or there already)
+        elif self.idle_at(t) > 0.5:
+            return None
+        elif i >= 0 and i + 1 < len(ts) and ts[i + 1] - t > CONTACT_NEXT_T and t - ts[i] < CROSS_STALE:
+            idx = [i]
+        elif i >= 0 and t - ts[i] >= CROSS_STALE and i + 1 < len(ts):
+            idx = [i + 1]
+        xs = [self.kb.key_rects[n.pitch].centerx for j in idx for n in self.groups[j][1] if n.pitch in self.kb.key_rects]
+        if not xs:
+            return None
+        thumb, pinky = (w * self.kb.white_w for w in CONTACT_PAD_WK)
+        a, b = (min(xs) - pinky, max(xs) + thumb) if self.mirror else (min(xs) - thumb, max(xs) + pinky)
+        if b - a < self._foot:
+            c = (a + b) / 2
+            a, b = c - self._foot / 2, c + self._foot / 2
+        return a, b
 
     @staticmethod
     def _pose_wrist(p):
@@ -3910,22 +3951,106 @@ def _lift_pose(pose, dz):
     return out
 
 
+CONTACT_GRID = 0.05         # s, the hands' overlap (contact_overlap) on this grid...
+CONTACT_SCAN = 6.0          # s, ...looked at this far either way for the stretch of contact
+CONTACT_BRIDGE = 0.3        # s, contact this near counts (gaps bridged: the layers swap with the hands well apart)
+CONTACT_PAD_WK = (2.5, 1.0) # white keys a hand's footprint reaches past its keys: thumb side, little finger side
+CONTACT_AHEAD_T = 1.2       # s, an idle hand whose next notes are this near is there already (HandAnimator.footprint;
+                            # it sets off for them up to 1.1 s ahead, idle_weight)
+CONTACT_NEXT_T = 0.3        # s, a hand's next chord this near counts as where it is too (it's on its way)
+
+
+def contact_overlap(right, left, k):
+    """How far (pixels) the hands' footprints overlap at grid step k (<= 0: apart), cached on `right`."""
+    cache = right.__dict__.setdefault("_contact_cache", {})
+    v = cache.get(k)
+    if v is None:
+        if len(cache) > 20000:
+            cache.clear()
+        t = k * CONTACT_GRID
+        fr, fl = right.footprint(t), left.footprint(t)
+        v = cache[k] = -1.0 if fr is None or fl is None else min(fr[1], fl[1]) - max(fr[0], fl[0])
+    return v
+
+
+def _layer_top(right, left, episodes, t):
+    """
+    The hand drawn on top while the hands are in contact (their footprints
+    overlapping): settled for the whole stretch of contact, looking ahead, so
+    the layers never swap while the hands overlap (a hand rising on top of
+    the other through it, in one frame). The stretch's first crossing
+    episode decides it - from the moment the hands touch, not from when that
+    episode begins; with several episodes with other hands on top, the swap
+    comes where the hands overlap least between them. None: not in contact,
+    or no episode in the stretch.
+    """
+    g = int(round(CONTACT_BRIDGE / CONTACT_GRID))
+
+    def touching(j):
+        """In contact at step j, or within CONTACT_BRIDGE of it (gaps bridged, contact seen a little early)."""
+        return any(contact_overlap(right, left, i) > 0 for i in range(j - g, j + g + 1))
+
+    k = round(t / CONTACT_GRID)
+    if not touching(k):
+        return None
+    spans = right.__dict__.setdefault("_contact_spans", {})
+    ab = spans.get(k)
+    if ab is None:
+        n = int(CONTACT_SCAN / CONTACT_GRID)
+        a = k
+        while a > k - n and touching(a - 1):
+            a -= 1
+        b = k
+        while b < k + n and touching(b + 1):
+            b += 1
+        if len(spans) > 20000:
+            spans.clear()
+        for j in range(a, b + 1):
+            spans[j] = (a, b)
+        ab = (a, b)
+    a, b = ab
+    ta, tb = a * CONTACT_GRID, b * CONTACT_GRID
+    eps = [e for e in episodes if e[1] + CROSS_RAMP >= ta and e[0] - e[4] <= tb]
+    if not eps:
+        return None
+    top = eps[0][2]
+    for prev, nxt in zip(eps, eps[1:]):
+        if nxt[2] == prev[2]:
+            continue
+        # the swap: where the hands overlap least between the two (the next one's own start at the latest)
+        lo, hi = round(prev[1] / CONTACT_GRID), max(round(prev[1] / CONTACT_GRID), round(nxt[0] / CONTACT_GRID))
+        cut = min(range(max(lo, a), min(hi, b) + 1), key=lambda j: contact_overlap(right, left, j), default=hi)
+        if k < cut:
+            break
+        top = nxt[2]
+    return top
+
+
 def arrange_crossing(poses):
     """
     Order (and lift) two hands that cross: the crossing hand is drawn on top
-    and its wrist raised above the other. Other poses pass through unchanged.
+    and its wrist raised above the other; while the hands are in contact the
+    one on top is settled ahead (_layer_top), and only it is raised. Other
+    poses pass through unchanged.
     """
     hands_ = {p.get("hand"): p for p in poses}
     if len(poses) != 2 or len(hands_) != 2 or "song" not in poses[0] or poses[0]["song"] is None:
         return poses
-    lifts = _crossing_lifts(crossing_episodes(poses[0]["song"]), poses[0].get("t", 0.0))
+    t = poses[0].get("t", 0.0)
+    episodes = crossing_episodes(poses[0]["song"])
+    lifts = _crossing_lifts(episodes, t)
     lifts = {h: a for h, a in lifts.items() if h in hands_ and a > 0.0}
-    if not lifts:
-        return poses
-    top = max(lifts, key=lifts.get)
+    top = None
+    r, l = hands_.get(RIGHT, {}).get("anim"), hands_.get(LEFT, {}).get("anim")
+    if r is not None and l is not None:
+        top = _layer_top(r, l, episodes, t)
+    if top is None:
+        if not lifts:
+            return poses
+        top = max(lifts, key=lifts.get)
     out = []
     for h, p in hands_.items():
-        if lifts.get(h):
+        if h == top and lifts.get(h):
             p = _lift_pose(p, CROSS_LIFT_IN * p["ppi"] * lifts[h])
         out.append(dict(p, layer=1 if h == top else 0))
     return sorted(out, key=lambda p: p["layer"])
