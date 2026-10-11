@@ -8,23 +8,9 @@ Hand-thesia reads MIDI files and animates, in real time and seen from above, the
 procedurally animated hands playing them - with fingering worked out automatically and
 editable by hand.
 
-### Sample Vids Showing the Different Hand Skins
+### Hand occlusion and glissandos showcase
 
-[![Bach Solfeggietto Example with Skeleton Hands](https://img.youtube.com/vi/gj3QNIqWuMY/0.jpg)](https://www.youtube.com/watch?v=gj3QNIqWuMY)
-
-Bach Solfeggietto with Skeleton Hands
-
-[![Beethoven Waldstein Example with Robot Hands](https://img.youtube.com/vi/h--70K8a0XE/0.jpg)](https://www.youtube.com/watch?v=h--70K8a0XE)
-
-Beethoven Waldstein with Robot Hands
-
-[![Debussy Arabesque Example with Human Hands](https://img.youtube.com/vi/aiAx60huEHE/0.jpg)](https://www.youtube.com/watch?v=aiAx60huEHE)
-
-Debussy Arabesque with Human Hands
-
-[![Cuphead Show Example with White Gloves](https://img.youtube.com/vi/4Zgt4DTOMAo/0.jpg)](https://www.youtube.com/watch?v=4Zgt4DTOMAo)
-
-From The Cuphead Show with White Gloves
+[![Liszt Hungarian Rhapsody 10 Example](https://img.youtube.com/vi/DoPnGvCXLnE/0.jpg)](https://www.youtube.com/watch?v=DoPnGvCXLnE)
 
 ### Like what you see and want to help with further development? Join the Discord: https://discord.gg/HDRX89mQ9 
 
@@ -47,9 +33,6 @@ From The Cuphead Show with White Gloves
   right-click to set hand and finger, re-plan groups, see per-note difficulty, and finger note
   by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
   the MIDI file with the fingering embedded (or PIG text).
-- **Video export**: render a performance to an .mp4 at the window's size and 60 fps, with its sound (the
-  soundfont rendered offline, or the synced recording) - choose whether the progress bar, the pedals and the
-  pianist's badge are in it, from the button under the player's progress bar.
 - **Recent**: the main menu lists the last five setups you opened - a MIDI file with its soundfont or
   synced recording, or a file in the fingering editor - to open again in one click.
 - **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
@@ -69,7 +52,7 @@ The interface typeface is Source Sans Pro by Adobe, under the SIL Open Font Lice
 ## Requirements
 
 - Python 3.10+ (developed with 3.12)
-- `pygame-ce` (or plain `pygame`), `pretty_midi` and `imageio-ffmpeg` (video export; see `requirements.txt`)
+- `pygame-ce` (or plain `pygame`) and `pretty_midi` (see `requirements.txt`)
 - For sound: any MIDI output (Windows' built-in Microsoft GS Wavetable Synth works; a
   soundfont synth such as VirtualMIDISynth sounds much better)
 
