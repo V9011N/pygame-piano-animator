@@ -349,6 +349,9 @@ def test_the_progress_bar_is_clear_and_the_controls_sit_under_it(screen):
     bar = v.bar_rect
     # nothing on the bar but the name and time: every control is below it, on the right
     for rect, _ in v._top_items:
+        if rect == v.export_button:                      # (the export button: under the bar on the left)
+            assert rect.top >= bar.bottom and rect.left < screen.get_width() // 2
+            continue
         assert rect.top >= bar.bottom and rect.right > screen.get_width() // 2
     assert v.controls_rect.top >= v.fall_rect.top and v.keys_button.top >= v.controls_rect.bottom
     # so a click anywhere along the bar seeks - even at its right end, where the controls were

@@ -42,6 +42,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `sf2.py` | The built-in SoundFont player (.sf2 / .sf3) in numpy: zones, loops, volume envelope; no compiled package |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout` (keyboard placement), `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `VolumeSlider`, `draw_tooltip`, `run_busy` (a job in a worker thread behind a progress bar) |
+| `video_export.py` | The player's "Export video": `VideoExport` (frames via `Visualizer.render_video_frame` piped to ffmpeg from imageio-ffmpeg, the sound rendered offline or cut from a synced recording, muxed; run in steps with Cancel) |
 | `recent.py` | The main menu's Recent list: the last five setups launched (play with soundfont / recording + speed, or edit), in settings.json |
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
@@ -79,6 +80,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
   not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
+- What a video records is `Visualizer._draw_scene` - draw anything new for the screen only (controls, hints)
+  in `render`, not there.
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
   recording the player's clock follows the wall clock instead (audio heard at song time t:
   `offset + t / speed`), and the synth is muted.

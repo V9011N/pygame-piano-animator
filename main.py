@@ -53,7 +53,8 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
                     MidiOut, Performance, Transport, bottom_layout, center_text, draw_felt,
                     draw_hand_area, draw_pianist_badge, fmt_time, load_fonts, mix, pick_file,
                     DEFAULT_VOLUME, END_PAD_T, MAX_FRAME_DT, SPEED_MAX, SPEED_MIN, VolumeSlider, draw_tooltip, run_busy,
-                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys, ui_font, set_font_choice)
+                    set_keyboard_place, wrap_text, Dialog, draw_arrow_keys, ui_font, set_font_choice,
+                    fit_text, save_video_dialog)
 import paths
 import pianist as pianists
 import recent
@@ -75,6 +76,9 @@ CONTROLS_H = 30            # the player's controls panel under the progress bar.
 PANEL_MARGIN = 8            # ...this far in from the window's right and below the bar (or the waveform)
 PANEL_ALPHA = 170           # ...and its panels' opacity (0-255): translucent over the notes
 KEYS_BUTTON_W, KEYS_BUTTON_H = 58, 42    # the arrow-keys button under it (shows / hides the key controls)
+# Video export (video_export.py): the button top-left under the progress bar, and what may be recorded
+EXPORT_PARTS = (("bar", "Progress bar"), ("pedals", "Pedals"), ("badge", "Active pianist"))
+EXPORT_STEP_T = 0.04        # s of each player frame spent drawing video frames while exporting
 UNCAPPED_IDLE_HZ = 240      # uncapped, the hands work ahead (App.run's idle) as if at this frame rate
 PERF_FRAMES = 120           # the performance overlay (Settings): this many frames' times...
 PERF_W, PERF_GRAPH_H = 230, 46
@@ -133,6 +137,18 @@ class Visualizer(Transport):
         self.hands = {}
         self.show_hands = True
         self.show_fingers = True
+        # video export: the button and its menu (what to record), and the export under way
+        saved = pianists.app_setting("export_parts", None) or {}
+        self.export_parts = {k: bool(saved.get(k, True)) for k, _ in EXPORT_PARTS}
+        self.export_menu = False
+        self.export_button = pygame.Rect(0, 0, 0, 0)
+        self.export_menu_rect = pygame.Rect(0, 0, 0, 0)
+        self._export_checks = []         # [(part, rect)] in the menu
+        self.export_confirm = pygame.Rect(0, 0, 0, 0)
+        self.export = None               # video_export.VideoExport while one runs
+        self.export_cancel = pygame.Rect(0, 0, 0, 0)
+        self._video_surf = None
+        self.dialog = None               # a message box (the export done, or why it failed)
         self.layout(screen.get_size())
         if song:
             self.set_song(song, hands)
@@ -150,13 +166,16 @@ class Visualizer(Transport):
         self.sounding = {}
         pygame.display.set_caption(f"Hand-thesia {VERSION} - {song.title}")
 
-    def layout(self, size):
+    def layout(self, size, video=None):
+        """The screen's parts at `size`; for a video's frames (`video`, the parts recorded) no waveform,
+        and the notes fall from the very top if the progress bar is left out."""
         w, h = size
         kb_rect, self.hand_rect = bottom_layout(size)
-        self.bar_rect = pygame.Rect(0, 0, w, TOP_BAR_H)
-        wave_h = WAVE_H if self.audio else 0
-        self.wave_rect = pygame.Rect(0, TOP_BAR_H, w, wave_h)
-        top = TOP_BAR_H + wave_h
+        bar_h = TOP_BAR_H if video is None or video.get("bar") else 0
+        self.bar_rect = pygame.Rect(0, 0, w, bar_h)
+        wave_h = WAVE_H if self.audio and video is None else 0
+        self.wave_rect = pygame.Rect(0, bar_h, w, wave_h)
+        top = bar_h + wave_h
         self.fall_rect = pygame.Rect(0, top, w, kb_rect.y - FELT_H - top)
         self.felt_rect = pygame.Rect(0, kb_rect.y - FELT_H, w, FELT_H)
         if hasattr(self, "keyboard"):
@@ -167,14 +186,30 @@ class Visualizer(Transport):
 
     @property
     def overlay_top(self):
-        """Where the performance overlay may start (App.draw_perf): below the top bar and the waveform."""
-        return self.fall_rect.top
+        """Where the performance overlay may start (App.draw_perf): below the top bar, the waveform and the
+        export button (and its menu, when open)."""
+        return max(self.fall_rect.top, (self.export_menu_rect if self.export_menu else self.export_button).bottom)
 
     # ----- input ------------------------------------------------------------
     def handle_event(self, event):
         """True to carry on, False to quit, TO_MENU to go back to the main menu."""
+        if self.export is not None:
+            return self._export_event(event)
+        if self.dialog is not None:
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.VIDEORESIZE:
+                self.screen = pygame.display.get_surface()
+                self.layout(self.screen.get_size())
+                return True
+            self.dialog.handle_event(event)
+            if self.dialog.choice:
+                self.dialog = None
+            return True
         if event.type == pygame.QUIT:
             return False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self._export_click(event.pos):
+            return True
         if event.type == pygame.VIDEORESIZE:
             self.screen = pygame.display.get_surface()
             self.layout(self.screen.get_size())
@@ -246,6 +281,101 @@ class Visualizer(Transport):
                 if not self.paused:
                     self._start_audio()              # carry on from the new alignment
         return True
+
+    # ----- video export (video_export.py) ---------------------------------------
+    def _export_click(self, pos):
+        """A click on the export button or its menu (True: taken); anywhere else closes the menu."""
+        if self.export_button.collidepoint(pos):
+            self.export_menu = not self.export_menu and self.song is not None
+            return True
+        if not self.export_menu:
+            return False
+        if self.export_confirm.collidepoint(pos):
+            self.export_menu = False
+            self.start_export()
+            return True
+        for part, r in self._export_checks:
+            if r.collidepoint(pos):
+                self.export_parts[part] = not self.export_parts[part]
+                pianists.set_app_setting("export_parts", dict(self.export_parts))
+                return True
+        if self.export_menu_rect.collidepoint(pos):
+            return True
+        self.export_menu = False
+        return False
+
+    def start_export(self, path=None):
+        """Confirm Export: pause, ask where to save the .mp4 (unless `path`), and start rendering it."""
+        import video_export
+        if not self.song:
+            return
+        if not self.paused:
+            self.toggle_pause()
+        if path is None:
+            folder = pianists.app_setting("video_dir", None)
+            name = "".join(c for c in self.song.title if c not in '<>:"/\\|?*').strip() or "performance"
+            path = save_video_dialog(initialdir=folder if folder and os.path.isdir(folder) else None,
+                                     initialfile=name + ".mp4")
+            if not path:
+                return
+            pianists.set_app_setting("video_dir", os.path.dirname(path))
+        self._resume_t = self.t
+        w, h = self.screen.get_size()
+        size = (w - w % 2, h - h % 2)               # (the video's sides are even: x264's 4:2:0)
+        try:
+            self.layout(size, video=self.export_parts)
+            self.export = video_export.VideoExport(self, path, size)
+        except video_export.ExportError as exc:
+            self.export = None
+            self.layout(self.screen.get_size())
+            self.dialog = Dialog("Can't export the video", str(exc), [("OK", "ok")])
+
+    def start_time(self):
+        """Where playback (and a video) starts: the lead-in before the first note."""
+        return -LEAD_IN
+
+    def render_video_frame(self, t):
+        """The video's frame at song time t (VideoExport): the scene with only the chosen parts."""
+        size = self.export.size
+        if self._video_surf is None or self._video_surf.get_size() != size:
+            self._video_surf = pygame.Surface(size)
+        screen, self.screen = self.screen, self._video_surf
+        self.t = t
+        try:
+            self._draw_scene(self.export_parts)
+        finally:
+            self.screen = screen
+        return self._video_surf
+
+    def _export_event(self, event):
+        """While exporting: only Cancel (or Esc), and quitting (which cancels it)."""
+        if event.type == pygame.QUIT:
+            self._end_export(cancel=True)
+            return False
+        if event.type == pygame.VIDEORESIZE:
+            self.screen = pygame.display.get_surface()      # (laid out again once the export is over)
+        elif (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE or
+              event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.export_cancel.collidepoint(event.pos)):
+            self._end_export(cancel=True)
+        return True
+
+    def _end_export(self, cancel=False):
+        ex = self.export
+        if ex is None:
+            return
+        if cancel:
+            ex.cancel()
+        self.export = None
+        self._video_surf = None
+        self.layout(self.screen.get_size())
+        self.seek(self._resume_t)
+        if ex.error:
+            self.dialog = Dialog("The video wasn't exported", ex.error, [("OK", "ok")])
+        elif ex.finished:
+            took = fmt_time(time.perf_counter() - ex.started)
+            self.dialog = Dialog("Video exported", f"Saved {os.path.basename(ex.path)} ({fmt_time(ex.seconds)} long, "
+                                 f"{ex.size[0]} x {ex.size[1]}, {'with' if ex.has_audio else 'without'} sound) "
+                                 f"in {took}.", [("OK", "ok")])
 
     def toggle_mute(self):
         """M, or a click on "sound on / off": the synced recording's sound, or the synth's."""
@@ -323,6 +453,11 @@ class Visualizer(Transport):
                 self._start_audio()
 
     def update(self, dt):
+        if self.export is not None:
+            self.export.step(EXPORT_STEP_T)
+            if self.export.finished or self.export.error:
+                self._end_export()
+            return
         held = self.dragging_wave is not None or self.dragging_bar
         if self.audio and self.song and not self.paused and not held:
             # the song follows the recording's (the wall) clock, not the frame clock
@@ -346,10 +481,12 @@ class Visualizer(Transport):
 
     def idle(self, budget):
         """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
-        if self.song and self.hands:
+        if self.song and self.hands and self.export is None:
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
+        if self.export is not None:
+            self._end_export(cancel=True)
         self.midi.silence()                     # (with the pedal down, notes would ring on)
         if self.audio:
             self.audio.stop()
@@ -421,6 +558,26 @@ class Visualizer(Transport):
         return img
 
     def render(self):
+        if self.export is not None:
+            self._draw_export_progress()
+            return
+        self._draw_scene()
+        s = self.screen
+        if self.audio:
+            self._draw_wave()
+        self._draw_controls()
+        self._draw_export_button()
+        self._draw_tooltip()
+        if not self.song:
+            center_text(s, self.fonts, self.fall_rect, "Drop a MIDI file here, or press O to open one")
+        elif self.paused:
+            center_text(s, self.fonts, self.fall_rect, "Paused  -  Space to play")
+        if self.dialog is not None:
+            self.dialog.draw(s, self.fonts)
+
+    def _draw_scene(self, video=None):
+        """The notes, keys, hands, pedals, badge and progress bar - for a video's frame (`video`: the parts
+        recorded) only the chosen ones of the last three."""
         s = self.screen
         s.fill(BG)
         fall = self.fall_rect
@@ -488,18 +645,12 @@ class Visualizer(Transport):
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
             draw_hands(s, [a.pose(self.t, kb) for a in self.hands.values()])
             s.set_clip(None)
+        pedals = video is None or video.get("pedals")
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
-                           self.song.control_state(self.t) if self.song else None)
-        self._draw_top_bar()
-        if self.audio:
-            self._draw_wave()
-        self._draw_controls()
-        self._draw_tooltip()
-
-        if not self.song:
-            center_text(s, self.fonts, self.fall_rect, "Drop a MIDI file here, or press O to open one")
-        elif self.paused:
-            center_text(s, self.fonts, self.fall_rect, "Paused  -  Space to play")
+                           self.song.control_state(self.t) if self.song and pedals else None,
+                           badge=video is None or bool(video.get("badge")))
+        if self.bar_rect.h > 0:
+            self._draw_top_bar()
 
     def _draw_wave(self):
         """The recording's waveform on the song's timeline, a progress fill from the left, draggable."""
@@ -631,6 +782,116 @@ class Visualizer(Transport):
                 y += line
         else:
             self.keys_rect = pygame.Rect(0, 0, 0, 0)
+
+    def _draw_export_button(self):
+        """
+        Top-left under the progress bar (or waveform): "Export video"; open, its
+        menu under it - what to record (checkboxes), a note that the controls
+        on the right never are, and Confirm Export.
+        """
+        s, font = self.screen, self.fonts["small"]
+        mouse = pygame.mouse.get_pos()
+        label = "Export video"
+        b = pygame.Rect(PANEL_MARGIN, self.fall_rect.top + PANEL_MARGIN, 26 + font.size(label)[0] + 12, CONTROLS_H)
+        self.export_button = b if self.song else pygame.Rect(0, 0, 0, 0)
+        if not self.song:
+            return
+        self._panel(s, b)
+        hot = b.collidepoint(mouse) or self.export_menu
+        if self.export_menu:
+            pygame.draw.rect(s, ACCENT, b, 1, border_radius=8)
+        pygame.draw.circle(s, (220, 70, 70), (b.x + 15, b.centery), 5)          # (a record button's dot)
+        blit_shadowed(s, font, label, TEXT if hot else TEXT_DIM, (b.x + 26, b.centery - font.get_height() // 2))
+        self._top_items.append((b, "Render the whole performance to an .mp4 video"))
+        if not self.export_menu:
+            self.export_menu_rect = pygame.Rect(0, 0, 0, 0)
+            self._export_checks = []
+            self.export_confirm = pygame.Rect(0, 0, 0, 0)
+            return
+        pad, row, box = 12, 30, 16
+        note = "The controls on the right are never recorded"
+        bfont = self.fonts["normal"]
+        width = max([box + 10 + font.size(t)[0] for _, t in EXPORT_PARTS] + [font.size(note)[0],
+                                                                            bfont.size("Confirm Export")[0] + 32])
+        menu = pygame.Rect(b.x, b.bottom + 6, width + 2 * pad,
+                           pad + font.get_height() + 6 + row * len(EXPORT_PARTS) + 4 + font.get_height() + 12 + 40 + pad)
+        self.export_menu_rect = menu
+        self._panel(s, menu)
+        y = menu.y + pad
+        blit_shadowed(s, font, "Include in the video:", TEXT_DIM, (menu.x + pad, y))
+        y += font.get_height() + 6
+        self._export_checks = []
+        for part, text in EXPORT_PARTS:
+            r = pygame.Rect(menu.x + pad - 4, y, menu.w - 2 * pad + 8, row)
+            self._export_checks.append((part, r))
+            c = pygame.Rect(menu.x + pad, y + (row - box) // 2, box, box)
+            on = self.export_parts[part]
+            pygame.draw.rect(s, mix(BAR_BG, ACCENT, 0.55) if on else BAR_BG, c, border_radius=4)
+            pygame.draw.rect(s, ACCENT if on or r.collidepoint(mouse) else TEXT_DIM, c, 1, border_radius=4)
+            if on:
+                pygame.draw.lines(s, (255, 255, 255), False,
+                                  [(c.x + 3, c.centery), (c.x + 7, c.bottom - 4), (c.right - 3, c.y + 4)], 2)
+            blit_shadowed(s, font, text, TEXT if r.collidepoint(mouse) else TEXT_DIM,
+                          (c.right + 10, r.centery - font.get_height() // 2))
+            y += row
+        y += 4
+        blit_shadowed(s, font, fit_text(font, note, menu.w - 2 * pad), TEXT_DIM, (menu.x + pad, y))
+        y += font.get_height() + 12
+        btn = pygame.Rect(menu.x + pad, y, menu.w - 2 * pad, 40)
+        self.export_confirm = btn
+        over = btn.collidepoint(mouse)
+        pygame.draw.rect(s, mix(ACCENT, (255, 255, 255), 0.15) if over else ACCENT, btn, border_radius=8)
+        img = bfont.render("Confirm Export", True, (20, 20, 24))
+        s.blit(img, img.get_rect(center=btn.center))
+
+    def _draw_export_progress(self):
+        """
+        While exporting, over the whole window: the frame being rendered,
+        dimmed, and on it the progress - what it's doing, how far, about how
+        long left - and Cancel.
+        """
+        s, ex = self.screen, self.export
+        w, h = s.get_size()
+        s.fill(BG)
+        if ex.preview is not None:
+            pw, ph = ex.preview.get_size()
+            k = min(w / pw, h / ph)
+            img = pygame.transform.smoothscale(ex.preview, (max(1, int(pw * k)), max(1, int(ph * k))))
+            s.blit(img, img.get_rect(center=(w // 2, h // 2)))
+        shade = pygame.Surface((w, h), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 170))
+        s.blit(shade, (0, 0))
+        f, big = self.fonts["normal"], self.fonts["button"]
+        bw = min(640, w - 60)
+        box = pygame.Rect(0, 0, bw, 220)
+        box.center = (w // 2, h // 2)
+        pygame.draw.rect(s, PANEL, box, border_radius=12)
+        pygame.draw.rect(s, PANEL_EDGE, box, 1, border_radius=12)
+        x = box.x + 24
+        s.blit(big.render("Exporting video", True, TEXT), (x, box.y + 18))
+        name = fit_text(f, f"{os.path.basename(ex.path)}  ·  {ex.size[0]} x {ex.size[1]}, {ex.fps} fps, "
+                           f"{fmt_time(ex.seconds)}", bw - 48)
+        s.blit(f.render(name, True, TEXT_DIM), (x, box.y + 58))
+        bar = pygame.Rect(x, box.y + 98, bw - 48, 18)
+        pygame.draw.rect(s, BAR_BG, bar, border_radius=9)
+        fill = bar.copy()
+        fill.w = max(bar.h, int(bar.w * min(1.0, ex.progress)))
+        pygame.draw.rect(s, BAR_FILL, fill, border_radius=9)
+        eta = ex.eta()
+        left = f"about {fmt_time(eta)} left" if eta is not None else "estimating the time left…"
+        status = f"{int(ex.progress * 100)}%   ·   {ex.status()}   ·   {left}"
+        s.blit(self.fonts["small"].render(fit_text(self.fonts["small"], status, bw - 48), True, TEXT_DIM),
+               (x, bar.bottom + 10))
+        btn = pygame.Rect(0, 0, 140, 40)
+        btn.bottomright = (box.right - 24, box.bottom - 18)
+        self.export_cancel = btn
+        over = btn.collidepoint(pygame.mouse.get_pos())
+        pygame.draw.rect(s, (90, 60, 64) if over else (70, 52, 56), btn, border_radius=8)
+        pygame.draw.rect(s, PANEL_EDGE, btn, 1, border_radius=8)
+        img = f.render("Cancel", True, TEXT)
+        s.blit(img, img.get_rect(center=btn.center))
+        hint = self.fonts["small"].render("Esc to cancel", True, TEXT_DIM)
+        s.blit(hint, (x, btn.centery - hint.get_height() // 2))
 
     def _draw_tooltip(self):
         """What the top bar's control under the mouse does."""

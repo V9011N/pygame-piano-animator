@@ -33,7 +33,8 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     as the setting); or `PlaybackSetup` on its speed page with the speed set, then `open_audio`, which plays
     or says why not (too short). If any of its files is missing: `recent.remove`, and a `Dialog` ("File not
     found", naming which file - MIDI, audio or soundfont) over the menu. `Dialog` now wraps its message.
-  - `Visualizer` is the falling-notes player. Esc returns to the menu.
+  - `Visualizer` is the falling-notes player. Esc returns to the menu. Its "Export video" button renders the
+    performance to an .mp4 (`video_export.py`, below).
   - Command line: `main.py file.mid` plays the file, `--edit` opens it in the editor, `--screenshot` saves one frame.
 - `common.py` – shared pieces:
   - colours, `Keyboard`, `MidiOut`;
@@ -146,6 +147,40 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - Added by the user: `Etude op25 n06.mid` (thirds; 4 non-hand tracks), `chopin-etude-no-2…op-10.mid`, `Chopin Ballade 1 Full.mid`, `Chopin Prelude 24…`, `chpn-p16.mid`, `Liszt Mazeppa Intro.mid`, `Ravel Ondine Sample…`, `ORIG-MIDI_02_7_10_13…midi` (a performance).
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
+
+## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
+- The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
+  opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
+  badge; kept in settings.json "export_parts"), a note that the controls on the right never are, and Confirm
+  Export: pause, `common.save_video_dialog` (the folder kept as "video_dir"), `Visualizer.start_export`.
+- What's recorded: the whole song from its lead-in (`start_time`, -LEAD_IN) to the end of playback
+  (`end_time`, a synced recording's end included) plus `VIDEO_TAIL_S` 1.5 s, at the playback speed, the window's
+  size (sides made even for x264's 4:2:0), `VIDEO_FPS` 60, with the player's view (seconds shown, hands and finger
+  numbers on or off). Never: the controls panel, the key list, tooltips, the waveform, "Paused", the version and
+  the performance overlay (those two are App's, drawn on the window only).
+  - `Visualizer.layout(size, video=parts)`: no waveform, and with the bar left out the notes fall from the top
+    (`bar_rect` 0 high). The keyboard and hand area don't change, so the hands keep their caches.
+  - `render_video_frame(t)`: `_draw_scene(parts)` (render's scene: notes, keys, hands, pedals / badge per
+    `draw_pianist_badge(..., badge=)`, the bar) onto a surface of its own at song time t.
+- `VideoExport` (one export) runs in steps from the player's frames (`update` -> `step(EXPORT_STEP_T` 0.04 s)),
+  the window kept alive: the frames' RGB bytes (`frame_bytes`) go through a queue (`QUEUE_FRAMES` 4) to a writer
+  thread piping them into ffmpeg (imageio-ffmpeg's own binary, `ffmpeg_exe`; no console window on Windows): x264
+  `fast`, CRF 18, yuv420p, to `<name>.video-tmp.mp4` beside the chosen file.
+  - The sound, in a thread of its own meanwhile, to `<name>.audio-tmp.wav`: a synced recording cut from its
+    decoded samples (`recording_audio`: song time t heard at offset + t / speed, silence before / after it);
+    else the hands' notes and the pedals rendered offline (`render_notes_audio`: a `Transport` of its own
+    driving `sf_synth.SoundfontOut` in-process - the same pedal and soft handling as playback - `AUDIO_BLOCK`
+    256 frames at a time, 5.8 ms timing) with the chosen soundfont, else pretty_midi's General MIDI
+    `TimGM6mb.sf2` (now in the .exe), else none; brought up to peak at -1 dBFS (`NORMALIZE_PEAK`, at most 16x:
+    a soundfont plays well below full scale).
+  - Then (`_finish`, a thread) ffmpeg puts them together: the video copied, the sound to AAC 192k; the
+    temporary files removed. A sound that fails to render: the video without it.
+- While it runs the window shows the frame being rendered, dimmed, and a panel: progress (frames 0.86, sound
+  0.10, putting together 0.04), what it's doing, the time left, Cancel (or Esc; quitting cancels too). Cancel
+  kills ffmpeg, abandons the sound and removes the temporary files. Done or failed: a `Dialog` (the player now
+  has one), and the player back where it was (paused).
+- Pace (this container, 1920 x 1080, the Polonaise, Ninthie): 22 frames/s - the skins' drawing as in playback,
+  `tobytes` 7 ms a frame, x264 in its own process alongside; 6:24 of video in about 17 minutes.
 
 ## Fonts and frame pacing (v26.1.19.SNAPSHOT-14, -15)
 - Every font comes from the bundled typeface: Source Sans Pro, regular and bold (`assets/fonts`, SIL Open Font

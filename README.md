@@ -47,6 +47,9 @@ From The Cuphead Show with White Gloves
   right-click to set hand and finger, re-plan groups, see per-note difficulty, and finger note
   by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
   the MIDI file with the fingering embedded (or PIG text).
+- **Video export**: render a performance to an .mp4 at the window's size and 60 fps, with its sound (the
+  soundfont rendered offline, or the synced recording) - choose whether the progress bar, the pedals and the
+  pianist's badge are in it, from the button under the player's progress bar.
 - **Recent**: the main menu lists the last five setups you opened - a MIDI file with its soundfont or
   synced recording, or a file in the fingering editor - to open again in one click.
 - **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
@@ -66,7 +69,7 @@ The interface typeface is Source Sans Pro by Adobe, under the SIL Open Font Lice
 ## Requirements
 
 - Python 3.10+ (developed with 3.12)
-- `pygame-ce` (or plain `pygame`) and `pretty_midi` (see `requirements.txt`)
+- `pygame-ce` (or plain `pygame`), `pretty_midi` and `imageio-ffmpeg` (video export; see `requirements.txt`)
 - For sound: any MIDI output (Windows' built-in Microsoft GS Wavetable Synth works; a
   soundfont synth such as VirtualMIDISynth sounds much better)
 

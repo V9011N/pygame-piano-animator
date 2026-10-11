@@ -1,2 +1,3 @@
 pygame-ce>=2.5      # the community edition: faster drawing; still `import pygame`. Plain pygame>=2.1 works too
 pretty_midi>=0.2.10
+imageio-ffmpeg>=0.4  # video export (video_export.py): its own ffmpeg binary, nothing to compile
