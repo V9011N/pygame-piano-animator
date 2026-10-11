@@ -1156,3 +1156,23 @@ def test_a_chord_just_past_the_planners_span_is_held_if_the_drawn_hand_can(monke
     ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate((65, 68, 73, 77))]
     a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 2, 3, 5))})
     assert a.rolled == 0
+
+
+def test_interlocked_hands_lie_one_over_the_other_by_depth():
+    # the hands trilling on top of each other: the LH on D5 / F5 (white keys, at their front), the RH on
+    # D#5 / F#5 (black keys, further in). The LH moved in, but the RH's palm and fingers are over the
+    # LH's fingertips: the RH is on top (the LH's thumb used to be drawn through the RH's fingers)
+    def trill(lh, rh):
+        ns = [Note(75, 0.5, 0.6, 80, 0, RIGHT)]                     # (the RH starts above)
+        for i in range(16):
+            t = 1.0 + 0.12 * i
+            if i % 2:
+                ns.append(Note(rh[(i // 2) % 2], t, t + 0.1, 80, 0, RIGHT))
+            else:
+                ns.append(Note(lh[(i // 2) % 2], t, t + 0.1, 80, 1, LEFT))
+        return hands.crossing_episodes(song_of(ns, 4.0))
+    eps = trill((62, 65), (63, 66))
+    assert eps and all(e[2] == RIGHT for e in eps), eps
+    # the black and white keys the other way round: the LH (further in) on top
+    eps = trill((63, 66), (62, 65))
+    assert eps and all(e[2] == LEFT for e in eps), eps

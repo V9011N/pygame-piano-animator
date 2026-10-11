@@ -771,6 +771,21 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - This replaced a sampled-window version that merged the Toccatina's final LH-up and RH-down crossings into one LH-over episode.
     - Episodes are `(t0, t1, top, strength, lead)`. The hand rises from its previous onset (`lead` 0.25–0.6 s) and settles over 0.4 s.
     - `_crossing_lifts` gives each hand its own smoothed lift, so a handover between two crossings is smooth, and the larger lift is on top.
+  - Interlocked hands (v26.1.20.SNAPSHOT-08; Liszt HR 10, MAESTRO 2015, 3:18-4:08: the hands trilling on top of each
+    other): the crossing runs come in clusters (gaps under `INTERLOCK_NEAR` 1 s). A cluster where both hands strike
+    at least twice, each within `INTERLOCK_SPAN` 14 semitones (over it and 0.3 s either side), their ranges
+    overlapping, is interlocked: the hand with `INTERLOCK_BLACK` 0.3 more of its notes on black keys - further in,
+    its palm and fingers over the other's fingertips at the keys' front - is on top, whoever moved in. At 3:25 and
+    3:52 the LH on D5 / F5 crossed in while the RH held D#5 / F#5: the LH was on top and its thumb, striking F5's
+    front edge, was drawn over the RH's fingers reaching past it - through them. Hands sweeping past each other
+    (wider) or one wholly past the other stay crosser-on-top (its forearm goes over).
+    - Blips: a run under `INTERLOCK_BLIP` 0.3 s goes with the hand on top for most of its cluster, so the layers
+      no longer flip for one note of the other hand's (3:33.25, 3:35.07, 4:04.12, 4:04.73 were 0.04-0.11 s
+      RH-on-top flips inside LH-on-top stretches).
+    - Top-layer pressing fingertips over the lower hand's fingers or palm, HR 10 3:15-4:12 (Ninthie, 1/30 s): 32 ->
+      1 frame (default pianist: 0). Quick top flips (a change of top hand under 1 s apart): HR 10 8 -> 0, Op. 25
+      No. 12 3 -> 0, Scarbo 46 -> 9, Dante 1 -> 0; Ballade 1, Polonaise, Scriabin Op. 28, the Bach and
+      Rachmaninoff files unchanged.
   - `draw_hands` calls `arrange_crossing`: the crossing hand is drawn on layer 1, and its wrist, palm and forearm are raised by up to 0.8 in (`_lift_pose`). The lift fades to 0 at the fingertips and ramps in and out over 0.4 s.
   - `skins.draw_skinned` and `draw_skeletons` draw layer by layer, and the top hand's shadow falls on the lower hand.
 - **Idle hand keeps out of the way** (2026-09-28): hands cross only when the notes make them.

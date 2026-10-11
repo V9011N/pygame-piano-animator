@@ -3702,6 +3702,12 @@ CROSS_HOME = 4.0            # s, window for each hand's usual place (simultaneou
 CROSS_RAMP = 0.4            # s, the top hand rises this long before / settles after
 CROSS_LIFT_IN = 0.8         # in, how far the top hand's wrist rises over the other hand
 CROSS_STALE = 1.5           # s, a hand silent longer than this is placed at its next notes
+INTERLOCK_BLACK = 0.3       # hands interlocked (their ranges overlapping): the one playing this share more of its
+                            # notes on black keys - further in - is on top, whoever crossed...
+INTERLOCK_WINDOW = 0.3      # s, ...judged over the episode and this long either side, each hand within
+INTERLOCK_SPAN = 14         # semitones (wider: hands sweeping past each other - a crossing, the crosser on top)
+INTERLOCK_BLIP = 0.3        # s, a crossing this short goes with the hand on top for most of its cluster (runs
+INTERLOCK_NEAR = 1.0        # this close): a one-note blip, not a flip of the layers
 
 
 def crossing_episodes(song):
@@ -3722,6 +3728,13 @@ def crossing_episodes(song):
     hand playing on underneath meanwhile doesn't change who is on top. When
     both hands move into the crossing at the same moment, the one further
     from its usual place (its mean position in the seconds around) crossed.
+
+    Hands interlocked rather than crossed - both playing, their ranges
+    overlapping - lie one over the other by depth instead: the hand playing
+    further in (more of its notes on black keys, INTERLOCK_BLACK) has its
+    palm and fingers over the other's fingertips at the keys' front, so it's
+    on top whoever moved in (a thumb on a white key's front edge, drawn over
+    the fingers reaching past it to the black keys, went through them).
     """
     cached = getattr(song, "_crossings", None)
     if cached is not None:
@@ -3795,7 +3808,53 @@ def crossing_episodes(song):
             full = full or (L[0] + L[1]) / 2 > (R[0] + R[1]) / 2
         if state is not None:
             runs.append((t_on, clustered[-1] + 0.3, state, depth, full))
-        for t0, t1, top, d, f in runs:
+        by_hand = {h: sorted((n.start, n.pitch) for n in song.notes if n.hand == h) for h in (RIGHT, LEFT)}
+        note_ts = {h: [s for s, _ in by_hand[h]] for h in by_hand}
+
+        def interlocked_top(t0, t1):
+            """The hand further in when the hands interlock around t0..t1 (see above), else None."""
+            got = {}
+            for h in (RIGHT, LEFT):
+                lo = bisect.bisect_left(note_ts[h], t0 - INTERLOCK_WINDOW)
+                hi = bisect.bisect_right(note_ts[h], t1 + INTERLOCK_WINDOW)
+                ps = [p for _, p in by_hand[h][lo:hi]]
+                if not ps or max(ps) - min(ps) > INTERLOCK_SPAN:
+                    return None
+                # (both hands at it: each striking twice or more within the episode itself)
+                inside = {s for s, _ in by_hand[h][bisect.bisect_left(note_ts[h], t0 - CROSS_GROUP):
+                                                   bisect.bisect_right(note_ts[h], t1)]}
+                if len({round(s / CROSS_GROUP) for s in inside}) < 2:
+                    return None
+                got[h] = (min(ps), max(ps), sum(is_black_key(p) for p in ps) / len(ps))
+            (rl, rh, rb), (ll, lh, lb) = got[RIGHT], got[LEFT]
+            if ll > rh or lh < rl:                           # (one hand wholly past the other: crossed)
+                return None
+            if abs(lb - rb) < INTERLOCK_BLACK:
+                return None
+            return RIGHT if rb > lb else LEFT
+
+        # judged over clusters of runs (gaps under INTERLOCK_NEAR, whichever hand crossed): a trill of
+        # the hands on top of each other comes as many short runs, each too short to say
+        clusters = []
+        for r in runs:
+            if clusters and r[0] - clusters[-1][-1][1] < INTERLOCK_NEAR:
+                clusters[-1].append(r)
+            else:
+                clusters.append([r])
+        runs = []
+        for cl in clusters:
+            deep = interlocked_top(cl[0][0], cl[-1][1])
+            # a blip (a run under INTERLOCK_BLIP) goes with the hand on top for most of its cluster: the
+            # layers don't flip for one note of the other hand's
+            held = {}
+            for t0, t1, top, _, _ in cl:
+                held[top] = held.get(top, 0.0) + (t1 - t0)
+            main_top = max(held, key=held.get)
+            runs += [(t0, t1, main_top if t1 - t0 < INTERLOCK_BLIP and len(held) > 1 else top, d, f, deep)
+                     for t0, t1, top, d, f in cl]
+        for t0, t1, top, d, f, deeper in runs:
+            if deeper is not None:
+                top, f = deeper, True
             strength = 1.0 if f else max(0.3, min(1.0, d / 6.0))
             # the hand starts rising when it sets off from its previous chord
             i = bisect.bisect_left(starts[top], t0 - CROSS_GROUP) - 1
