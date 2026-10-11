@@ -8,23 +8,9 @@ Hand-thesia reads MIDI files and animates, in real time and seen from above, the
 procedurally animated hands playing them - with fingering worked out automatically and
 editable by hand.
 
-### Sample Vids Showing the Different Hand Skins
+[![Liszt Hungarian Rhapsody 10 Example](https://img.youtube.com/vi/DoPnGvCXLnE/0.jpg)](https://www.youtube.com/watch?v=DoPnGvCXLnE)
 
-[![Bach Solfeggietto Example with Skeleton Hands](https://img.youtube.com/vi/gj3QNIqWuMY/0.jpg)](https://www.youtube.com/watch?v=gj3QNIqWuMY)
-
-Bach Solfeggietto with Skeleton Hands
-
-[![Beethoven Waldstein Example with Robot Hands](https://img.youtube.com/vi/h--70K8a0XE/0.jpg)](https://www.youtube.com/watch?v=h--70K8a0XE)
-
-Beethoven Waldstein with Robot Hands
-
-[![Debussy Arabesque Example with Human Hands](https://img.youtube.com/vi/aiAx60huEHE/0.jpg)](https://www.youtube.com/watch?v=aiAx60huEHE)
-
-Debussy Arabesque with Human Hands
-
-[![Cuphead Show Example with White Gloves](https://img.youtube.com/vi/4Zgt4DTOMAo/0.jpg)](https://www.youtube.com/watch?v=4Zgt4DTOMAo)
-
-From The Cuphead Show with White Gloves
+Hand occlusion and glissados showcase
 
 ### Like what you see and want to help with further development? Join the Discord: https://discord.gg/HDRX89mQ9 
 
