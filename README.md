@@ -8,9 +8,9 @@ Hand-thesia reads MIDI files and animates, in real time and seen from above, the
 procedurally animated hands playing them - with fingering worked out automatically and
 editable by hand.
 
-[![Liszt Hungarian Rhapsody 10 Example](https://img.youtube.com/vi/DoPnGvCXLnE/0.jpg)](https://www.youtube.com/watch?v=DoPnGvCXLnE)
+### Hand occlusion and glissandos showcase
 
-Hand occlusion and glissandos showcase
+[![Liszt Hungarian Rhapsody 10 Example](https://img.youtube.com/vi/DoPnGvCXLnE/0.jpg)](https://www.youtube.com/watch?v=DoPnGvCXLnE)
 
 ### Like what you see and want to help with further development? Join the Discord: https://discord.gg/HDRX89mQ9 
 
