@@ -10,7 +10,7 @@ editable by hand.
 
 [![Liszt Hungarian Rhapsody 10 Example](https://img.youtube.com/vi/DoPnGvCXLnE/0.jpg)](https://www.youtube.com/watch?v=DoPnGvCXLnE)
 
-Hand occlusion and glissados showcase
+Hand occlusion and glissandos showcase
 
 ### Like what you see and want to help with further development? Join the Discord: https://discord.gg/HDRX89mQ9 
 
