@@ -47,7 +47,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
-| `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, thumb/pinky pairs, `score_fingering`) |
+| `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, one finger on neighbouring keys - `cluster_shape`, smudges, `score_fingering`) |
 | `glissando.py` | Glissando detection (strings of next-door white or black keys), marked glissandos (`Note.gliss`), episodes |
 | `figures.py` | Figure recognition (scales, arpeggios, chromatic, octaves, repeated notes, trills, double notes) feeding the planner |
 | `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing, `build_hands` / `load_with_hands` |
@@ -78,6 +78,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - A drawn finger never points up past its knuckle or rears its knuckle up (`TIP_BELOW_KNUCKLE`, `solve_chain`'s
   `lift_max`), and a chord is rolled when the drawn hand can't hold it (`HandAnimator._chord_fits` decides near the planner's spans,
   either side).
+- One finger may hold neighbouring keys (`fingering.cluster_shape`: white + black, two whites, white-black-white;
+  two blacks only for the thumb) - a smudge is played by its note's finger. `HandAnimator.pair_key` maps each note of
+  such a run to the run's keys (one tuple per run, `_mates`); the finger holds them as one key (`_unify_clusters`).
 - Strict key contact: a finger holding a key has its tip on it (`_finger_pose` clamps it into `_key_box`, then
   `_settle_on_keys` shifts the whole hand if the bones fall short); what can't be is logged with its time in the file,
   as are notes with no finger (`HandAnimator.unplaced`). Check a change with `anim_check` / `tools/maestro_check.py`.

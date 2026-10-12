@@ -153,6 +153,10 @@ W = {
     "thumb_double": 15.0,      # the thumb covering two neighbouring keys in a chord (only where no finger-a-key
                                # shape is in reach: at 7 it beat a merely uncomfortable one, e.g. LH F-A-D-E 5-3-1-1)
     "pinky_double": 16.0,      # the little finger covering two neighbouring white keys (likewise)
+    "finger_double": 16.0,     # a long finger (2, 3, 4) covering two neighbouring keys (likewise)
+    "finger_triple": 4.0,      # ...extra for three (white-black-white, the tip at the black key's front)
+    "smudge_one": 0.3,         # one finger on a smudge: a neighbouring key caught with the note (cluster_ok, smudge_like)
+    "smudge_split": 3.0,       # a smudged neighbour given a finger of its own
     "same_shape": 1.5,         # the same fingers on a chord shape that moves by step (4-2, 4-2, 4-2)
     "shape_shift": 0.5,        # moving a whole chord shape with the same fingers
     "octave_4_white": 1.5,     # an octave's top note with 4 on a white key
@@ -266,7 +270,13 @@ FINE_TUNE = [
     ("chord_cramp", "Chords", "Chord cramp", "Per white key a chord squeezes two fingers narrower than natural."),
     ("chord_stretch_adj", "Chords", "Neighbour stretch", "Stretch between neighbouring fingers in a chord."),
     ("thumb_double", "Chords", "Thumb on two keys", "The thumb covering two neighbouring keys in a chord."),
-    ("pinky_double", "Chords", "Little finger on two keys", "The little finger covering two neighbouring white keys."),
+    ("pinky_double", "Chords", "Little finger on two keys", "The little finger covering two neighbouring keys in a chord."),
+    ("finger_double", "Chords", "Long finger on two keys", "Finger 2, 3 or 4 covering two neighbouring keys in a chord."),
+    ("finger_triple", "Chords", "Finger on three keys", "Extra for one finger on a white, black and white key (C-C#-D), "
+                                                          "its tip at the black key's front."),
+    ("smudge_one", "Chords", "Smudge, one finger", "One finger catching a neighbouring key with its note "
+                                                   "(the other much quieter or shorter: a smudge)."),
+    ("smudge_split", "Chords", "Smudge, own finger", "Giving a smudged neighbouring key a finger of its own."),
     ("same_shape", "Chords", "Same shape fingers", "Not keeping the same fingers on a chord shape that moves by step (4-2, 4-2...)."),
     ("shape_shift", "Chords", "Shape shift", "Moving a whole chord shape with the same fingers."),
     ("octave_4_white", "Chords", "Octave 4 on white", "An octave's top note taken with 4 on a white key."),
@@ -489,9 +499,119 @@ def pinky_pair(a, b):
             and abs(key_pos(b) - key_pos(a) - 1.0) < 1e-6)
 
 
+def cluster_shape(ps):
+    """
+    How one finger can cover keys ps (the RH frame, rising) at once: "pair" -
+    a white key and the black beside it, or two neighbouring white keys (E-F,
+    C-D: the tip between them, in front of any black key), "triple" - white,
+    black, white (C-C#-D: the tip at the black key's front end, touching all
+    three), "blacks" - two neighbouring black keys (the thumb only, lying
+    across them) - or None. Any finger takes a pair or a triple (a smudge is
+    caught by the finger playing its neighbour, or a cluster struck with one).
+    The keyboard is symmetric about D, so this holds in the left hand's
+    mirrored frame too.
+    """
+    if len(ps) == 2:
+        a, b = ps
+        if b - a == 1:
+            return "pair"
+        if not is_black(a) and not is_black(b) and abs(key_pos(b) - key_pos(a) - 1.0) < 1e-6:
+            return "pair"
+        if is_black(a) and is_black(b) and b - a in (2, 3):
+            return "blacks"
+        return None
+    if len(ps) == 3:
+        a, b, c = ps
+        if b - a == 1 and c - b == 1 and is_black(b):
+            return "triple"
+    return None
+
+
+def cluster_ok(ps, f):
+    """Can finger f cover keys ps (rising, the RH frame) at once? (cluster_shape)"""
+    shape = cluster_shape(list(ps))
+    return shape is not None and (shape != "blacks" or f == 1)
+
+
 def double_ok(p1, p2, f):
-    """One finger on both keys: the thumb (thumb_pair) or the little finger (pinky_pair)."""
-    return (f == 1 and thumb_pair(p1, p2)) or (f == 5 and pinky_pair(p1, p2))
+    """One finger on both keys (cluster_ok)."""
+    return cluster_ok(sorted((p1, p2)), f)
+
+
+SMUDGE_VEL = 0.7             # a neighbour struck with a note is a smudge at most this share of its loudness...
+SMUDGE_LEN = 0.5             # ...or at most this share of its length ...
+SMUDGE_LEN_T = 0.15          # ... and no longer than this (s)
+SMUDGE_TOL = 0.05            # s, a smudge struck this long after its note (or before) still joins its chord ...
+SMUDGE_LATE_VEL = 0.6        # ... if no louder than this share of it, nor longer - or very short:
+SMUDGE_LATE_T = 0.08         # this long (s) at most, and at most SMUDGE_LEN of it
+
+
+def _dur(n):
+    return n.end - n.start
+
+
+def smudge_like(ns, late=False):
+    """
+    Do notes ns (neighbouring keys struck together) look like a smudge - one
+    note played, the others caught with it by accident? Each other note much
+    quieter (SMUDGE_VEL) or much shorter (SMUDGE_LEN, SMUDGE_LEN_T) than the
+    loudest. `late`: for a note struck apart from it (up to SMUDGE_TOL), which
+    must be quiet and no longer (SMUDGE_LATE_VEL) or very short (SMUDGE_LATE_T),
+    so the uneven notes of a fast run aren't taken for smudges.
+    """
+    if len(ns) < 2:
+        return False
+    main = max(ns, key=lambda n: (getattr(n, "velocity", 64), _dur(n)))
+    mv, md = getattr(main, "velocity", 64), _dur(main)
+    for n in ns:
+        if n is main:
+            continue
+        v, d = getattr(n, "velocity", 64), _dur(n)
+        if late:
+            ok = (v <= SMUDGE_LATE_VEL * mv and d <= md) or (d <= SMUDGE_LATE_T and d <= SMUDGE_LEN * md)
+        else:
+            ok = v <= SMUDGE_VEL * mv or (d <= SMUDGE_LEN_T and d <= SMUDGE_LEN * md)
+        if not ok:
+            return False
+    return True
+
+
+def cluster_cost(ps, f, ns):
+    """One finger f on neighbouring keys ps (rising, RH frame) of notes ns: cheap for a smudge, else dear."""
+    shape = cluster_shape(list(ps))
+    if shape is None or (shape == "blacks" and f != 1):
+        return IMPOSSIBLE
+    if ns is not None and shape != "blacks" and smudge_like(ns):
+        return W["smudge_one"]
+    c = W["thumb_double"] if f == 1 else W["pinky_double"] if f == 5 else W["finger_double"]
+    return c + (W["finger_triple"] if shape == "triple" else 0.0)
+
+
+def finger_runs(st):
+    """[(i, j)]: the runs of one finger in a chord's fingers st (pitch order) - j - i > 1 for a finger on several keys."""
+    out, i = [], 0
+    while i < len(st):
+        j = i + 1
+        while j < len(st) and st[j] == st[i]:
+            j += 1
+        out.append((i, j))
+        i = j
+    return out
+
+
+def min_fingers(ps):
+    """The fewest fingers that can play chord ps (rising, RH frame), some on two or three neighbouring keys."""
+    best = [0] + [math.inf] * len(ps)
+    for j in range(1, len(ps) + 1):
+        for length in (1, 2, 3):
+            i = j - length
+            if i < 0:
+                break
+            shape = cluster_shape(ps[i:j]) if length > 1 else "one"
+            if shape is None or (shape == "blacks" and i != 0):
+                continue
+            best[j] = min(best[j], best[i] + 1)
+    return best[-1]
 
 
 def thumb_bridge(a, b):
@@ -558,8 +678,8 @@ def chord_pair_cost(pl, fl, ph, fh):
     """Cost of two adjacent chord notes pl < ph played by fingers fl < fh."""
     rel, nat = key_pos(ph) - key_pos(pl), _OFF[fh] - _OFF[fl]
     if fl >= fh:
-        if fl == fh and double_ok(pl, ph, fl):
-            return W["thumb_double"] if fl == 1 else W["pinky_double"]
+        if fl == fh and cluster_ok((pl, ph), fl):
+            return cluster_cost((pl, ph), fl, None)
         # only when a finger was given (file / editor): one finger on two keys,
         # or a crossing inside the chord - allowed, but free notes avoid it
         if fl == fh:
@@ -625,12 +745,13 @@ def shape_cost(pairs):
     price) and every adjacent pair must be within reach.
     """
     pairs = sorted(pairs)
+    for i, j in finger_runs([f for _, f in pairs]):
+        if j - i > 1 and not cluster_ok([p for p, _ in pairs[i:j]], pairs[i][1]):
+            return IMPOSSIBLE
     c = 0.0
     for k, ((p1, f1), (p2, f2)) in enumerate(zip(pairs, pairs[1:])):
         if f1 == f2:
-            if double_ok(p1, p2, f1):
-                continue
-            return IMPOSSIBLE
+            continue
         p1 = bridge_from([p for p, _ in pairs], [f for _, f in pairs], k)
         if f2 < f1:
             if 1 in (f1, f2) and key_pos(p2) - key_pos(p1) <= 2.5:
@@ -663,23 +784,27 @@ def _next_in_run(group, n):
 def group_notes(notes, vpitch=None, tolerance=CHORD_TOL):
     """Chords: [(start, [notes])], each ordered by vpitch (finger numbers rise along it)."""
     vp = vpitch or (lambda p: p)
+
+    def smudge_of(group, n):
+        """A neighbouring key caught with a note of the group a little apart from it (SMUDGE_TOL): it joins."""
+        if n.start - group[0].start > SMUDGE_TOL:
+            return False
+        return any(cluster_shape(sorted((vp(m.pitch), vp(n.pitch)))) == "pair" and smudge_like([m, n], late=True)
+                   for m in group)
+
     groups = []
     for n in sorted(notes, key=lambda n: (n.start, n.pitch)):
-        if groups and n.start - groups[-1][0] <= tolerance and not _next_in_run(groups[-1][1], n):
+        if groups and ((n.start - groups[-1][0] <= tolerance and not _next_in_run(groups[-1][1], n))
+                       or smudge_of(groups[-1][1], n)):
             groups[-1][1].append(n)
         else:
             groups.append((n.start, [n]))
     out = []
     for start, ns in groups:
         ns = sorted(ns, key=lambda n: vp(n.pitch))
-        # one hand, five fingers (a key more each if the thumb / little finger
-        # can take two): drop inner notes
-        def room(ns):
-            if len(ns) < 2:
-                return 5
-            return (5 + thumb_pair(vp(ns[0].pitch), vp(ns[1].pitch))
-                    + pinky_pair(vp(ns[-2].pitch), vp(ns[-1].pitch)))
-        while len(ns) > room(ns):
+        # one hand, five fingers (some may take two or three neighbouring keys,
+        # min_fingers): drop inner notes
+        while len(ns) > 5 and min_fingers([vp(n.pitch) for n in ns]) > 5:
             ns.pop(len(ns) // 2)
         out.append((start, ns))
     return out
@@ -761,30 +886,54 @@ def speed_cost(pps, pf, ps, st, dt):
     return W["too_fast"] * (need / avail - 1.0) if need > avail else 0.0
 
 
+def _partitions(ps, i=0):
+    """The ways to split chord ps (from note i) into runs one finger each can cover (cluster_shape): [(i, j), ...]."""
+    if i == len(ps):
+        yield []
+        return
+    for length in (1, 2, 3):
+        j = i + length
+        if j > len(ps):
+            break
+        if length > 1:
+            shape = cluster_shape(ps[i:j])
+            if shape is None or (shape == "blacks" and i != 0):
+                continue
+        for rest in _partitions(ps, j):
+            yield [(i, j)] + rest
+
+
 def _states(given, ps=None):
     """
     Candidate finger tuples for a chord whose notes may already have a finger
-    (from the file or the editor). Normally one finger per note, rising with
-    pitch; when the two lowest keys (in the hand's frame) are neighbours the
-    thumb can cover (thumb_pair), also the thumb on both and the other
-    fingers on the rest, and likewise the little finger on the two highest
-    (neighbouring white keys, pinky_pair), or both. That frees a finger, so
-    chords that would otherwise need a stretch between neighbouring fingers
-    (or a roll) fit, and a sixth / seventh key can be played. A given finger is always kept, even when
-    it breaks that pattern (a thumb on two keys, a crossing inside the
-    chord): the free notes then take whatever fingers are left, in order
+    (from the file or the editor). One finger per note, rising with pitch -
+    or one finger on two or three neighbouring keys (cluster_shape: a white
+    key and the black beside it, two neighbouring whites, white-black-white;
+    two neighbouring blacks for the thumb), the other fingers on the rest.
+    That covers a smudge (a key caught with its neighbour by the same finger),
+    frees a finger for chords that would otherwise need a stretch between
+    neighbouring fingers (or a roll), and lets a sixth key be played. A given
+    finger is always kept, even when it breaks that pattern (a crossing inside
+    the chord): the free notes then take whatever fingers are left, in order
     where possible.
     """
     k = len(given)
-    states = list(combinations(range(1, 6), k)) if k <= 5 else []
-    if ps is not None and k >= 3:
-        tp, pp = thumb_pair(ps[0], ps[1]), pinky_pair(ps[-2], ps[-1])
-        if tp:
-            states += [(1, 1) + c for c in combinations(range(2, 6), k - 2)]
-        if pp:
-            states += [c + (5, 5) for c in combinations(range(1, 5), k - 2)]
-        if tp and pp and k >= 5:
-            states += [(1, 1) + c + (5, 5) for c in combinations(range(2, 5), k - 4)]
+    if ps is None:
+        states = list(combinations(range(1, 6), k)) if k <= 5 else []
+    else:
+        states = []
+        for part in _partitions(list(ps)):
+            m = len(part)
+            if m > 5:
+                continue
+            for fs in combinations(range(1, 6), m):
+                if part[0][1] - part[0][0] == 2 and cluster_shape(ps[part[0][0]:part[0][1]]) == "blacks" \
+                        and fs[0] != 1:
+                    continue
+                st = []
+                for (i, j), f in zip(part, fs):
+                    st += [f] * (j - i)
+                states.append(tuple(st))
     if not states:
         states = [tuple(range(1, 6))[:k]]
     if not any(given):
@@ -851,6 +1000,10 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
         given = [fixed.get(id(n)) if fixed is not None else getattr(n, "finger", None) for n in ns]
         sug = [suggest.get(id(n)) for n in ns]
 
+        # neighbours that look like a smudge: each given a finger of its own costs smudge_split
+        split = [k for k in range(1, len(ns)) if cluster_shape([ps[k - 1], ps[k]]) == "pair"
+                 and smudge_like([ns[k - 1], ns[k]])]
+
         def chord_costs(states):
             local = []
             for st in states:
@@ -858,8 +1011,16 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
                 for s_, f in zip(sug, st):
                     if s_ and (f not in s_[0] if isinstance(s_[0], frozenset) else s_[0] != f):
                         c += W["figure"] * s_[1]
+                for i, j in finger_runs(st):
+                    if j - i > 1:                       # one finger on neighbouring keys
+                        c += cluster_cost(ps[i:j], st[i], ns[i:j])
                 for k in range(1, len(st)):
+                    if st[k] == st[k - 1]:
+                        continue
                     c += chord_pair_cost(bridge_from(ps, st, k - 1), st[k - 1], ps[k], st[k])
+                for k in split:
+                    if st[k] != st[k - 1]:
+                        c += W["smudge_split"]
                 c += inner_room_cost(list(zip(ps, st)))
                 # every pair of fingers within its reach, not only neighbours
                 # (an octave 1-3 with 2 between them passes each neighbour's check)

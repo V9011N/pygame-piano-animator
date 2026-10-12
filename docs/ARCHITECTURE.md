@@ -887,7 +887,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Broken octaves now skip notes that are part of a quick repeat. The outer note next to a repeated partner takes 5.
   - PIG test is unchanged (both-hands general 66.1%).
   - La Campanella 95–125 s: 25/25 pairs before an octave leap come out 2-1-5; the three followed by a fifth come out 2-1-4.
-- **One finger on two keys** (2026-09-27): `fingering.thumb_pair` covers two neighbouring white keys or two neighbouring black keys, including D#-F# and A#-C#. `pinky_pair` covers two neighbouring white keys. `double_ok(p1, p2, f)` checks either.
+- **One finger on two keys** (2026-09-27; any finger since v26.1.21.MAESTRO-TESTING, below): `fingering.thumb_pair` covers two neighbouring white keys or two neighbouring black keys, including D#-F# and A#-C#. `pinky_pair` covers two neighbouring white keys. `double_ok(p1, p2, f)` checks either.
   - Both are symmetric about D, so they hold in the LH's mirrored frame.
   - `_states(given, ps)` adds (1,1,…) when the two lowest keys in the hand's frame are a thumb pair, (…,5,5) when the two highest are a pinky pair, and both for chords of 5 or more.
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
@@ -913,6 +913,33 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
   - PIG test 66.23% (up from 66.17%), Hanon unchanged.
+  - **Any finger on neighbouring keys; smudges** (v26.1.21.MAESTRO-TESTING). Performances (MAESTRO) are full of
+    smudges - a neighbouring key caught with a note, usually much quieter or shorter - and the planner gave each its
+    own finger, which bent the hand into odd shapes for a note nobody meant. Now `cluster_shape(ps)` (RH frame,
+    rising): "pair" - a white key and the black beside it, or two neighbouring whites (E-F, C-D) - and "triple" -
+    white-black-white (C-C#-D) - for any finger; "blacks" (two neighbouring black keys) still for the thumb only.
+    `cluster_ok(ps, f)`; `double_ok` is its two-key form.
+    - `_states` enumerates `_partitions` of the chord into runs one finger can cover, and rising fingers for the
+      runs (a "blacks" run only first, on the thumb). `min_fingers` (fewest fingers for a chord) decides which
+      notes `group_notes` drops (was 5 + thumb pair + pinky pair).
+    - `smudge_like(ns)`: every note but the loudest at most `SMUDGE_VEL` 0.7 of its velocity, or at most
+      `SMUDGE_LEN` 0.5 of its length and `SMUDGE_LEN_T` 0.15 s. `cluster_cost`: a smudge on one finger costs
+      `smudge_one` 0.3; anything else as before - `thumb_double` 15, `pinky_double` 16, the new `finger_double` 16
+      for 2-4 - plus `finger_triple` 4 for three keys, so a deliberate second still gets two fingers. A smudge-like
+      pair given two fingers costs `smudge_split` 3. In `plan_fingering`'s chord costs, runs are priced by
+      `cluster_cost` and `chord_pair_cost` only between different fingers; `shape_cost` checks each run with
+      `cluster_ok` (`finger_runs`).
+    - `group_notes`: a smudge struck up to `SMUDGE_TOL` 0.05 s from a neighbour in the chord joins it, though apart
+      from it (beyond `CHORD_TOL`, or split off as the next note of a run) - if `smudge_like(..., late=True)`:
+      quieter than `SMUDGE_LATE_VEL` 0.6 and no longer, or shorter than `SMUDGE_LATE_T` 0.08 s, so the uneven notes
+      of a fast run aren't merged.
+    - Hands: `pair_key` holds the run's keys (2 or 3, one tuple object per run: `_mates`). `key_target`: with a
+      black key, the tip `CLUSTER_DEPTH_IN` in from its front - over its edge toward the white key (pair) or its
+      middle (triple) - touching them all; two whites, between them (C-D in front of the black key between,
+      `CLUSTER_FRONT_GAP_IN`, in `_key_depths` and `_key_box`). On the finger's timeline a run is one held key
+      (`_unify_clusters`: every note until the last is let go; the end cuts at the finger's next note skip mates),
+      while each note sounds its own length (`_fingered_performance`).
+    - Ten MAESTRO files (Ninthie): see the MAESTRO check section for the incidents before and after.
   - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
     D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
     thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.

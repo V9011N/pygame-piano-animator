@@ -34,8 +34,9 @@ Output (--out, default ./maestro_check):
   report.md      summary, the files with the most solver incidents first, then
                  every file's incidents, worst first: the piece, the file to
                  open, and one line per incident with its times in the file;
-  incidents.csv  one row per incident (piece, year, file, original name, hand,
-                 category, times, notes), to sort and filter in a spreadsheet.
+  incidents.csv  one row per incident listed in report.md (piece, year, file,
+                 original name, hand, category, seen, offset, times, notes), to
+                 sort and filter in a spreadsheet.
 """
 import argparse
 import concurrent.futures as cf
@@ -562,6 +563,8 @@ def report(args, meta):
         for r in worst:
             m = meta.get(r["key"]) or dict(zip(("piece", "year"), piece_of(r["key"])))
             for i in r["incidents"]:
+                if not listed(i):
+                    continue                          # (the report's filters: --show-corrected, --show-timing)
                 seen = "yes" if i.get("visible", True) and i["cat"] != "timing" else "no"
                 w.writerow([m["piece"], m["year"], r["key"], original(r), i["hand"], i["cat"], seen, i["kind"],
                             fmt_t(i["t0"]), fmt_t(i["t1"]), f"{i['t0']:.3f}", f"{i['t1']:.3f}",

@@ -24,7 +24,8 @@ editable by hand.
   line the recording up by dragging its waveform across the top of the player.
 - **Automatic hand split** for single-track MIDI, and **fingering** from a beam-search planner
   with figure recognition (scales, arpeggios, chromatic runs, octaves, double notes, trills,
-  repeated notes), the thumb or little finger covering two keys when a chord needs it, and
+  repeated notes), one finger covering neighbouring keys when a chord needs it or a key is
+  smudged with its neighbour, and
   weights learned from the PIG fingering dataset.
 - **Procedural hands**: inverse kinematics per finger, crossings, thumb-unders, hand
   crossings (the crossing hand always goes over), wrist bounce on repeated chords and forearm

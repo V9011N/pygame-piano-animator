@@ -1318,3 +1318,71 @@ def test_maestro_check_names_renamed_files_from_the_rename_map(tmp_path):
     assert info["loose"] == 1 and meta[other]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
     assert mc._loose("Frédéric Chopin Étude, Op. 10.midi") == mc._loose("frederic chopin etude op 10.mid")
     assert mc.piece_of("2011/MAESTRO - 2011 - J. S. Bach Fugue - 02.midi") == ("J. S. Bach Fugue - 02", "2011")
+
+
+def test_any_finger_may_cover_a_semitone_neighbouring_whites_or_white_black_white():
+    assert F.cluster_shape([60, 61]) == "pair" and F.cluster_shape([61, 62]) == "pair"     # C-C#, C#-D
+    assert F.cluster_shape([64, 65]) == "pair" and F.cluster_shape([60, 62]) == "pair"     # E-F, C-D
+    assert F.cluster_shape([60, 61, 62]) == "triple"                                      # C-C#-D
+    assert F.cluster_shape([61, 62, 63]) is None and F.cluster_shape([64, 65, 66]) is None
+    assert F.cluster_shape([60, 64]) is None
+    for f in range(1, 6):
+        assert F.cluster_ok([60, 61], f) and F.cluster_ok([60, 61, 62], f)
+    assert F.cluster_ok([61, 63], 1) and not F.cluster_ok([61, 63], 3)                    # two blacks: the thumb only
+    assert F.min_fingers([60, 61, 62, 64, 65, 67, 69]) == 3              # C-C#-D, E-F, G-A
+    assert F.min_fingers([60, 64, 67, 71, 74, 77]) == 6
+
+
+def _smudged_melody(smudge_vel):
+    # a melody E4 G4 E4 C4 at 80; with the second E4, F4 caught 20 ms later
+    ns = [Note(p, t, t + 0.4, 80, 0, RIGHT) for p, t in ((64, 0.0), (67, 0.5), (64, 1.0), (60, 1.5))]
+    ns.append(Note(65, 1.02, 1.02 + (0.06 if smudge_vel < 60 else 0.38), smudge_vel, 0, RIGHT))
+    return ns
+
+
+def test_a_smudge_is_played_by_the_finger_of_its_note():
+    ns = _smudged_melody(30)
+    groups = F.group_notes(ns)
+    assert any({n.pitch for n in g} == {64, 65} for _, g in groups)      # (struck 20 ms apart: one chord)
+    fing = F.plan_fingering(groups)
+    e4, f4 = ns[2], ns[4]
+    assert fing[id(e4)] == fing[id(f4)]
+    # struck as loud and as long, it's a real second: a finger each
+    ns = _smudged_melody(80)
+    fing = F.plan_fingering(F.group_notes(ns))
+    assert fing[id(ns[2])] != fing[id(ns[4])]
+
+
+def test_a_finger_on_a_smudge_holds_its_note_and_touches_both_keys(screen):
+    from common import Keyboard, bottom_layout
+    ns = _smudged_melody(30)
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT)
+    e4, f4 = ns[2], ns[4]
+    f = a.finger_for(e4)
+    assert a.finger_for(f4) == f and a._pk(e4) == a._pk(f4) == (64, 65)
+    perf = {id(n): (s, e) for s, e, n in a.performance}
+    assert perf[id(f4)][1] - perf[id(f4)][0] < 0.1               # the smudge sounds its own (short) length...
+    assert perf[id(e4)][1] > 1.3                                  # ...its note its own
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    for t in (1.05, 1.2, 1.35):                                   # after the smudge is let go, still on E4
+        assert a._held_note(f, t) in (e4, f4)
+        p = a.pose(t, kb)
+        x = p["struct"]["chains"][f][-1][0]
+        r = kb.key_rects[64]
+        assert r.left - 1 <= x <= r.right + 1 and abs(x - r.right) < 0.35 * r.w     # at E-F's boundary
+
+
+def test_one_finger_on_white_black_white_aims_at_the_black_keys_front(screen):
+    from common import Keyboard, bottom_layout
+    ns = [Note(p, 0.5, 0.9, v, 0, RIGHT) for p, v in ((60, 30), (61, 80), (62, 30))]
+    ns.append(Note(67, 0.5, 0.9, 80, 0, RIGHT))
+    a = hands.HandAnimator(song_of(ns, 1.5), RIGHT)
+    f = a.finger_for(ns[1])
+    assert a.finger_for(ns[0]) == a.finger_for(ns[2]) == f and a._pk(ns[1]) == (60, 61, 62)
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    x, y = a.key_target((60, 61, 62), f, ns[1])
+    r = kb.key_rects[61]
+    assert abs(x - r.centerx) < 1e-6
+    assert abs(y - (kb.rect.h - kb.black_h)) < 0.3 * a.ppi                # (world y of the black keys' front)

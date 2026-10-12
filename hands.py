@@ -67,6 +67,9 @@ GESTURE_REPEAT_T = 0.45                  # repeated chords closer than this boun
 GESTURE_KEY_UP_T = 0.04                  # keys springing back as the hand lifts off them
 GESTURE_TREMOLO_T = 0.3                  # alternations quicker than this rotate the forearm
 BLACK_DEPTH_IN = 0.35                    # distance in from the black key's front edge
+CLUSTER_DEPTH_IN = 0.15                  # one finger on a white key and the black beside it (or both whites): this far in
+                                         # from the black key's front, touching them all (key_target)
+CLUSTER_FRONT_GAP_IN = 0.1               # two whites with a black between (C-D): the tip this far in front of it
 # How far along a key a fingertip may slide from those spots when the hand
 # can't reach them (a white key between black ones is played further in):
 WHITE_SPAN_IN = (0.3, 0.45)              # from the front edge / past the black keys' front
@@ -828,16 +831,19 @@ class HandAnimator:
             log_unplaced(song, hand, self.unplaced)
         self.groups = [(t, [n for n in ns if id(n) in self.fingering]) for t, ns in self.groups]
         self.groups = [g for g in self.groups if g[1]]
-        # One finger on two neighbouring keys (the thumb, or the little finger
-        # on two white keys): its tip aims between them.
-        from fingering import double_ok
+        # One finger on two or three neighbouring keys (fingering.cluster_ok: a
+        # smudge, or a cluster struck with one finger): its tip aims where it
+        # touches them all (key_target), and the finger holds them as one key
+        # (_unify_clusters; each note still sounds its own length).
+        from fingering import cluster_ok, finger_runs
         self.pair_key = {}
         for _, ns in self.groups:
-            for a, b in zip(ns, ns[1:]):
-                f = self.fingering[id(a)]
-                if f == self.fingering[id(b)] and double_ok(self.vp(a.pitch), self.vp(b.pitch), f):
-                    pk = (min(a.pitch, b.pitch), max(a.pitch, b.pitch))
-                    self.pair_key[id(a)] = self.pair_key[id(b)] = pk
+            fs = [self.fingering[id(n)] for n in ns]
+            for i, j in finger_runs(fs):
+                if j - i > 1 and cluster_ok([self.vp(n.pitch) for n in ns[i:j]], fs[i]):
+                    pk = tuple(sorted(n.pitch for n in ns[i:j]))
+                    for n in ns[i:j]:
+                        self.pair_key[id(n)] = pk
 
         self.by_finger = {f: [] for f in range(1, 6)}
         for _, ns in self.groups:
@@ -862,7 +868,7 @@ class HandAnimator:
             for i, n in enumerate(ns):
                 e, s0 = eo[id(n)], so[id(n)]
                 j = i + 1
-                while j < len(ns) and so[id(ns[j])] - s0 < 0.01:     # a thumb on two keys at once
+                while j < len(ns) and (so[id(ns[j])] - s0 < 0.01 or self._mates(n, ns[j])):   # one finger, keys at once
                     j += 1
                 if j < len(ns):
                     nx = ns[j]
@@ -872,6 +878,7 @@ class HandAnimator:
                         e = min(e, max(s0 + 0.5 * (s1 - s0), s1 - self._jump_lift(n, nx)))
                 ends.append(max(e, s0 + 1e-3))
             self.finger_ends[f] = ends
+        self._unify_clusters()
         # A held key that the next chord's fingers have to cross (5 landing
         # left of a held 2, say - anything but the thumb passing under) is
         # let go early too, so the hand isn't asked to do both at once.
@@ -913,8 +920,7 @@ class HandAnimator:
         self._speed_schedule()
         self.white_up = self._white_up()
         # what this hand actually plays: [(press, release, note)]
-        self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
-                            for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+        self.performance = self._fingered_performance()
         self.performance += self._gliss_performance()
         self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
         self.span_starts = [a for a, _ in self.spans]
@@ -1292,8 +1298,8 @@ class HandAnimator:
             runs.append((strikes, releases))
         self.bounce_runs = runs
         if runs:
-            self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
-                                for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+            self._unify_clusters()
+            self.performance = self._fingered_performance()
             self.performance += self._gliss_performance()
         self._bounce_starts = [r[0][0] for r in self.bounce_runs]
         self._roll_starts = [r[0][0] for r in self.roll_runs]
@@ -1827,7 +1833,7 @@ class HandAnimator:
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
                 j = i - 1
-                while j >= 0 and so[id(n)] - so[id(ns[j])] < 0.01:      # a thumb on two keys at once
+                while j >= 0 and (so[id(n)] - so[id(ns[j])] < 0.01 or self._mates(n, ns[j])):  # one finger, keys at once
                     j -= 1
                 prev_of[id(n)] = ns[j] if j >= 0 else None
         self.lead = {}
@@ -1904,9 +1910,47 @@ class HandAnimator:
             self.finger_starts[f] = [so[id(n)] for n in ns]
             ends = [max(fe[id(n)], so[id(n)] + 1e-3) for n in ns]
             for i in range(len(ns) - 1):              # a finger lets go before it strikes again
-                if self.finger_starts[f][i + 1] - self.finger_starts[f][i] >= 0.01:
+                if self.finger_starts[f][i + 1] - self.finger_starts[f][i] >= 0.01 and not self._mates(ns[i], ns[i + 1]):
                     ends[i] = max(self.finger_starts[f][i] + 1e-3, min(ends[i], self.finger_starts[f][i + 1]))
             self.finger_ends[f] = ends
+        self._unify_clusters()
+
+    def _mates(self, a, b):
+        """Are notes a and b one finger's cluster (keys it holds as one, pair_key)?"""
+        pa = self.pair_key.get(id(a))
+        return pa is not None and pa is self.pair_key.get(id(b))
+
+    def _unify_clusters(self):
+        """
+        One finger on neighbouring keys holds them as one: on its timeline
+        every note of the cluster lasts until the last of them is let go (a
+        smudge struck a little after its note, or let go first, doesn't lift
+        the finger). What each note sounds is still its own length
+        (_fingered_performance).
+        """
+        for f, ns in self.by_finger.items():
+            ends = self.finger_ends[f]
+            i = 0
+            while i < len(ns):
+                j = i + 1
+                while j < len(ns) and self._mates(ns[i], ns[j]):
+                    j += 1
+                if j - i > 1:
+                    e = max(ends[i:j])
+                    for k in range(i, j):
+                        ends[k] = e
+                i = j
+
+    def _fingered_performance(self):
+        """[(press, release, note)] of the fingered notes: a cluster's notes each sound their own length (at most the finger's)."""
+        out = []
+        for f, ns in self.by_finger.items():
+            for i, n in enumerate(ns):
+                s0, e = self.finger_starts[f][i], self.finger_ends[f][i]
+                if id(n) in self.pair_key:
+                    e = max(s0 + 1e-3, min(e, s0 + (n.end - n.start)))
+                out.append((s0, e, n))
+        return out
 
     def _roll_wide_chords(self):
         """
@@ -1938,10 +1982,10 @@ class HandAnimator:
             """Where the note's finger is: between the two keys it covers, if a pair - the far one for a thumb bridge."""
             pk = self.pair_key.get(id(n))
             if pk:
-                a, b = key_pos(self.vp(pk[0])), key_pos(self.vp(pk[1]))
+                ks = [key_pos(self.vp(p)) for p in pk]
                 if self._bridge_pair(pk, self.fingering[id(n)]):
-                    return min(a, b)
-                return (a + b) / 2
+                    return min(ks)
+                return sum(ks) / len(ks)
             return key_pos(self.vp(n.pitch))
 
         groups = self.groups
@@ -2121,12 +2165,26 @@ class HandAnimator:
         black keys' front, so the hand needn't move in and out between them.
         """
         if isinstance(pitch, tuple):
-            (x1, y1), (x2, y2) = (self.key_target(p, f, note) for p in pitch)
             if self._bridge_pair(pitch, f):
                 # the far key, well in along it: the straight thumb lies across to it, over the near one
-                x = min(x1, x2)
+                x = min(self.key_target(p, f, note)[0] for p in pitch)
                 return x, self.kb.rect.h - self.kb.black_h + THUMB_BRIDGE_DEPTH_IN * self.ppi
-            return (x1 + x2) / 2, (y1 + y2) / 2
+            blacks = [p for p in pitch if is_black_key(p)]
+            lo, hi = self._key_depths(pitch, note, f)
+            if blacks and all(p in self.kb.key_rects for p in blacks):
+                # a white key and the black beside it, or white-black-white: the tip at the black key's
+                # front end - over its edge toward the white one (two keys), or its middle (three) -
+                # touching them all
+                r = self.kb.key_rects[blacks[0]]
+                whites = [p for p in pitch if not is_black_key(p)]
+                x = r.centerx if len(whites) != 1 else r.left if whites[0] < blacks[0] else r.right
+                y = self.kb.rect.h - self.kb.black_h + CLUSTER_DEPTH_IN * self.ppi
+                return self._mx(x), min(max(y, lo), hi)
+            pts = [self.key_target(p, f, note) for p in pitch]
+            # two neighbouring white keys: between them (in front of any black key, _key_depths)
+            x = sum(p[0] for p in pts) / len(pts)
+            y = sum(p[1] for p in pts) / len(pts)
+            return x, min(max(y, lo), hi)
         r = self.kb.key_rects[pitch]
         x = r.centerx
         front = self.kb.rect.h - self.kb.black_h
@@ -2167,7 +2225,12 @@ class HandAnimator:
         if isinstance(pk, tuple):
             spans = [self._key_depths(p, note, f) for p in pk]
             lo, hi = max(a for a, _ in spans), min(b for _, b in spans)
-            return (lo, hi) if lo <= hi else (hi, lo)
+            lo, hi = (lo, hi) if lo <= hi else (hi, lo)
+            if not any(is_black_key(p) for p in pk) and max(pk) - min(pk) == 2:
+                # two white keys with a black one between them (C-D): touched together only in front of it
+                hi = min(hi, self.kb.rect.h - self.kb.black_h - CLUSTER_FRONT_GAP_IN * self.ppi)
+                lo = min(lo, hi)
+            return lo, hi
         front = self.kb.rect.h - self.kb.black_h
         if is_black_key(pk):
             a, b = front + BLACK_SPAN_IN[0] * self.ppi, front + BLACK_SPAN_IN[1] * self.ppi
@@ -2918,7 +2981,10 @@ class HandAnimator:
         m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX) if inset else 0.0
         front = self.kb.rect.bottom
         ys = [front - r.bottom for r in rs] + [front - r.top for r in rs]
-        return (min(xs) + m, max(xs) - m), (min(ys) + m, max(ys) - m), min(r.w for r in rs)
+        ylo, yhi = min(ys) + m, max(ys) - m
+        if len(ps) > 1 and not any(is_black_key(p) for p in ps) and max(ps) - min(ps) == 2:
+            yhi = min(yhi, self.kb.rect.h - self.kb.black_h)          # (C-D: in front of the black key between)
+        return (min(xs) + m, max(xs) - m), (ylo, yhi), min(r.w for r in rs)
 
     def _settle_on_keys(self, p, t):
         """
