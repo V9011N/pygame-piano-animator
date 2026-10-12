@@ -1160,6 +1160,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     must fit in the hand: no wider than the thumb-little finger stretch plus `TREM_REACH_EXTRA` 1.25 white keys
     (v26.1.6: Ocean's repeated broken chords, 11-12 keys a cycle, were held still halfway between their notes -
     pressed tips up to 2.4 keys off; Hanon 60's tenths, 9 keys, are still tremolos).
+    And (v26.1.21.SNAPSHOT-01) the drawn hand, held still, must reach every key of the widest cycle:
+    `_chord_fits(cycle, TREM_SLACK_WK` 0.35 white keys more per key than a chord gets - rocking the forearm). Chopin
+    Sonata No. 2 (MAESTRO 2013) 0:15.8-18.3 LH A#2-F3-(A#3+C#4)-F3, 5-3-(2+1)-3, a tenth (8.8 keys): within the
+    planner's stretch + 1.25, so held still, and the little finger missed A#2 by up to 34 px, the thumb C#4 by
+    10; now swaying, none off (Ninthie and default). Elsewhere only two other tremolos go (the sonata's RH 17:51.1,
+    Bach MAESTRO 2006 LH 10:31.8), both of which had keys missed too (8 px; 18 px); Hanon 60, Dante, Ocean,
+    Scarbo, Ballade 1, Polonaise, HR 10, Rachmaninoff unchanged.
   - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
     inside it (`_trem_w`, so the hand is free by the next figure).
   - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's

@@ -244,6 +244,8 @@ TREM_PERIOD = 4             # strikes back (up to this many) - the same key or c
 TREM_GAP_T = 0.3            # s, ...none further apart than this
 TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key jumps further starts again there
 TREM_REACH_EXTRA = 1.25     # white keys: a tremolo's cycle may span this much more than the thumb-little finger stretch
+TREM_SLACK_WK = 0.35        # ...and the drawn hand, held still, reach each key of it within this much more than a
+                            # chord's (_chord_fits: rocking the forearm reaches a little further)
 TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
@@ -1007,8 +1009,15 @@ class HandAnimator:
             if hi - lo + 1 < TREM_MIN_NOTES or len(set(sets[lo:hi + 1])) < 2:
                 continue
             kp = [[key_pos(self.vp(p)) for p in s_] for s_ in sets[lo:hi + 1]]
-            if any(max(max(c) for c in kp[i:i + TREM_PERIOD]) - min(min(c) for c in kp[i:i + TREM_PERIOD]) > reach
-                   for i in range(max(1, len(kp) - TREM_PERIOD + 1))):
+            widths = [max(max(c) for c in kp[i:i + TREM_PERIOD]) - min(min(c) for c in kp[i:i + TREM_PERIOD])
+                      for i in range(max(1, len(kp) - TREM_PERIOD + 1))]
+            if max(widths) > reach:
+                continue
+            # ...and the drawn hand, held still, must reach every key of its widest cycle (the planner's
+            # stretch is a real hand's: a tenth passed it, and the still hand missed both ends)
+            i = widths.index(max(widths))
+            cycle = [m for _, ns in groups[lo + i:lo + i + TREM_PERIOD] for m in ns]
+            if len({(self.fingering[id(m)], m.pitch) for m in cycle}) > 1 and not self._chord_fits(cycle, TREM_SLACK_WK):
                 continue
             t1, ns = groups[hi]
             out.append((groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T)))
@@ -1947,7 +1956,7 @@ class HandAnimator:
             for n in order:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
 
-    def _chord_fits(self, ns):
+    def _chord_fits(self, ns, slack=0.0):
         """
         Can the drawn hand hold all of chord ns down at once? Searched over the
         hand's place and turn (a coarse grid, then twice finer about the best),
@@ -1981,7 +1990,7 @@ class HandAnimator:
             hmin, hmax = self._reach_range(f, blz * low + self.travel, 0.99)
             ds = ROLL_DEPTH_SLACK_WK * wk
             items.append((kx, np.linspace(ylo - ds, yhi + ds, 9), blx, bly, lo - sl, hi + sl, hmin, hmax,
-                          ROLL_MISS_WK[black] * wk))
+                          (ROLL_MISS_WK[black] + slack) * wk))
 
         def worst(WX, WY, PSI):
             c, s = np.cos(PSI)[:, None], np.sin(PSI)[:, None]

@@ -1204,3 +1204,26 @@ def test_the_hands_never_swap_layers_while_they_overlap(screen):
         prev = top
     assert touched and not swaps, swaps
     assert top == RIGHT
+
+
+def test_a_repeated_figure_wider_than_the_still_hand_is_played_swaying(screen):
+    # a LH figure A#2-F3-(A#3+C#4)-F3 over and over: periodic like a tremolo and within the planner's stretch
+    # plus a tremolo's extra, but a tenth the drawn hand can't hold still - held still, the little finger
+    # missed A#2 and the thumb C#4. Played swaying, every finger lands on its key.
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns, fs = [], []
+    for c in range(6):
+        t = 1.0 + 0.44 * c
+        for dt, ps, f in ((0.0, (46,), (5,)), (0.11, (53,), (3,)), (0.22, (58, 61), (2, 1)), (0.33, (53,), (3,))):
+            for p, fi in zip(ps, f):
+                ns.append(Note(p, t + dt, t + dt + 0.08, 80, 1, LEFT))
+                fs.append(fi)
+    a = hands.HandAnimator(song_of(ns, 4.5), LEFT, fingering={id(n): f for n, f in zip(ns, fs)})
+    assert a.trems == []
+    a._ensure_layout(kb)
+    for n in ns[8:-4]:
+        f = a.finger_for(n)
+        tip = a.pose(n.start + 0.04, kb)["struct"]["chains"][f][-1]
+        r = kb.key_rects[n.pitch]
+        assert r.left - 3 <= tip[0] <= r.right + 3, (n.pitch, f, tip[0], r)
