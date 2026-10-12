@@ -939,7 +939,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       `CLUSTER_FRONT_GAP_IN`, in `_key_depths` and `_key_box`). On the finger's timeline a run is one held key
       (`_unify_clusters`: every note until the last is let go; the end cuts at the finger's next note skip mates),
       while each note sounds its own length (`_fingered_performance`).
-    - Ten MAESTRO files (Ninthie): see the MAESTRO check section for the incidents before and after.
+    - Ten MAESTRO files (Ninthie, 39,000 notes, 4 workers): seen incidents solver 11 -> 9, speed 1 -> 1, anatomy
+      2 -> 2, timing 3 -> 2, corrected 2 -> 2; none new. Clusters used per file 0-52 (from 0-8), planning time about
+      the same (+8% at most); Hanon 60's fingering unchanged.
   - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
     D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
     thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.
