@@ -57,7 +57,9 @@ from multiprocessing.managers import SyncManager
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
-CATS = ("solver", "speed", "anatomy", "fingering", "timing")
+CATS = ("solver", "speed", "anatomy", "fingering", "timing", "corrected")
+SEEN = CATS[:4]             # what shows: a tip drawn off its key, the hand jolted across, a note not played
+RESULTS_FORMAT = 2          # results.jsonl lines from an older check (pixels, no "corrected") are done again
 PLAN_SHARE = 0.3            # of a file's work, loading and planning the hands (the rest: checking every note)
 
 
@@ -162,7 +164,9 @@ def check_file(path, key=None):
                    duration=round(song.duration, 1))
         out["incidents"] = [dict(i, line=anim_check.describe(i)) for i in res["incidents"]]
         for i in res["incidents"]:
-            out["counts"][i["cat"]] = out["counts"].get(i["cat"], 0) + 1
+            c = i["cat"] if i["visible"] or i["cat"] == "timing" else "corrected"
+            out["counts"][c] = out["counts"].get(c, 0) + 1
+        out["format"] = RESULTS_FORMAT
     except Exception as exc:
         import traceback
         out["error"] = f"{type(exc).__name__}: {exc}"
@@ -303,6 +307,8 @@ def load_results(path):
                     r = json.loads(line)
                     if str(r.get("error") or "").startswith("worker failed"):
                         continue                      # (the pool broke, not the file: check it again)
+                    if not r.get("error") and r.get("format") != RESULTS_FORMAT:
+                        continue                      # (an older check's: done again)
                     done[r.get("key") or os.path.normpath(r["file"]).replace(os.sep, "/")] = r
                 except (ValueError, KeyError):
                     pass
@@ -386,7 +392,7 @@ def run(args, meta):
                     for x in CATS:
                         totals[x] += c.get(x, 0)
                     state = (f"FAILED: {r['error']}" if r.get("error") else
-                             "  ".join(f"{c.get(x, 0):>3} {x}" for x in CATS[:4]) +
+                             "  ".join(f"{c.get(x, 0):>3} {x}" for x in SEEN) + f"   ({c.get('corrected', 0)} corrected)" +
                              ("  (time limit: stopped early)" if r.get("timed_out") else ""))
                     status_view.log(f"[{n_done:>{len(str(len(todo)))}}/{len(todo)}] {fmt_dur(r.get('seconds', 0)):>7}  "
                                     f"{label(keys[f], meta)}\n{'':>{2 * len(str(len(todo))) + 12}}{state}")
@@ -408,7 +414,7 @@ def run(args, meta):
                 work = (done_work + part) / sum(sizes.values())
                 eta = f"about {fmt_dur(el / work * (1 - work))} left" if work > 0.002 and el > 20 else "estimating time left"
                 head = (f"{n_done} of {len(todo)} files done, {100 * work:.1f}% of the work - {fmt_dur(el)} so far, "
-                        f"{eta} - incidents so far: " + ", ".join(f"{totals[x]} {x}" for x in CATS[:4]))
+                        f"{eta} - seen so far: " + ", ".join(f"{totals[x]} {x}" for x in SEEN))
                 rows = [f"    {phase:<8} {100 * frac:>3.0f}%  {fmt_dur(t):>7}  {name}"
                         for name, phase, frac, t in sorted(busy, key=lambda b: -b[3])]
                 status_view.show([head] + rows)
@@ -500,55 +506,70 @@ def report(args, meta):
     bad = [r for r in results if r.get("error")]
     totals = {c: sum(r["counts"].get(c, 0) for r in ok) for c in CATS}
     files_with = {c: sum(1 for r in ok if r["counts"].get(c)) for c in CATS}
-    clean = sum(1 for r in ok if not any(r["counts"].get(c) for c in CATS[:4]))
+    clean = sum(1 for r in ok if not any(r["counts"].get(c) for c in SEEN))
     notes = sum(r.get("notes", 0) for r in ok)
     lines = ["# Hand animation check", "",
-             f"{len(results)} files checked ({len(bad)} failed, {clean} with no incidents but late strikes), "
+             f"{len(results)} files checked ({len(bad)} failed, {clean} with nothing to see), "
              f"{notes:,} notes played. "
              f"Pianist: {getattr(args, 'pianist_name', None) or 'the default pianist'}; "
-             f"keyboard {args.size[0]}x{args.size[1]}, {args.keys} keys.", "",
-             "What the categories mean:", "",
-             "- **solver** - the keys were reachable, in time, and the hand solver still missed: a bug to fix.",
-             "- **speed** - the hand is on its way, held back by the pianist's top speed (where the keys want "
+             f"{args.keys} keys.", "",
+             "How far off is a share of the key's own width, measured from its edges (the same at any window "
+             "size): \"off by 40%\" is a fingertip centre 40% of its key's width beside it.", "",
+             "What you'd see:", "",
+             "- *drawn off* - the fingertip is drawn off its key; *hand shifted* - out of the finger's reach, "
+             "the whole hand was moved across to put it on (a jolt). Each sorted by why:",
+             "  - **solver** - the keys were reachable, in time, and the hand solver still missed: a bug to fix.",
+             "  - **speed** - the hand is on its way, held back by the pianist's top speed (where the keys want "
              "it and where it's drawn differ by more than half a white key).",
-             "- **anatomy** - the keys held at that moment are too far apart for this hand from any position "
+             "  - **anatomy** - the keys held at that moment are too far apart for this hand from any position "
              "(genuinely incompatible with the pianist's anatomy).",
-             "- **fingering** - notes the planner couldn't give a finger: not played at all.",
+             "- **fingering** - notes the planner couldn't give a finger: not played at all.", "",
+             "What you wouldn't (counted, listed with --show-corrected / --show-timing):", "",
+             f"- **corrected** - the solver aimed a fingertip off its key by more than "
+             f"{100 * _anim_check().AIM_KEY:.0f}% of the key's width and it was pulled on before drawing: the drawn "
+             "tip is on its key (the finger may look a little forced). A sign of where the solver is loose.",
              "- **timing** - notes struck later than in the file (by the top speed, or a rolled chord).", "",
-             "And what happened: *aimed off* (the tip aimed off its key and was pulled on - may look forced), "
-             "*shifted* (out of the finger's reach: the whole hand moved across), *off* (drawn off its key).", "",
              "Each incident reads: time span in the file (m:ss.sss), hand, category, what happened, "
              "then the notes involved, each with the time it's struck.", "",
              "## Totals", "", "| category | incidents | files |", "|---|---:|---:|"]
     lines += [f"| {c} | {totals[c]:,} | {files_with[c]:,} |" for c in CATS]
     worst = sorted(ok, key=lambda r: (-r["counts"].get("solver", 0), -r["counts"].get("speed", 0),
-                                      -r["counts"].get("anatomy", 0), label(r["key"], meta)))
-    lines += ["", "## Files with the most solver incidents", "",
-              "| # | piece | solver | speed | anatomy | fingering | timing | file |",
-              "|---:|---|---:|---:|---:|---:|---:|---|"]
-    for k, r in enumerate([r for r in worst if sum(r["counts"].get(c, 0) for c in CATS[:4])][:args.top], 1):
+                                      -r["counts"].get("anatomy", 0), -r["counts"].get("corrected", 0),
+                                      label(r["key"], meta)))
+    lines += ["", "## Files with the most solver incidents (seen)", "",
+              "| # | piece | " + " | ".join(CATS) + " | file |",
+              "|---:|---|" + "---:|" * len(CATS) + "---|"]
+    for k, r in enumerate([r for r in worst if sum(r["counts"].get(c, 0) for c in SEEN)][:args.top], 1):
         lines.append(f"| {k} | {label(r['key'], meta)} | " + " | ".join(str(r["counts"].get(c, 0)) for c in CATS)
                      + f" | `{r['key']}` |")
     if bad:
         lines += ["", "## Failed to check", ""]
         lines += [f"- {label(r['key'], meta)} - `{r['key']}`: {r['error']}" for r in bad]
+    hidden = [x for x, shown in (("corrected", args.show_corrected), ("late strikes", args.show_timing)) if not shown]
     lines += ["", "## Every file", "",
-              "Worst first; the file to open is under each piece's name. Times are in the MIDI file (m:ss.sss). " +
-              ("Late strikes are listed too." if args.show_timing else
-               "Late strikes are counted, not listed (--show-timing lists them).")]
+              "Worst first; the file to open is under each piece's name. Times are in the MIDI file (m:ss.sss)." +
+              (f" Counted, not listed: {' and '.join(hidden)}." if hidden else "")]
+
+    def listed(i):
+        if i["cat"] == "timing":
+            return args.show_timing
+        return i.get("visible", True) or args.show_corrected
+
     with open(os.path.join(args.out, "incidents.csv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
-        w.writerow(["piece", "year", "file", "original", "hand", "category", "what", "start", "end",
-                    "start_s", "end_s", "max_px", "problems", "notes"])
+        w.writerow(["piece", "year", "file", "original", "hand", "category", "seen", "what", "start", "end",
+                    "start_s", "end_s", "off_pct_of_key", "problems", "notes"])
         for r in worst:
             m = meta.get(r["key"]) or dict(zip(("piece", "year"), piece_of(r["key"])))
             for i in r["incidents"]:
-                w.writerow([m["piece"], m["year"], r["key"], original(r), i["hand"], i["cat"], i["kind"],
+                seen = "yes" if i.get("visible", True) and i["cat"] != "timing" else "no"
+                w.writerow([m["piece"], m["year"], r["key"], original(r), i["hand"], i["cat"], seen, i["kind"],
                             fmt_t(i["t0"]), fmt_t(i["t1"]), f"{i['t0']:.3f}", f"{i['t1']:.3f}",
-                            f"{i['px']:.1f}", i["count"], " ".join(f"{a}@{b:.3f}" for a, b in i["notes"][:20])])
-            if not r["incidents"]:
+                            f"{100 * i.get('off', 0.0):.0f}", i["count"],
+                            " ".join(f"{a}@{b:.3f}" for a, b in i["notes"][:20])])
+            incs = [i for i in r["incidents"] if listed(i)]
+            if not incs and not any(r["counts"].get(c) for c in CATS):
                 continue
-            incs = [i for i in r["incidents"] if args.show_timing or i["cat"] != "timing"]
             c = r["counts"]
             orig = f" (MAESTRO: `{original(r)}`)" if original(r) else ""
             lines += ["", f"### {label(r['key'], meta)}", "",
@@ -564,6 +585,11 @@ def report(args, meta):
     print("  ".join(f"{c}: {totals[c]:,} in {files_with[c]} files" for c in CATS))
 
 
+def _anim_check():
+    import anim_check
+    return anim_check
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
@@ -575,12 +601,14 @@ def main():
                     help="files checked at once (default: one per CPU, less one)")
     ap.add_argument("--pianist", help="a pianist's name (one of the app's, e.g. Ninthie) or the path to its .json "
                                        "(default: the default pianist)")
-    ap.add_argument("--size", default="1920x1080", help="window size the keyboard is laid out for (default 1920x1080)")
+    ap.add_argument("--size", default="1920x1080", help="window size the keyboard is laid out for (default 1920x1080; offsets are in key widths, so the size matters little)")
     ap.add_argument("--keys", default="realistic", choices=("realistic", "equal"), help="keyboard type")
     ap.add_argument("--match", help="only files whose name contains this (e.g. Chopin, Ballade, 2018)")
     ap.add_argument("--limit", type=int, help="only the first N files")
     ap.add_argument("--timeout", type=float, default=900, help="seconds per file for the checking (0: none)")
     ap.add_argument("--top", type=int, default=50, help="files in the report's worst-first table")
+    ap.add_argument("--show-corrected", action="store_true",
+                    help="list the corrected aims in the report (tips aimed off their keys, pulled on before drawing)")
     ap.add_argument("--show-timing", action="store_true", help="list late strikes in the report, not just count them")
     ap.add_argument("--progress-every", type=float, default=60,
                     help="with the output going to a file, the progress every this many seconds (default 60; "

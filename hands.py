@@ -135,7 +135,7 @@ STEEP_FORWARD = (0.5, 0.85, 2.0, 0.12)   # solve_chain: from a target this steep
                             # the hand's way as if the target were up to the fourth share of its length further on
 STRICT_KEY_MARGIN = 0.2     # a held fingertip is at least this share of its key's width in from its sides...
 STRICT_KEY_MARGIN_PX = 3.0  # ...at most this many pixels
-STRICT_LOG_PX = 1.0         # a held tip still this far off its key after everything is logged (once per note)
+STRICT_LOG_KEY = 0.05       # a held tip still off its key after everything by more than this share of the key's width is logged (once per note)
 TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -2905,17 +2905,20 @@ class HandAnimator:
         pk = self.pair_key.get(id(n))
         return bool(pk) and self._bridge_pair(pk, f)
 
-    def _key_box(self, pk):
-        """((x lo, x hi), (y lo, y hi)) a fingertip on key(s) pk may be at: working-frame x, world y, in from the edges."""
+    def _key_box(self, pk, inset=True):
+        """
+        ((x lo, x hi), (y lo, y hi)) a fingertip on key(s) pk may be at: working-frame x, world y, in from the
+        edges (STRICT_KEY_MARGIN; inset=False: the key's own edges), and the key's width.
+        """
         ps = pk if isinstance(pk, tuple) else (pk,)
         rs = [self.kb.key_rects[p] for p in ps if p in self.kb.key_rects]
         if not rs:
-            return (-math.inf, math.inf), (-math.inf, math.inf)
+            return (-math.inf, math.inf), (-math.inf, math.inf), 1.0
         xs = [self._mx(r.left) for r in rs] + [self._mx(r.right) for r in rs]
-        m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX)
+        m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX) if inset else 0.0
         front = self.kb.rect.bottom
         ys = [front - r.bottom for r in rs] + [front - r.top for r in rs]
-        return (min(xs) + m, max(xs) - m), (min(ys) + m, max(ys) - m)
+        return (min(xs) + m, max(xs) - m), (min(ys) + m, max(ys) - m), min(r.w for r in rs)
 
     def _settle_on_keys(self, p, t):
         """
@@ -2926,7 +2929,8 @@ class HandAnimator:
         shift can (the keys held are too far apart for this hand), the shift
         that leaves the worst one least off - and that note is logged, once.
         The pose carries what was done: "key_check" [(finger, note, off before
-        the shift, off after)] in pixels (0 = on its key).
+        the shift, off after)], how far the tip is off the key itself as a share
+        of the key's width (0 = on its key), and "key_shift" (the shift, px).
         """
         st = p["struct"]
         lims = []
@@ -2939,23 +2943,25 @@ class HandAnimator:
             rs = [self.kb.key_rects[q] for q in ps if q in self.kb.key_rects]
             if not rs:
                 continue
-            m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX)
-            lo, hi = min(r.left for r in rs) + m, max(r.right for r in rs) - m
+            w = min(r.w for r in rs)
+            m = min(STRICT_KEY_MARGIN * w, STRICT_KEY_MARGIN_PX)
+            klo, khi = min(r.left for r in rs), max(r.right for r in rs)
             x = c[-1][0]
-            lims.append((f, n, lo - x, hi - x))
+            lims.append((f, n, klo + m - x, khi - m - x, klo - x, khi - x, w))
         if not lims:
-            return dict(p, key_check=[])
+            return dict(p, key_check=[], key_shift=0.0)
         a, b = max(l[2] for l in lims), min(l[3] for l in lims)
         dx = 0.0 if a <= 0.0 <= b else (a if a > 0 else b) if a <= b else (a + b) / 2
-        out = [(f, n, max(0.0, lo, -hi), max(0.0, lo - dx, dx - hi)) for f, n, lo, hi in lims]
+        out = [(f, n, max(0.0, klo, -khi) / w, max(0.0, klo - dx, dx - khi) / w)
+               for f, n, _, _, klo, khi, w in lims]
         if abs(dx) > 0.01:
             p = _shift_pose(p, dx, 0.0, self.mirror)
         for f, n, _, after in out:
-            if after > STRICT_LOG_PX and id(n) not in self.unreached_logged:
+            if after > STRICT_LOG_KEY and id(n) not in self.unreached_logged:
                 self.unreached_logged.add(id(n))
                 print(f"[hands] {self.hand} hand, finger {f} can't reach {note_name(n.pitch)} at "
-                      f"{fmt_song_time(n.start)} (MIDI {n.start:.3f} s): {after:.0f} px off its key")
-        return dict(p, key_check=out)
+                      f"{fmt_song_time(n.start)} (MIDI {n.start:.3f} s): {100 * after:.0f}% of the key's width off it")
+        return dict(p, key_check=out, key_shift=dx)
 
     def footprint(self, t):
         """
@@ -3564,17 +3570,19 @@ class HandAnimator:
                 tips[f] = (tips[f][0], tips[f][1], max(min(z0, 0.0), z))
 
         # strict: a finger holding a key has its tip on that key (STRICT_KEY_MARGIN in from its sides);
-        # how far it had to be brought there is kept for checking (anim_check: the aim was off)
+        # how far off the key itself it was aimed (a share of the key's width) is kept for checking
+        # (anim_check: the aim was off, corrected here - the drawn tip is on its key)
         pulled = {}
         for f in tips:
             n = self._held_note(f, t)
             if n is None or self._is_bridge(f, n):
                 continue
-            (xlo, xhi), (ylo, yhi) = self._key_box(self._pk(n))
+            pk = self._pk(n)
+            (xlo, xhi), (ylo, yhi), w = self._key_box(pk)
             x, y, z = tips[f]
-            cx, cy = min(max(x, xlo), xhi), min(max(y, ylo), yhi)
-            pulled[f] = math.hypot(cx - x, cy - y)
-            tips[f] = (cx, cy, z)
+            (klo, khi), (kylo, kyhi), _ = self._key_box(pk, inset=False)
+            pulled[f] = math.hypot(max(0.0, klo - x, x - khi), max(0.0, kylo - y, y - kyhi)) / max(1.0, w)
+            tips[f] = (min(max(x, xlo), xhi), min(max(y, ylo), yhi), z)
 
         bones, joints = [], []
         up = (0.0, 0.0, 1.0)

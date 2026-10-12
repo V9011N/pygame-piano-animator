@@ -1276,12 +1276,16 @@ def test_anim_check_reports_in_the_files_time(screen):
     for i in res["incidents"]:
         assert i["cat"] in ("solver", "speed", "anatomy", "fingering", "timing")
         assert anim_check.describe(i)
-    # incidents put problems together by hand, kind and nearness
-    probs = [{"hand": "R", "t": t, "kind": "off", "cat": "solver", "notes": [("C4", t)], "px": 3.0}
+    # incidents put problems together by hand, kind, being seen or not, and nearness; how far off is a
+    # share of the key's width
+    probs = [{"hand": "R", "t": t, "kind": "off", "cat": "solver", "notes": [("C4", t)], "off": 0.3}
              for t in (1.0, 1.2, 1.5, 4.0)]
+    probs.append({"hand": "R", "t": 1.3, "kind": "aimed off", "cat": "solver", "notes": [("D4", 1.3)], "off": 0.7})
     incs = anim_check.incidents(probs)
-    assert [(i["t0"], i["t1"], i["count"]) for i in incs] == [(1.0, 1.5, 3), (4.0, 4.0, 1)]
-    assert "0:01.000 - 0:01.500" in anim_check.describe(incs[0])
+    assert [(i["t0"], i["t1"], i["count"], i["visible"]) for i in incs] == \
+        [(1.0, 1.5, 3, True), (1.3, 1.3, 1, False), (4.0, 4.0, 1, True)]
+    assert "0:01.000 - 0:01.500" in anim_check.describe(incs[0]) and "drawn off by 30%" in anim_check.describe(incs[0])
+    assert "aimed off by 70%" in anim_check.describe(incs[1])
 
 
 def test_maestro_check_names_renamed_files_from_the_rename_map(tmp_path):

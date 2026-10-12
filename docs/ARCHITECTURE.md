@@ -156,19 +156,25 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - **Every held fingertip on its key.** In `_finger_pose`, after the gestures, a finger holding a key
     (`_held_note`; a thumb bridging under is left alone, `_is_bridge`) has its tip clamped into its key
     (`_key_box`: `STRICT_KEY_MARGIN` of the key's width in from its sides, at most `STRICT_KEY_MARGIN_PX`,
-    and within its length); how far it was pulled is the pose's `key_pulled` {finger: px}. Then, once the bones
+    and within its length); how far off the key itself it was aimed - from the key's own edges, as a share of
+    its width - is the pose's `key_pulled` {finger: share}. Then, once the bones
     are solved, `_settle_on_keys` checks the drawn tips (the bones can fall short): if any is off, the whole
     hand is shifted across (`_shift_pose`) to the x that puts as many held tips on their keys as can be - the
-    intersection of their allowed intervals, or nearest to it. A tip still off by more than `STRICT_LOG_PX`
-    is logged once per note ("finger f can't reach N at m:ss.sss (MIDI s): px off its key"). The pose's
-    `key_check` is [(finger, note, px off before the shift, px off after)].
+    intersection of their allowed intervals, or nearest to it. A tip still off by more than `STRICT_LOG_KEY`
+    of its key's width is logged once per note ("finger f can't reach N at m:ss.sss (MIDI s): 40% of the key's
+    width off it"). The pose's `key_check` is [(finger, note, off before the shift, off after)], shares of the
+    key's width from its own edges; `key_shift` the shift (px).
 - `anim_check.check_song(song, hands, kb)` samples every played note `SAMPLE_AFTER_T` after it's struck (half
-  its length if shorter) and reports problems: *aimed off* (pulled onto its key by more than `AIM_PX`),
-  *shifted* (the hand moved by more than `SHIFT_PX`), *off* (still off); each sorted into **anatomy** (the keys
+  its length if shorter) and reports problems, how far off always a share of the key's width (resolution
+  independent; it was pixels at the checker's 1920x1080 at first, which read as misses where the drawn tip was
+  fine): *off* (drawn off its key by more than `OFF_KEY`), *shifted* (the hand moved across to put a tip more
+  than `SHIFT_KEY` off its key on it) - both seen ("visible") - and *aimed off* (the solver's tip more than
+  `AIM_KEY` off its key, pulled on before drawing: corrected, not seen; the report counts these as
+  "corrected" and lists them only with --show-corrected); each sorted into **anatomy** (the keys
   held then don't fit the hand from any position, `_chord_fits`), **speed** (the top speed holds the hand back:
   where the keys want it and where it's drawn differ by more than `SPEED_LAG_WK` white keys) or **solver**
   (neither: the solver's mistake). Also **fingering** (unplaced notes) and **timing** (struck more than
-  `LATE_T` late). Problems of one kind in one hand within `INCIDENT_GAP_T` are one incident. It reports its
+  `LATE_T` late). Problems of one category, seen or not, in one hand within `INCIDENT_GAP_T` are one incident. It reports its
   progress through `progress.py`.
 - `tools/maestro_check.py PATH` runs that over every MIDI file in a folder (the MAESTRO dataset), in worker
   processes (spawn, one per CPU less one), resumable (results.jsonl keyed by the path in the folder), with a
@@ -178,8 +184,12 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   files in progress aren't recorded, so a rerun checks them. Files renamed to their piece ("YYYY/MAESTRO - YYYY -
   Composer Piece.midi") are named from that; a rename map (original,renamed) adds MAESTRO's own names (a file
   is found in it by its path, or loosely by its name alone: case, accents, spacing, punctuation), and
-  MAESTRO's .csv the canonical composer/title/split. Output: report.md (totals, worst files by solver
-  incidents, then each file's incidents), incidents.csv.
+  MAESTRO's .csv the canonical composer/title/split. Output: report.md (totals, worst files by seen solver
+  incidents, then each file's incidents), incidents.csv (with a "seen" column and the offset in % of the key).
+  results.jsonl lines carry `RESULTS_FORMAT`; an older check's are done again.
+- First sample run (the user's, pixels): a corrected thumb aim on a black key - 18 px at 1920x1080, the tip
+  15 px past the key's edge, about 70% of its width, over the next white key - read as a solver miss though
+  the drawn thumb was on its key.
 - Smoke runs (realistic keys, 1920x1080): two short Bach preludes and fugues, 0 incidents; Chopin's Polonaise
   Op. 53 with a large-handed pianist, 20 solver, 3 speed, 1 anatomy incidents in 108 s. The whole dataset (1276
   files) is an estimated 20 hours on 4 workers.

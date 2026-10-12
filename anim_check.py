@@ -8,11 +8,15 @@ file:
   - "fingering": notes the planner couldn't give a finger (not played at all);
   - key problems, from each held fingertip (HandAnimator._finger_pose /
     _settle_on_keys, "key_pulled" / "key_check"):
-      aimed off - the hand solver's tip was off its key and had to be pulled
-                  onto it (the finger may look forced);
-      shifted   - even pulled, the finger couldn't reach: the whole hand was
-                  moved across to put it there;
-      off       - nothing could: the tip is drawn off its key;
+      off       - nothing could put it there: the tip is drawn off its key
+                  (visible);
+      shifted   - pulled, the finger still couldn't reach: the whole hand was
+                  moved across to put it there (visible as a jolt);
+      aimed off - the hand solver's tip was off its key and was pulled onto
+                  it before drawing (corrected: the drawn tip is on its key,
+                  the finger may look a little forced);
+    how far off is a share of the key's own width, measured from its edges
+    (the same at any window size: 0.5 = half the key's width beside it);
     each sorted into
       "anatomy" - the keys held at that moment are too far apart for this
                   hand (HandAnimator._chord_fits says no hand position holds
@@ -35,12 +39,14 @@ import progress
 from midi_loader import note_name
 
 SAMPLE_AFTER_T = 0.03       # s, each held note is checked this long after it's struck (capped at half its length)...
-AIM_PX = 4.0                # ...the aim counts as off past this many pixels (pulled onto its key)
-SHIFT_PX = 2.0              # ...a hand shift counts past this many
+OFF_KEY = 0.05              # ...drawn off its key past this share of the key's width
+SHIFT_KEY = 0.15            # ...the hand shifted to put a tip this far off its key on it
+AIM_KEY = 0.5               # ...the solver's tip aimed this far off its key (pulled on)
 SPEED_LAG_WK = 0.5          # white keys between where the keys want the hand and where the top speed lets it be
 LATE_T = 0.1                # s, struck this much later than in the file
 INCIDENT_GAP_T = 0.6        # s, problems this close in one hand, of one kind, are one incident
 SEVERITY = {"off": 3, "shifted": 2, "aimed off": 1}
+VISIBLE = ("off", "shifted")  # (aimed off is corrected before drawing)
 
 
 def fmt_t(t):
@@ -82,12 +88,12 @@ def check_song(song, hands, kb, deadline=None):
         a._ensure_layout(kb)
         for n in getattr(a, "unplaced", []):
             problems.append({"hand": h, "t": n.start, "kind": "fingering", "cat": "fingering",
-                             "notes": [(note_name(n.pitch), n.start)], "px": 0.0,
+                             "notes": [(note_name(n.pitch), n.start)], "off": 0.0,
                              "what": "no finger: not played"})
         for s, e, n in a.performance:
             if s - n.start > LATE_T:
                 problems.append({"hand": h, "t": n.start, "kind": "late", "cat": "timing",
-                                 "notes": [(note_name(n.pitch), n.start)], "px": 0.0,
+                                 "notes": [(note_name(n.pitch), n.start)], "off": 0.0,
                                  "what": f"struck {s - n.start:.2f} s late"})
         found = []
         for t in sample_times[h]:
@@ -101,20 +107,20 @@ def check_song(song, hands, kb, deadline=None):
             pulled = p.get("key_pulled", {})
             for f, n, before, after in p.get("key_check", []):
                 aim = pulled.get(f, 0.0)
-                if after > 1.0:
-                    kind, px = "off", after
-                elif before > SHIFT_PX:
-                    kind, px = "shifted", before
-                elif aim > AIM_PX:
-                    kind, px = "aimed off", aim
+                if after > OFF_KEY:
+                    kind, off = "off", after
+                elif before > SHIFT_KEY:
+                    kind, off = "shifted", before
+                elif aim > AIM_KEY:
+                    kind, off = "aimed off", aim
                 else:
                     continue
-                found.append((t, f, n, kind, px))
+                found.append((t, f, n, kind, off))
         # what caused each: the keys held then too far apart (anatomy), the top speed, or the solver
         lags = {t: _lag(a, t) for t in {x[0] for x in found}}
         held = {t: _held_at(a, t) for t in lags}
         fits = {}
-        for t, f, n, kind, px in found:
+        for t, f, n, kind, off in found:
             chord = held[t]
             key = frozenset(id(m) for m in chord)
             if key not in fits:
@@ -126,8 +132,8 @@ def check_song(song, hands, kb, deadline=None):
             else:
                 cat = "solver"
             problems.append({"hand": h, "t": t, "kind": kind, "cat": cat, "finger": f,
-                             "notes": [(note_name(n.pitch), n.start)], "px": px,
-                             "what": f"finger {f} {kind} {px:.0f} px"})
+                             "notes": [(note_name(n.pitch), n.start)], "off": off,
+                             "what": f"finger {f} {kind} {100 * off:.0f}% of its key"})
         a._layout_sig = None                     # (_chord_fits laid it out on its own keyboard)
         a._ensure_layout(kb)
     n_notes = sum(len(a.performance) for a in hands.values())
@@ -135,21 +141,30 @@ def check_song(song, hands, kb, deadline=None):
             "incidents": incidents(problems), "timed_out": timed_out}
 
 
+def _visible(p):
+    return p["kind"] in VISIBLE or p["cat"] == "fingering"
+
+
 def incidents(problems):
-    """Problems close together (INCIDENT_GAP_T) in one hand and of one category, as incidents, in time order."""
+    """
+    Problems close together (INCIDENT_GAP_T) in one hand, of one category and alike in being seen or
+    not ("visible": drawn off its key, the hand jolted across, a note not played - or corrected before
+    drawing), as incidents, in time order.
+    """
     out = []
-    for p in sorted(problems, key=lambda p: (p["hand"], p["cat"], p["t"])):
+    for p in sorted(problems, key=lambda p: (p["hand"], p["cat"], _visible(p), p["t"])):
         last = out[-1] if out else None
-        if last and last["hand"] == p["hand"] and last["cat"] == p["cat"] and p["t"] - last["t1"] <= INCIDENT_GAP_T:
+        if (last and last["hand"] == p["hand"] and last["cat"] == p["cat"] and last["visible"] == _visible(p)
+                and p["t"] - last["t1"] <= INCIDENT_GAP_T):
             last["t1"] = max(last["t1"], p["t"])
             last["notes"] += p["notes"]
-            last["px"] = max(last["px"], p["px"])
+            last["off"] = max(last["off"], p["off"])
             last["count"] += 1
             if SEVERITY.get(p["kind"], 0) > SEVERITY.get(last["kind"], 0):
                 last["kind"] = p["kind"]
         else:
-            out.append({"hand": p["hand"], "cat": p["cat"], "kind": p["kind"], "t0": p["t"], "t1": p["t"],
-                        "notes": list(p["notes"]), "px": p["px"], "count": 1})
+            out.append({"hand": p["hand"], "cat": p["cat"], "kind": p["kind"], "visible": _visible(p),
+                        "t0": p["t"], "t1": p["t"], "notes": list(p["notes"]), "off": p["off"], "count": 1})
     return sorted(out, key=lambda i: i["t0"])
 
 
@@ -164,6 +179,8 @@ def describe(inc, max_notes=6):
             names.append(f"{name}@{fmt_t(t)}")
     more = f" (+{len(names) - max_notes} more)" if len(names) > max_notes else ""
     what = {"fingering": "no finger, not played", "timing": "struck late"}.get(inc["cat"])
-    if what is None:
-        what = f"{inc['kind']}, up to {inc['px']:.0f} px"
+    if what is None:                             # (how far off: a share of the key's width)
+        pct = f"{100 * inc['off']:.0f}%"
+        what = {"off": f"drawn off by {pct}", "shifted": f"hand shifted, tip {pct} off",
+                "aimed off": f"aimed off by {pct}"}.get(inc["kind"], f"{inc['kind']} {pct}")
     return f"{span:<21} {hand}  {inc['cat']:<9} {what:<26} {', '.join(names[:max_notes])}{more}"
