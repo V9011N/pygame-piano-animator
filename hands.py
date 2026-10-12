@@ -813,6 +813,14 @@ class HandAnimator:
         self.gliss_eps = glissando.episodes(self.gliss_runs, notes, float(self.pianist.b("gliss_merge")))
         self.gliss_start = self._gliss_schedule()
         notes = [n for n in notes if id(n) not in self.gliss_ids]
+        # A finger slipping off its key onto the one beside it (fingering.find_slips): the slip isn't
+        # planned - it takes the finger of the note it slips from, which slides over to touch both keys
+        # when it sounds (pair_key).
+        from fingering import find_slips
+        given = (lambda n: fingering.get(id(n))) if fingering is not None else (lambda n: getattr(n, "finger", None))
+        self.slip_of = find_slips(notes, self.vp, given)
+        slips = [n for n in notes if id(n) in self.slip_of]
+        notes = [n for n in notes if id(n) not in self.slip_of]
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
         # fingering editor already knows every finger
@@ -824,13 +832,24 @@ class HandAnimator:
                                        pianist=self.pianist, repair=repair, repaired=self.repaired)
         self.fingering = {id(n): fingering[id(n)] for _, ns in self.groups for n in ns
                           if fingering.get(id(n))}
+        for n in slips:
+            f = self.fingering.get(id(self.slip_of[id(n)]))
+            if f:
+                self.fingering[id(n)] = f
         # notes without a finger (a sixth note in one hand's chord) aren't animated - logged, with their times
-        self.unplaced = sorted((n for _, ns in self.groups for n in ns if id(n) not in self.fingering),
-                               key=lambda n: n.start)
+        self.unplaced = sorted([n for _, ns in self.groups for n in ns if id(n) not in self.fingering] +
+                               [n for n in slips if id(n) not in self.fingering], key=lambda n: n.start)
         if self.unplaced:
             log_unplaced(song, hand, self.unplaced)
         self.groups = [(t, [n for n in ns if id(n) in self.fingering]) for t, ns in self.groups]
         self.groups = [g for g in self.groups if g[1]]
+        # each slip joins the chord of the note it slips from
+        where = {id(n): gi for gi, (_, ns) in enumerate(self.groups) for n in ns}
+        for n in slips:
+            gi = where.get(id(self.slip_of[id(n)]))
+            if gi is not None and id(n) in self.fingering:
+                self.groups[gi][1].append(n)
+                self.groups[gi][1].sort(key=lambda m: self.vp(m.pitch))
         # One finger on two or three neighbouring keys (fingering.cluster_ok: a
         # smudge, or a cluster struck with one finger): its tip aims where it
         # touches them all (key_target), and the finger holds them as one key
@@ -844,6 +863,25 @@ class HandAnimator:
                     pk = tuple(sorted(n.pitch for n in ns[i:j]))
                     for n in ns[i:j]:
                         self.pair_key[id(n)] = pk
+        # the keys one finger holds as one (_mates); a slip's note aims at its own key until the finger
+        # slips, each slip at the keys it has slipped across by then
+        self.cluster_key = dict(self.pair_key)
+        riders = {}
+        for n in slips:
+            m = self.slip_of[id(n)]
+            if id(n) in self.cluster_key and self.cluster_key.get(id(m)) is self.cluster_key[id(n)]:
+                riders.setdefault(id(m), (m, []))[1].append(n)
+        from fingering import SMUDGE_TOL
+        for m, rs in riders.values():
+            def caught(t):
+                """The keys the finger covers by t: its note's and every slip struck by then (SMUDGE_TOL)."""
+                return tuple(sorted([m.pitch] + [x.pitch for x in rs if x.start <= t + SMUDGE_TOL]))
+            if len(caught(m.start)) > 1:
+                self.pair_key[id(m)] = caught(m.start)      # (caught as it was struck: no slip to see)
+            else:
+                self.pair_key.pop(id(m), None)
+            for r in rs:
+                self.pair_key[id(r)] = caught(r.start)
 
         self.by_finger = {f: [] for f in range(1, 6)}
         for _, ns in self.groups:
@@ -1916,9 +1954,9 @@ class HandAnimator:
         self._unify_clusters()
 
     def _mates(self, a, b):
-        """Are notes a and b one finger's cluster (keys it holds as one, pair_key)?"""
-        pa = self.pair_key.get(id(a))
-        return pa is not None and pa is self.pair_key.get(id(b))
+        """Are notes a and b one finger's cluster (keys it holds as one, cluster_key)?"""
+        pa = self.cluster_key.get(id(a))
+        return pa is not None and pa is self.cluster_key.get(id(b))
 
     def _unify_clusters(self):
         """
@@ -1947,7 +1985,7 @@ class HandAnimator:
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
                 s0, e = self.finger_starts[f][i], self.finger_ends[f][i]
-                if id(n) in self.pair_key:
+                if id(n) in self.cluster_key:
                     e = max(s0 + 1e-3, min(e, s0 + (n.end - n.start)))
                 out.append((s0, e, n))
         return out

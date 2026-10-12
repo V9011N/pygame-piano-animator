@@ -80,7 +80,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   either side).
 - One finger may hold neighbouring keys (`fingering.cluster_shape`: white + black, two whites, white-black-white;
   two blacks only for the thumb) - a smudge is played by its note's finger. `HandAnimator.pair_key` maps each note of
-  such a run to the run's keys (one tuple per run, `_mates`); the finger holds them as one key (`_unify_clusters`).
+  such a run to the keys it aims at, `cluster_key` to the keys it holds as one (`_mates`, `_unify_clusters`). A finger
+  slipping onto the key beside its note (`fingering.find_slips`) isn't planned: the slip takes its note's finger
+  (`plan_with_slips`), which slides over when it sounds.
 - Strict key contact: a finger holding a key has its tip on it (`_finger_pose` clamps it into `_key_box`, then
   `_settle_on_keys` shifts the whole hand if the bones fall short); what can't be is logged with its time in the file,
   as are notes with no finger (`HandAnimator.unplaced`). Check a change with `anim_check` / `tools/maestro_check.py`.

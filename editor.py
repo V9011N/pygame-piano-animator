@@ -58,7 +58,7 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     draw_felt, draw_hand_area, draw_pianist_badge, fmt_time, mix, pick_file,
                     VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
-from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
+from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_with_slips, score_fingering
 from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
@@ -468,7 +468,7 @@ class FingeringEditor(Transport):
             tmp.append(m)
             back[id(m)] = i
         vp = mirror_pitch if hand == LEFT else None
-        result = plan_fingering(group_notes(tmp, vpitch=vp), vp, hand=hand, context=self.notes)
+        result = plan_with_slips(tmp, vp, hand=hand, context=self.notes)
         for m in tmp:
             i = back[id(m)]
             if i in free:

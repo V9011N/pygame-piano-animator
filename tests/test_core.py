@@ -1359,7 +1359,7 @@ def test_a_finger_on_a_smudge_holds_its_note_and_touches_both_keys(screen):
     a = hands.HandAnimator(song_of(ns, 2.0), RIGHT)
     e4, f4 = ns[2], ns[4]
     f = a.finger_for(e4)
-    assert a.finger_for(f4) == f and a._pk(e4) == a._pk(f4) == (64, 65)
+    assert a.finger_for(f4) == f and a._pk(e4) == a._pk(f4) == (64, 65)   # (caught 20 ms in: both keys from the start)
     perf = {id(n): (s, e) for s, e, n in a.performance}
     assert perf[id(f4)][1] - perf[id(f4)][0] < 0.1               # the smudge sounds its own (short) length...
     assert perf[id(e4)][1] > 1.3                                  # ...its note its own
@@ -1386,3 +1386,36 @@ def test_one_finger_on_white_black_white_aims_at_the_black_keys_front(screen):
     r = kb.key_rects[61]
     assert abs(x - r.centerx) < 1e-6
     assert abs(y - (kb.rect.h - kb.black_h)) < 0.3 * a.ppi                # (world y of the black keys' front)
+
+
+def test_a_finger_slips_onto_the_neighbouring_key_after_pressing_its_note(screen):
+    from common import Keyboard, bottom_layout
+    # E4 held; F4 caught quietly and briefly 0.25 s later, let go before E4: the same finger slips onto it
+    ns = [Note(p, t, t + 0.4, 80, 0, RIGHT) for p, t in ((60, 0.0), (62, 0.5))]
+    e4 = Note(64, 1.0, 1.8, 80, 0, RIGHT)
+    f4 = Note(65, 1.25, 1.35, 35, 0, RIGHT)
+    ns += [e4, f4, Note(67, 2.0, 2.4, 80, 0, RIGHT)]
+    assert F.find_slips(ns) == {id(f4): e4}
+    a = hands.HandAnimator(song_of(ns, 2.5), RIGHT)
+    f = a.finger_for(e4)
+    assert a.finger_for(f4) == f
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    r = kb.key_rects[64]
+
+    def tip(t):
+        return a.pose(t, kb)["struct"]["chains"][f][-1][0]
+    assert abs(tip(1.1) - r.centerx) < 0.3 * r.w                  # firmly on E4 first...
+    assert abs(tip(1.3) - r.right) < 0.35 * r.w                   # ...then at E-F's boundary, touching both
+    perf = {id(n): (st, en) for st, en, n in a.performance}
+    assert perf[id(e4)][1] > 1.7 and perf[id(f4)][1] - perf[id(f4)][0] < 0.15
+
+
+def test_an_inner_voice_or_a_trill_is_not_a_slip():
+    # a held melody note with a moving voice a second below, as loud: its own finger
+    e5 = Note(76, 0.0, 2.0, 80, 0, RIGHT)
+    d5 = Note(74, 0.3, 0.9, 70, 0, RIGHT)
+    assert F.find_slips([e5, d5]) == {}
+    # a trill: each note let go before the next - nothing is held across another
+    tr = [Note(72 + (k % 2) * 2, 0.1 * k, 0.1 * k + 0.09, 70 if k % 2 else 80, 0, RIGHT) for k in range(10)]
+    assert F.find_slips(tr) == {}

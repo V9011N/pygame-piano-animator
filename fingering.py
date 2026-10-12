@@ -47,6 +47,7 @@ chords back are respected. Fingers already given in the file are kept.
 """
 from __future__ import annotations
 
+import bisect
 import math
 
 from itertools import combinations, product
@@ -546,8 +547,62 @@ SMUDGE_LATE_VEL = 0.6        # ... if no louder than this share of it, nor longe
 SMUDGE_LATE_T = 0.08         # this long (s) at most, and at most SMUDGE_LEN of it
 
 
+SLIP_T = 0.4                 # s, a finger slipping off the note it holds onto a neighbouring key this long after
+                             # pressing it (at most; or caught up to SMUDGE_TOL before it) ...
+SLIP_VEL = 0.75              # ... the key slipped onto sounding at most this share of the note's loudness ...
+SLIP_LEN_T = 0.15            # ... and this long at most (s), at most SMUDGE_LEN of the note (within SMUDGE_TOL
+                             # of the note either one will do) ...
+SLIP_HOLD_T = 0.03           # ... and let go with the note: no later than this after it
+
+
 def _dur(n):
     return n.end - n.start
+
+
+def find_slips(notes, vpitch=None, given=None):
+    """
+    {id(slip): note}: notes played by a finger slipping off the key it holds
+    onto the one beside it (a smudge after the key is firmly down). A slip is
+    struck on a neighbouring key (cluster_shape "pair" - a white key and the
+    black beside it, two neighbouring whites) while the note is held, up to
+    SLIP_T after it (or up to SMUDGE_TOL before it), let go with it, and
+    quiet and short (SLIP_VEL, SLIP_LEN_T; one of the two is enough within
+    SMUDGE_TOL of the note). The note it slips from is the loudest such; the
+    keys a finger slips across stay ones it can cover (two, or white-black-
+    white). `given(note)` - a finger already given (file, editor): a slip
+    given another finger than its note's isn't one.
+    """
+    vp = vpitch or (lambda p: p)
+    ns = sorted(notes, key=lambda n: (n.start, n.pitch))
+    starts = [n.start for n in ns]
+    out, riders = {}, {}
+    for n in ns:
+        nv, nd = getattr(n, "velocity", 64), _dur(n)
+        best = None
+        lo = bisect.bisect_left(starts, n.start - SLIP_T)
+        hi = bisect.bisect_right(starts, n.start + SMUDGE_TOL)
+        for m in ns[lo:hi]:
+            if m is n or id(m) in out or m.end <= n.start or n.end > m.end + SLIP_HOLD_T:
+                continue
+            if cluster_shape(sorted((vp(m.pitch), vp(n.pitch)))) != "pair":
+                continue
+            mv, md = getattr(m, "velocity", 64), _dur(m)
+            quiet = nv <= SLIP_VEL * mv
+            short = nd <= SLIP_LEN_T and nd <= SMUDGE_LEN * md
+            if not ((quiet or short) if abs(n.start - m.start) <= SMUDGE_TOL else (quiet and short)):
+                continue
+            keys = sorted([vp(m.pitch)] + [vp(r.pitch) for r in riders.get(id(m), [])] + [vp(n.pitch)])
+            if cluster_shape(keys) not in ("pair", "triple"):
+                continue
+            if given is not None and given(n) is not None and given(n) != given(m):
+                continue
+            if best is None or (mv, md) > (getattr(best, "velocity", 64), _dur(best)):
+                best = m
+        if best is not None:
+            out[id(n)] = best
+            riders.setdefault(id(best), []).append(n)
+    # (a note that is itself a slip slips nothing onto another)
+    return {k: m for k, m in out.items() if id(m) not in out}
 
 
 def smudge_like(ns, late=False):
@@ -1119,11 +1174,24 @@ def plan_fingering(groups, vpitch=None, beam=BEAM, hand=None, context=None, figu
     return result
 
 
+def plan_with_slips(notes, vpitch=None, **kw):
+    """
+    plan_fingering for one hand's notes, the slips (find_slips) left out of the
+    plan and given the finger of the note they slip from. kw: plan_fingering's.
+    """
+    slips = find_slips(notes, vpitch, given=lambda n: getattr(n, "finger", None))
+    rest = [n for n in notes if id(n) not in slips]
+    out = plan_fingering(group_notes(rest, vpitch=vpitch), vpitch, **kw)
+    for k, m in slips.items():
+        if out.get(id(m)):
+            out[k] = out[id(m)]
+    return out
+
+
 def finger_hand(notes, left=False, beam=BEAM, context=None, pianist=None):
     """Convenience: {id(note): finger} for one hand's notes (context: the whole song, for keys)."""
     vp = mirror_pitch if left else None
-    return plan_fingering(group_notes(notes, vpitch=vp), vp, beam=beam,
-                          hand="L" if left else "R", context=context, pianist=pianist)
+    return plan_with_slips(notes, vp, beam=beam, hand="L" if left else "R", context=context, pianist=pianist)
 
 
 def score_fingering(groups, fingering, vpitch=None, hand=None, context=None, pianist=None):
