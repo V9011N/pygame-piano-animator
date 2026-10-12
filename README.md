@@ -133,7 +133,7 @@ guide for working on the code with Claude Code.
 
 Benchmarks that need data you download yourself (not in the repository):
 
-- `python pig_eval.py path/to/FingeringFiles` - match rates against the
+- `python pig_eval.py path/to/FingeringFiles [--pianist path/to/pianist.json]` - match rates against the
   [PIG dataset](https://beam.kisarazu.ac.jp/research/PianoFingeringDataset/) annotators.
 - `python learn_weights.py path/to/FingeringFiles` - re-tune the planner weights on PIG pieces 031-150.
 - `python tools/maestro_check.py path/to/MAESTRO` - check the hand animation against every MIDI file of the
