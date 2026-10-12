@@ -942,6 +942,11 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - Ten MAESTRO files (Ninthie, 39,000 notes, 4 workers): seen incidents solver 11 -> 9, speed 1 -> 1, anatomy
       2 -> 2, timing 3 -> 2, corrected 2 -> 2; none new. Clusters used per file 0-52 (from 0-8), planning time about
       the same (+8% at most); Hanon 60's fingering unchanged.
+    - PIG (the author's run, all 150 pieces): with Ninthie, the planner before and after give the same fingering
+      on every piece - no smudge or cluster is taken there. Test split 001-030, both hands: default pianist
+      general 65.97% / high 72.00% / soft 87.56% (the reference now; 66.23% was measured in September, before
+      later fingering changes); Ninthie 65.54 / 71.78 / 86.99 (its larger hand prices stretches differently).
+      All 150 pieces: 69.3% general for both.
   - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
     D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
     thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.
