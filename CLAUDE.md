@@ -60,6 +60,8 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
 | `anim_check.py` | Does the drawn hand match what's played: `check_song` (notes with no finger, tips pulled onto / off their keys, late strikes; anatomy / speed / solver) |
 | `tools/maestro_check.py` | `anim_check` over every MIDI file in a folder (the MAESTRO dataset, renamed files + rename map), in parallel, resumable, live progress; report.md + incidents.csv |
+| `tools/maestro_diff.py` | Two maestro_check runs compared: incidents fixed / new / still there, counted by pattern (coarse: hand, category, what; fine: + keys, register, size, fingers) |
+| `tools/regress.py` | A round's checks with history: tests, PIG test split (`pig_eval.TEST`, `summary`), Hanon vs the book, a MAESTRO bench sample vs a baseline run (runs/history.jsonl) |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 
 ## Conventions and gotchas

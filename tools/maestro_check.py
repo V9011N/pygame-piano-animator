@@ -559,7 +559,7 @@ def report(args, meta):
     with open(os.path.join(args.out, "incidents.csv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
         w.writerow(["piece", "year", "file", "original", "hand", "category", "seen", "what", "start", "end",
-                    "start_s", "end_s", "off_pct_of_key", "problems", "notes"])
+                    "start_s", "end_s", "off_pct_of_key", "problems", "notes", "fingers"])
         for r in worst:
             m = meta.get(r["key"]) or dict(zip(("piece", "year"), piece_of(r["key"])))
             for i in r["incidents"]:
@@ -569,7 +569,8 @@ def report(args, meta):
                 w.writerow([m["piece"], m["year"], r["key"], original(r), i["hand"], i["cat"], seen, i["kind"],
                             fmt_t(i["t0"]), fmt_t(i["t1"]), f"{i['t0']:.3f}", f"{i['t1']:.3f}",
                             f"{100 * i.get('off', 0.0):.0f}", i["count"],
-                            " ".join(f"{a}@{b:.3f}" for a, b in i["notes"][:20])])
+                            " ".join(f"{a}@{b:.3f}" for a, b in i["notes"][:20]),
+                            "".join(str(f) for f in i.get("fingers", []))])
             incs = [i for i in r["incidents"] if listed(i)]
             if not incs and not any(r["counts"].get(c) for c in CATS):
                 continue

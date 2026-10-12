@@ -160,11 +160,14 @@ def incidents(problems):
             last["notes"] += p["notes"]
             last["off"] = max(last["off"], p["off"])
             last["count"] += 1
+            if p.get("finger") and p["finger"] not in last["fingers"]:
+                last["fingers"] = sorted(last["fingers"] + [p["finger"]])
             if SEVERITY.get(p["kind"], 0) > SEVERITY.get(last["kind"], 0):
                 last["kind"] = p["kind"]
         else:
             out.append({"hand": p["hand"], "cat": p["cat"], "kind": p["kind"], "visible": _visible(p),
-                        "t0": p["t"], "t1": p["t"], "notes": list(p["notes"]), "off": p["off"], "count": 1})
+                        "t0": p["t"], "t1": p["t"], "notes": list(p["notes"]), "off": p["off"], "count": 1,
+                        "fingers": [p["finger"]] if p.get("finger") else []})
     return sorted(out, key=lambda i: i["t0"])
 
 

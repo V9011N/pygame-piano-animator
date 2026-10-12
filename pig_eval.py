@@ -87,16 +87,32 @@ def evaluate(folder, pianist=None, pieces=None, verbose=True):
             print(f"{pid}  {len(fs)} pianist(s)  general {100 * g:5.1f}%  high {100 * hi:5.1f}%  "
                   f"soft {100 * so:5.1f}%", flush=True)
     print()
-    for hand, label in ((RIGHT, "right hand"), (LEFT, "left hand"), (None, "both hands")):
-        vals = [r[2][hand] for r in rows if hand in r[2]]
-        if vals:
-            g = sum(v[0] for v in vals) / len(vals)
-            hi = sum(v[1] for v in vals) / len(vals)
-            so = sum(v[2] for v in vals) / len(vals)
-            print(f"{label:11s}  general {100 * g:5.1f}%   high {100 * hi:5.1f}%   soft {100 * so:5.1f}%"
-                  f"   ({len(vals)} pieces)")
+    for title, sel in (("", None), (f"test split ({TEST[0]}-{TEST[-1]}, the reference in docs/ARCHITECTURE.md)", TEST)):
+        if sel is not None and not any(r[0] in sel for r in rows):
+            continue
+        sm = summary(rows, sel)
+        if title:
+            print(title)
+        for hand, label in ((RIGHT, "right hand"), (LEFT, "left hand"), (None, "both hands")):
+            if hand in sm:
+                g, hi, so, n = sm[hand]
+                print(f"{label:11s}  general {100 * g:5.2f}%   high {100 * hi:5.2f}%   soft {100 * so:5.2f}%"
+                      f"   ({n} pieces)")
     print(f"time {time.time() - t0:.0f}s")
     return rows
+
+
+TEST = [f"{k:03d}" for k in range(1, 31)]       # the dataset's test pieces (learn_weights.py trains on 031-150)
+
+
+def summary(rows, pieces=None):
+    """{hand (RIGHT / LEFT / None for both): (general, high, soft, pieces)} averaged over `pieces` (all if None)."""
+    out = {}
+    for hand in (RIGHT, LEFT, None):
+        vals = [r[2][hand] for r in rows if hand in r[2] and (pieces is None or r[0] in pieces)]
+        if vals:
+            out[hand] = tuple(sum(v[k] for v in vals) / len(vals) for k in range(3)) + (len(vals),)
+    return out
 
 
 def load_pianist(arg):
@@ -128,12 +144,13 @@ def main():
     ap.add_argument("--pianist", help="path to a pianist's .json, or the name of a saved pianist "
                                       "(default: the active one)")
     ap.add_argument("--pieces", help="comma-separated piece numbers, e.g. 001,002")
+    ap.add_argument("--test", action="store_true", help=f"only the test split, pieces {TEST[0]}-{TEST[-1]}")
     ap.add_argument("--quiet", action="store_true", help="only print the summary")
     a = ap.parse_args()
     p = load_pianist(a.pianist) if a.pianist else None
     if p is not None:
         print(f"Pianist: {p.name}")
-    pieces = set(a.pieces.split(",")) if a.pieces else None
+    pieces = set(a.pieces.split(",")) if a.pieces else set(TEST) if a.test else None
     evaluate(a.folder, p, pieces, verbose=not a.quiet)
 
 

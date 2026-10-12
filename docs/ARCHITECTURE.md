@@ -194,6 +194,21 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   Op. 53 with a large-handed pianist, 20 solver, 3 speed, 1 anatomy incidents in 108 s. The whole dataset (1276
   files) is an estimated 20 hours on 4 workers.
 
+## Rounds against MAESTRO (tools/maestro_diff.py, tools/regress.py)
+- The loop: the author runs `tools/maestro_check.py` over the whole dataset (Ninthie, 1920x1080, realistic keys,
+  `--timeout 0` so every file is checked in full); the solver incidents are grouped by pattern, the largest
+  patterns' worst cases reproduced and fixed by a general rule; the next full run is compared with the last.
+  Progress is the patterns shrinking. The checker's thresholds stay fixed between rounds.
+- `maestro_diff.py OLD NEW`: files checked in both (none failed or timed out); an incident is the same when it's
+  in the same file, hand and category, spans within `MATCH_T` 0.3 s. Patterns: coarse - hand, category, what
+  happened; fine - + keys (black / white / both), register (bass below C3, treble from C5), one note or several,
+  the fingers (incidents carry `fingers` from this version; the counts are as before). Seen incidents only
+  unless `--all`. The plan is of a whole piece, so a fix moves incidents within a file: read new and fixed.
+- `regress.py`: before each push - pytest, PIG (`pig_eval.summary` on `pig_eval.TEST`, pieces 001-030, and all),
+  Hanon (notes fingered unlike the book, the files' fingering ignored; Hanon 60 alone: 2.37% with Ninthie), and a
+  MAESTRO bench sample checked and compared with the last round's (`--baseline`); each round appended to
+  runs/history.jsonl and the history printed.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

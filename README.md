@@ -142,6 +142,10 @@ Benchmarks that need data you download yourself (not in the repository):
   anatomy, their top speed or the hand solver. Runs in parallel with live progress and can be stopped and
   resumed; `--pianist` (a pianist's name, e.g. `--pianist Ninthie`), `--map` (a rename map, original,renamed),
   `--match`, `--workers` - see `--help`.
+- `python tools/maestro_diff.py OLD NEW` - compare two of those runs: incidents fixed, new and still there,
+  by pattern.
+- `python tools/regress.py --pianist ... --pig ... --hanon ... --bench ... --baseline ...` - one round of checks
+  (tests, PIG test split, Hanon, a MAESTRO sample against an earlier run), kept in a history.
 
 ## Data not included
 
