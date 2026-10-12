@@ -547,11 +547,11 @@ SMUDGE_LATE_VEL = 0.6        # ... if no louder than this share of it, nor longe
 SMUDGE_LATE_T = 0.08         # this long (s) at most, and at most SMUDGE_LEN of it
 
 
-SLIP_T = 0.4                 # s, a finger slipping off the note it holds onto a neighbouring key this long after
-                             # pressing it (at most; or caught up to SMUDGE_TOL before it) ...
+SLIP_T = 0.4                 # s, a finger slipping off the note it holds onto a neighbouring key up to this long
+                             # after pressing it (and more than SMUDGE_TOL after: closer, it's struck with it,
+                             # a smudge the planner weighs - cluster_cost, smudge_split) ...
 SLIP_VEL = 0.75              # ... the key slipped onto sounding at most this share of the note's loudness ...
-SLIP_LEN_T = 0.15            # ... and this long at most (s), at most SMUDGE_LEN of the note (within SMUDGE_TOL
-                             # of the note either one will do) ...
+SLIP_LEN_T = 0.15            # ... and this long at most (s), at most SMUDGE_LEN of the note ...
 SLIP_HOLD_T = 0.03           # ... and let go with the note: no later than this after it
 
 
@@ -564,10 +564,11 @@ def find_slips(notes, vpitch=None, given=None):
     {id(slip): note}: notes played by a finger slipping off the key it holds
     onto the one beside it (a smudge after the key is firmly down). A slip is
     struck on a neighbouring key (cluster_shape "pair" - a white key and the
-    black beside it, two neighbouring whites) while the note is held, up to
-    SLIP_T after it (or up to SMUDGE_TOL before it), let go with it, and
-    quiet and short (SLIP_VEL, SLIP_LEN_T; one of the two is enough within
-    SMUDGE_TOL of the note). The note it slips from is the loudest such; the
+    black beside it, two neighbouring whites) while the note is held, more
+    than SMUDGE_TOL and up to SLIP_T after it, let go with it, and quiet and
+    short (SLIP_VEL, SLIP_LEN_T). (Struck with the note, a smudge stays the
+    planner's to weigh - a softer instance of a deliberate second may well want
+    its own finger.) The note it slips from is the loudest such; the
     keys a finger slips across stay ones it can cover (two, or white-black-
     white). `given(note)` - a finger already given (file, editor): a slip
     given another finger than its note's isn't one.
@@ -580,7 +581,7 @@ def find_slips(notes, vpitch=None, given=None):
         nv, nd = getattr(n, "velocity", 64), _dur(n)
         best = None
         lo = bisect.bisect_left(starts, n.start - SLIP_T)
-        hi = bisect.bisect_right(starts, n.start + SMUDGE_TOL)
+        hi = bisect.bisect_left(starts, n.start - SMUDGE_TOL)
         for m in ns[lo:hi]:
             if m is n or id(m) in out or m.end <= n.start or n.end > m.end + SLIP_HOLD_T:
                 continue
@@ -589,7 +590,7 @@ def find_slips(notes, vpitch=None, given=None):
             mv, md = getattr(m, "velocity", 64), _dur(m)
             quiet = nv <= SLIP_VEL * mv
             short = nd <= SLIP_LEN_T and nd <= SMUDGE_LEN * md
-            if not ((quiet or short) if abs(n.start - m.start) <= SMUDGE_TOL else (quiet and short)):
+            if not (quiet and short) or n.start - m.start <= SMUDGE_TOL:
                 continue
             keys = sorted([vp(m.pitch)] + [vp(r.pitch) for r in riders.get(id(m), [])] + [vp(n.pitch)])
             if cluster_shape(keys) not in ("pair", "triple"):

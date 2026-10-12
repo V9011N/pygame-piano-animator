@@ -944,18 +944,19 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       the same (+8% at most); Hanon 60's fingering unchanged.
     - **Slips** (v26.1.21.MAESTRO-TESTING, after the author still saw clear smudges given fingers of their own): a
       finger firmly on its key slipping onto the one beside it. `fingering.find_slips(notes, vpitch, given)`
-      {id(slip): note}: a neighbouring key ("pair") struck while the note is held, up to `SLIP_T` 0.4 s after it
-      (or `SMUDGE_TOL` before), let go with it (`SLIP_HOLD_T` 0.03 s), quiet and short - at most `SLIP_VEL` 0.75
-      of its velocity and `SLIP_LEN_T` 0.15 s / `SMUDGE_LEN` of its length; within `SMUDGE_TOL` of the note one of
-      the two is enough. The note it slips from is the loudest such; the keys stay coverable (pair or triple); a
+      {id(slip): note}: a neighbouring key ("pair") struck while the note is held, more than `SMUDGE_TOL` and up to
+      `SLIP_T` 0.4 s after it, let go with it (`SLIP_HOLD_T` 0.03 s), quiet and short - at most `SLIP_VEL` 0.75 of
+      its velocity and `SLIP_LEN_T` 0.15 s / `SMUDGE_LEN` of its length. (A first version also took smudges struck
+      with the note, or up to `SMUDGE_TOL` before it: in ten files that forced one finger onto the soft first
+      instance of a deliberate repeated second, LH B0+C1, and onto a note struck before the one it "slipped" from -
+      2 more solver incidents. Those stay the planner's, `cluster_cost` / `smudge_split`.) The note it slips from is the loudest such; the keys stay coverable (pair or triple); a
       given finger other than the note's (file, editor) means it isn't a slip; a note that is a slip slips
       nothing. Slips are left out of the plan (`plan_with_slips`: `finger_hand`, the editor's `_resolve`;
       `HandAnimator` does the same) and take their note's finger. In `HandAnimator` a slip joins its note's
       chord; `cluster_key` holds the keys the finger holds as one (`_mates`), while `pair_key` (where it aims)
       is the note's own key until the slip (unless caught within `SMUDGE_TOL`: the keys from the start), then the
       keys slipped across by then - the finger slides over to touch both. A held voice as loud as the melody, or
-      a trill (nothing held across another), isn't a slip. Ten MAESTRO files: 268 slips in 34,087 notes (0.8%),
-      37 of them more than `SMUDGE_TOL` after their note; Hanon 60 unchanged.
+      a trill (nothing held across another), isn't a slip.
     - PIG (the author's run, all 150 pieces): with Ninthie, the planner before and after give the same fingering
       on every piece - no smudge or cluster is taken there. Test split 001-030, both hands: default pianist
       general 65.97% / high 72.00% / soft 87.56% (the reference now; 66.23% was measured in September, before
