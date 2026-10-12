@@ -139,7 +139,8 @@ Benchmarks that need data you download yourself (not in the repository):
   [MAESTRO dataset](https://magenta.tensorflow.org/datasets/maestro) (or any folder): where a fingertip
   misses its key or a note gets no finger, with times in the file, and whether the cause is the pianist's
   anatomy, their top speed or the hand solver. Runs in parallel with live progress and can be stopped and
-  resumed; `--pianist`, `--map` (a rename map, original,renamed), `--match`, `--workers` - see `--help`.
+  resumed; `--pianist` (a pianist's name, e.g. `--pianist Ninthie`), `--map` (a rename map, original,renamed),
+  `--match`, `--workers` - see `--help`.
 
 ## Data not included
 

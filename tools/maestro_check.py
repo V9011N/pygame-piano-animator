@@ -11,7 +11,7 @@ keys held too far apart for the hand ("anatomy"), the hand held back by its
 top speed ("speed"), or neither ("solver": a mistake to fix).
 
     python tools/maestro_check.py PATH/TO/MAESTRO
-    python tools/maestro_check.py PATH --map rename_map.csv --pianist pianists/ninthie.json
+    python tools/maestro_check.py PATH --pianist Ninthie --map rename_map.csv
     python tools/maestro_check.py PATH --match Chopin --limit 20 --workers 6
     python tools/maestro_check.py PATH --report-only          # rebuild the report from what's done
 
@@ -21,7 +21,11 @@ files may keep MAESTRO's names or be renamed to the piece they play,
 columns original,renamed, paths relative to PATH - --map, or rename_map.csv
 in PATH or the folder above it) adds each file's original MAESTRO name to
 the report. MAESTRO's own maestro-v3.0.0.csv in PATH, if it's there, adds
-the canonical composer, title and split.
+the canonical composer, title and split. A file whose name differs a little
+from the map's (case, accents, spacing, punctuation, folder) is still found.
+
+--pianist is one of the app's pianists by name (or id), or the path to a
+pianist's .json; it's checked before anything starts.
 
 Output (--out, default ./maestro_check):
   results.jsonl  one line per file, appended as each finishes - run again to
@@ -43,9 +47,11 @@ import multiprocessing
 import os
 import sys
 import shutil
+import re
 import tempfile
 import threading
 import time
+import unicodedata
 from multiprocessing.managers import SyncManager
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -78,6 +84,35 @@ def _heartbeat(status):
         except Exception:                             # (the main process has gone)
             return
         time.sleep(1.0)
+
+
+def resolve_pianist(arg):
+    """
+    --pianist: a pianist's .json (a path, from here or the app's folder), or the name or id of one of the
+    app's pianists (its pianists folder) -> (the .json's absolute path or None, the pianist's name).
+    Stops with the pianists there if there's no such pianist.
+    """
+    import pianist
+    if not arg:
+        return None, "the default pianist"
+    for p in (arg, os.path.join(ROOT, arg), os.path.join(pianist.FOLDER, arg),
+              os.path.join(pianist.FOLDER, arg + ".json")):
+        if os.path.isfile(p):
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    d = json.load(fh)
+                return os.path.abspath(p), str(pianist.Pianist.from_json(d.get("id", "checked"), d).name)
+            except Exception as exc:
+                sys.exit(f"--pianist {arg}: {p} isn't a pianist's file ({type(exc).__name__}: {exc})")
+    want = os.path.splitext(os.path.basename(arg))[0] if arg.lower().endswith(".json") else arg
+    want = want.strip().casefold()
+    pianists = pianist.list_pianists()
+    for pn in pianists:
+        if want in (pn.name.strip().casefold(), pn.id.casefold()):
+            return os.path.abspath(pianist._path(pn.id)), pn.name
+    there = ", ".join(f"{pn.name} ({pn.id}.json)" for pn in pianists) or "none"
+    sys.exit(f"--pianist {arg}: no such file, and no pianist of that name in {pianist.FOLDER} (there: {there}). "
+             f"Give a pianist's name, or the path to its .json.")
 
 
 def _init_worker(opts, status=None):
@@ -187,22 +222,37 @@ def piece_of(rel):
     return base, ""
 
 
+def _loose(name):
+    """A file's name to match on, whatever its folder, case, accents, punctuation or spacing."""
+    n = unicodedata.normalize("NFKD", os.path.splitext(os.path.basename(name))[0])
+    n = "".join(ch for ch in n if not unicodedata.combining(ch)).casefold()
+    return re.sub(r"[^0-9a-z]+", " ", n).strip()
+
+
 def dataset_meta(root, map_path=None):
     """
-    {file key: {"piece", "year", "original", "composer", "title", "split"}} for the files in the dataset folder:
-    the piece from each file's (renamed) name, the original MAESTRO name from the rename map, and the
-    composer, title and split from MAESTRO's own .csv (keyed by the original names) when that's there too.
+    ({file key: {"piece", "year", "original", "composer", "title", "split"}}, how the map matched) for the
+    files in the dataset folder: the piece from each file's (renamed) name, its original MAESTRO name from the
+    rename map, and the composer, title and split from MAESTRO's own .csv (keyed by the original names) when
+    that's there too. A file is found in the map by its path, or failing that by its name alone, loosely
+    (_loose); files that kept their MAESTRO names are named from the map's renamed column.
     """
-    meta = {}
+    meta, info = {}, {"map": 0, "exact": 0, "loose": 0, "not_in_map": [], "not_on_disk": []}
     if not root or not os.path.isdir(root):
-        return meta
-    original = {}                                     # renamed key -> original key
+        return meta, info
+    pairs = []                                        # (original key, renamed key)
     if map_path and os.path.isfile(map_path):
         with open(map_path, encoding="utf-8-sig", newline="") as fh:
             for row in csv.DictReader(fh):
                 o, r = (row.get("original") or "").strip(), (row.get("renamed") or "").strip()
                 if o and r:
-                    original[os.path.normpath(r).replace(os.sep, "/")] = os.path.normpath(o).replace(os.sep, "/")
+                    pairs.append((os.path.normpath(o).replace(os.sep, "/"), os.path.normpath(r).replace(os.sep, "/")))
+    info["map"] = len(pairs)
+    exact, loose = {}, {}
+    for o, r in pairs:
+        exact[r] = exact[o] = (o, r)
+        for k in (r, o):
+            loose.setdefault(_loose(k), []).append((o, r))
     canon = {}                                        # original key -> MAESTRO's own row
     for f in os.listdir(root):
         if f.lower().startswith("maestro") and f.lower().endswith(".csv"):
@@ -210,14 +260,28 @@ def dataset_meta(root, map_path=None):
                 for row in csv.DictReader(fh):
                     k = os.path.normpath(row.get("midi_filename", "")).replace(os.sep, "/")
                     canon[k] = row
-    for key in set(original) | {file_key(f, root) for f in find_midis(root)}:
-        piece, year = piece_of(key)
-        orig = original.get(key, "")
+    used = set()
+    for key in sorted(file_key(f, root) for f in find_midis(root)):
+        pair = exact.get(key)
+        if pair:
+            info["exact"] += 1
+        elif pairs:
+            found = loose.get(_loose(key), [])
+            if len(set(found)) == 1:
+                pair = found[0]
+                info["loose"] += 1
+            else:
+                info["not_in_map"].append(key)
+        orig, renamed = pair if pair else ("", key)
+        if pair:
+            used.add(pair)
+        piece, year = piece_of(renamed)
         row = canon.get(orig or key, {})
         meta[key] = {"piece": piece, "year": year or row.get("year", ""), "original": orig,
                      "composer": row.get("canonical_composer", ""), "title": row.get("canonical_title", ""),
                      "split": row.get("split", "")}
-    return meta
+    info["not_on_disk"] = sorted(r for o, r in pairs if (o, r) not in used)
+    return meta, info
 
 
 def label(key, meta):
@@ -237,6 +301,8 @@ def load_results(path):
             for line in fh:
                 try:
                     r = json.loads(line)
+                    if str(r.get("error") or "").startswith("worker failed"):
+                        continue                      # (the pool broke, not the file: check it again)
                     done[r.get("key") or os.path.normpath(r["file"]).replace(os.sep, "/")] = r
                 except (ValueError, KeyError):
                     pass
@@ -257,10 +323,18 @@ def run(args, meta):
     files = find_midis(args.path)
     keys = {f: file_key(f, args.path) for f in files}
     if os.path.isdir(args.path) and args.map:
-        named = [k for k in keys.values() if meta.get(k, {}).get("original")]
-        missing = [k for k, m in meta.items() if m["original"] and k not in set(keys.values())]
-        print(f"Rename map {args.map}: {len(named)} of {len(files)} files found in it"
-              + (f", {len(missing)} of its files not in the folder (e.g. {missing[0]})" if missing else ""))
+        info = args.map_info
+        print(f"Rename map {args.map} ({info['map']} files): {info['exact'] + info['loose']} of the {len(files)} files "
+              f"here found in it" + (f" ({info['loose']} by name only)" if info["loose"] else ""))
+        if info["not_in_map"]:
+            print(f"  {len(info['not_in_map'])} files here aren't in the map (they're checked all the same, "
+                  f"named from their file names), e.g.:")
+            for k in info["not_in_map"][:3]:
+                print(f"    {k}")
+        if info["not_on_disk"]:
+            print(f"  {len(info['not_on_disk'])} of the map's files aren't here, e.g.:")
+            for k in info["not_on_disk"][:3]:
+                print(f"    {k}")
     if args.match:
         files = [f for f in files if args.match.lower() in keys[f].lower()
                  or args.match.lower() in label(keys[f], meta).lower()]
@@ -287,17 +361,21 @@ def run(args, meta):
     status = mgr.dict()
     ex = cf.ProcessPoolExecutor(args.workers, mp_context=ctx, initializer=_init_worker, initargs=(opts, status))
     stopped = False
+    broken = None
     try:
         with open(res_path, "a", encoding="utf-8") as fh:
             futs = {ex.submit(check_file, f, keys[f]): f for f in todo}
             pending = set(futs)
-            while pending:
+            while pending and broken is None:
                 fin, pending = cf.wait(pending, timeout=1.0, return_when=cf.FIRST_COMPLETED)
                 for fut in fin:
                     f = futs[fut]
                     try:
                         r = fut.result()
-                    except Exception as exc:          # (the worker itself died)
+                    except cf.process.BrokenProcessPool as exc:
+                        broken = exc                  # (nothing recorded: the file is checked on the next run)
+                        continue
+                    except Exception as exc:
                         r = {"file": f, "error": f"worker failed: {exc}", "incidents": [], "counts": {}}
                     r["key"] = keys[f]
                     fh.write(json.dumps(r) + "\n")
@@ -338,13 +416,17 @@ def run(args, meta):
         stopped = True
     finally:
         status_view.clear()
-        if stopped:
+        if stopped or broken is not None:
             for proc in list(getattr(ex, "_processes", {}).values()):
                 proc.terminate()
-        ex.shutdown(wait=not stopped, cancel_futures=True)
+        ex.shutdown(wait=not (stopped or broken is not None), cancel_futures=True)
         mgr.shutdown()
     el = time.perf_counter() - t0
-    if stopped:
+    if broken is not None:
+        print(f"Stopped after {fmt_dur(el)}: the worker processes ended ({broken}). {n_done} file"
+              f"{'s' * (n_done != 1)} checked this run {'is' if n_done == 1 else 'are'} saved; the rest aren't marked "
+              f"done - run the same command again to carry on (with fewer --workers if memory ran out).")
+    elif stopped:
         print(f"Stopped after {fmt_dur(el)}: {n_done} file{'s' * (n_done != 1)} checked this run {'is' if n_done == 1 else 'are'} saved - run the same command "
               f"again to carry on where it stopped.")
     else:
@@ -423,7 +505,7 @@ def report(args, meta):
     lines = ["# Hand animation check", "",
              f"{len(results)} files checked ({len(bad)} failed, {clean} with no incidents but late strikes), "
              f"{notes:,} notes played. "
-             f"Pianist: {os.path.basename(args.pianist) if args.pianist else 'the default'}; "
+             f"Pianist: {getattr(args, 'pianist_name', None) or 'the default pianist'}; "
              f"keyboard {args.size[0]}x{args.size[1]}, {args.keys} keys.", "",
              "What the categories mean:", "",
              "- **solver** - the keys were reachable, in time, and the hand solver still missed: a bug to fix.",
@@ -491,7 +573,8 @@ def main():
     ap.add_argument("--out", default="maestro_check", help="output folder (default ./maestro_check)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1),
                     help="files checked at once (default: one per CPU, less one)")
-    ap.add_argument("--pianist", help="a pianist's .json (default: the default pianist)")
+    ap.add_argument("--pianist", help="a pianist's name (one of the app's, e.g. Ninthie) or the path to its .json "
+                                       "(default: the default pianist)")
     ap.add_argument("--size", default="1920x1080", help="window size the keyboard is laid out for (default 1920x1080)")
     ap.add_argument("--keys", default="realistic", choices=("realistic", "equal"), help="keyboard type")
     ap.add_argument("--match", help="only files whose name contains this (e.g. Chopin, Ballade, 2018)")
@@ -513,7 +596,8 @@ def main():
         except (AttributeError, ValueError):
             pass
     args.map = find_rename_map(args.path, args.map)
-    meta = dataset_meta(args.path, args.map)
+    args.pianist, args.pianist_name = resolve_pianist(args.pianist)
+    meta, args.map_info = dataset_meta(args.path, args.map)
     if not args.report_only:
         run(args, meta)
     report(args, meta)

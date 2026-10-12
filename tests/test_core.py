@@ -1301,7 +1301,16 @@ def test_maestro_check_names_renamed_files_from_the_rename_map(tmp_path):
     root = str(tmp_path)
     found = mc.find_midis(root)
     assert [mc.file_key(f, root) for f in found] == [renamed]
-    meta = mc.dataset_meta(root, mc.find_rename_map(root))
+    meta, info = mc.dataset_meta(root, mc.find_rename_map(root))
     assert meta[renamed]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
     assert mc.label(renamed, meta) == "Claude Debussy Image (Book II) (2004)"
+    assert info["exact"] == 1 and not info["not_in_map"] and not info["not_on_disk"]
+    # named a little differently on disk (accents, case, spacing, another folder): still found, by name
+    (tmp_path / renamed).unlink()
+    other = "Debussy/maestro - 2004 - claude debussy  image (book ii).MIDI"
+    (tmp_path / "Debussy").mkdir()
+    (tmp_path / other).write_bytes(b"")
+    meta, info = mc.dataset_meta(root, mc.find_rename_map(root))
+    assert info["loose"] == 1 and meta[other]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
+    assert mc._loose("Frédéric Chopin Étude, Op. 10.midi") == mc._loose("frederic chopin etude op 10.mid")
     assert mc.piece_of("2011/MAESTRO - 2011 - J. S. Bach Fugue - 02.midi") == ("J. S. Bach Fugue - 02", "2011")

@@ -173,8 +173,11 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `tools/maestro_check.py PATH` runs that over every MIDI file in a folder (the MAESTRO dataset), in worker
   processes (spawn, one per CPU less one), resumable (results.jsonl keyed by the path in the folder), with a
   live progress block (each worker's file, planning/checking and %, the run's share of the work by file size,
-  time left); Ctrl+C stops it, a rerun carries on. Files renamed to their piece ("YYYY/MAESTRO - YYYY -
-  Composer Piece.midi") are named from that; a rename map (original,renamed) adds MAESTRO's own names, and
+  time left); Ctrl+C stops it, a rerun carries on. `--pianist` takes one of the app's pianists by name, checked
+  before the workers start; if the pool breaks (a worker killed, e.g. out of memory) the run stops and the
+  files in progress aren't recorded, so a rerun checks them. Files renamed to their piece ("YYYY/MAESTRO - YYYY -
+  Composer Piece.midi") are named from that; a rename map (original,renamed) adds MAESTRO's own names (a file
+  is found in it by its path, or loosely by its name alone: case, accents, spacing, punctuation), and
   MAESTRO's .csv the canonical composer/title/split. Output: report.md (totals, worst files by solver
   incidents, then each file's incidents), incidents.csv.
 - Smoke runs (realistic keys, 1920x1080): two short Bach preludes and fugues, 0 incidents; Chopin's Polonaise
