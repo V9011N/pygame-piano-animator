@@ -148,6 +148,39 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Strict key contact and the MAESTRO check (anim_check.py, tools/maestro_check.py, v26.1.21.MAESTRO-TESTING)
+- What the hands are drawn doing must match what's played (the hands' performance, which the sound and the lit
+  keys follow). Two layers make sure of it, and log, with times in the MIDI file, wherever they can't:
+  - **No note without a finger.** `HandAnimator.unplaced` lists the notes the planner left without a finger (they
+    aren't played); `hands.log_unplaced` prints them once, as "note m:ss.sss", when the animator is built.
+  - **Every held fingertip on its key.** In `_finger_pose`, after the gestures, a finger holding a key
+    (`_held_note`; a thumb bridging under is left alone, `_is_bridge`) has its tip clamped into its key
+    (`_key_box`: `STRICT_KEY_MARGIN` of the key's width in from its sides, at most `STRICT_KEY_MARGIN_PX`,
+    and within its length); how far it was pulled is the pose's `key_pulled` {finger: px}. Then, once the bones
+    are solved, `_settle_on_keys` checks the drawn tips (the bones can fall short): if any is off, the whole
+    hand is shifted across (`_shift_pose`) to the x that puts as many held tips on their keys as can be - the
+    intersection of their allowed intervals, or nearest to it. A tip still off by more than `STRICT_LOG_PX`
+    is logged once per note ("finger f can't reach N at m:ss.sss (MIDI s): px off its key"). The pose's
+    `key_check` is [(finger, note, px off before the shift, px off after)].
+- `anim_check.check_song(song, hands, kb)` samples every played note `SAMPLE_AFTER_T` after it's struck (half
+  its length if shorter) and reports problems: *aimed off* (pulled onto its key by more than `AIM_PX`),
+  *shifted* (the hand moved by more than `SHIFT_PX`), *off* (still off); each sorted into **anatomy** (the keys
+  held then don't fit the hand from any position, `_chord_fits`), **speed** (the top speed holds the hand back:
+  where the keys want it and where it's drawn differ by more than `SPEED_LAG_WK` white keys) or **solver**
+  (neither: the solver's mistake). Also **fingering** (unplaced notes) and **timing** (struck more than
+  `LATE_T` late). Problems of one kind in one hand within `INCIDENT_GAP_T` are one incident. It reports its
+  progress through `progress.py`.
+- `tools/maestro_check.py PATH` runs that over every MIDI file in a folder (the MAESTRO dataset), in worker
+  processes (spawn, one per CPU less one), resumable (results.jsonl keyed by the path in the folder), with a
+  live progress block (each worker's file, planning/checking and %, the run's share of the work by file size,
+  time left); Ctrl+C stops it, a rerun carries on. Files renamed to their piece ("YYYY/MAESTRO - YYYY -
+  Composer Piece.midi") are named from that; a rename map (original,renamed) adds MAESTRO's own names, and
+  MAESTRO's .csv the canonical composer/title/split. Output: report.md (totals, worst files by solver
+  incidents, then each file's incidents), incidents.csv.
+- Smoke runs (realistic keys, 1920x1080): two short Bach preludes and fugues, 0 incidents; Chopin's Polonaise
+  Op. 53 with a large-handed pianist, 20 solver, 3 speed, 1 anatomy incidents in 108 s. The whole dataset (1276
+  files) is an estimated 20 hours on 4 workers.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

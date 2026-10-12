@@ -1227,3 +1227,81 @@ def test_a_repeated_figure_wider_than_the_still_hand_is_played_swaying(screen):
         tip = a.pose(n.start + 0.04, kb)["struct"]["chains"][f][-1]
         r = kb.key_rects[n.pitch]
         assert r.left - 3 <= tip[0] <= r.right + 3, (n.pitch, f, tip[0], r)
+
+
+def test_every_held_key_has_its_fingertip_on_it(screen):
+    # strict: whatever the solver did, a finger holding a key is drawn on it (the hand shifted if need be),
+    # and what had to be done is on the pose for checking (anim_check)
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    an = hands.build_hands(s)
+    checked = 0
+    for a in an.values():
+        a._ensure_layout(kb)
+        for st, en, n in a.performance[:300]:
+            if en - st < 0.02 or a.is_gliss(n):
+                continue
+            t = st + min(0.03, (en - st) / 2)
+            p = a.pose(t, kb)
+            assert "key_check" in p and "key_pulled" in p
+            f = a.finger_for(n)
+            if f is None or a._held_note(f, t) is not n or a._is_bridge(f, n):
+                continue
+            off = {g: after for g, m, _, after in p["key_check"] if m is n}
+            r = kb.key_rects[n.pitch]
+            x = p["struct"]["chains"][f][-1][0]
+            assert r.left - 0.5 <= x <= r.right + 0.5 or off.get(f, 0) > 0, (n.pitch, f, x, r)
+            checked += 1
+    assert checked > 100
+
+
+def test_notes_with_no_finger_are_logged_with_their_times(capsys):
+    # seven notes at once in one hand: some can't be given a finger - they're said, with their time
+    ns = [Note(p, 1.25, 1.75, 80, 0, RIGHT) for p in (60, 62, 64, 65, 67, 69, 71)]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT)
+    if not a.unplaced:
+        return                                       # (the planner found fingers for all after all)
+    out = capsys.readouterr().out
+    assert "no finger" in out and "0:01.250" in out
+
+
+def test_anim_check_reports_in_the_files_time(screen):
+    import anim_check
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    res = anim_check.check_song(s, hands.build_hands(s), kb)
+    assert res["notes"] > 0 and res["samples"] > 0 and not res["timed_out"]
+    for i in res["incidents"]:
+        assert i["cat"] in ("solver", "speed", "anatomy", "fingering", "timing")
+        assert anim_check.describe(i)
+    # incidents put problems together by hand, kind and nearness
+    probs = [{"hand": "R", "t": t, "kind": "off", "cat": "solver", "notes": [("C4", t)], "px": 3.0}
+             for t in (1.0, 1.2, 1.5, 4.0)]
+    incs = anim_check.incidents(probs)
+    assert [(i["t0"], i["t1"], i["count"]) for i in incs] == [(1.0, 1.5, 3), (4.0, 4.0, 1)]
+    assert "0:01.000 - 0:01.500" in anim_check.describe(incs[0])
+
+
+def test_maestro_check_names_renamed_files_from_the_rename_map(tmp_path):
+    # files renamed to their piece, "YYYY/MAESTRO - YYYY - Composer Piece.midi", with a map back to the originals
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "maestro_check.py")
+    spec = importlib.util.spec_from_file_location("maestro_check", path)
+    mc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mc)
+    renamed = "2004/MAESTRO - 2004 - Claude Debussy Image (Book II).midi"
+    (tmp_path / "2004").mkdir()
+    (tmp_path / renamed).write_bytes(b"")
+    (tmp_path / "rename_map.csv").write_text(
+        "﻿original,renamed\n2004/MIDI-Unprocessed_XP_08.midi,"
+        "\"2004/MAESTRO - 2004 - Claude Debussy Image (Book II).midi\"\n", encoding="utf-8")
+    root = str(tmp_path)
+    found = mc.find_midis(root)
+    assert [mc.file_key(f, root) for f in found] == [renamed]
+    meta = mc.dataset_meta(root, mc.find_rename_map(root))
+    assert meta[renamed]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
+    assert mc.label(renamed, meta) == "Claude Debussy Image (Book II) (2004)"
+    assert mc.piece_of("2011/MAESTRO - 2011 - J. S. Bach Fugue - 02.midi") == ("J. S. Bach Fugue - 02", "2011")

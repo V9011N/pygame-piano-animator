@@ -48,7 +48,7 @@ from operator import mul
 import midi_loader
 import progress
 from fingering import group_notes, is_crossing, key_pos, mirror_pitch, plan_fingering
-from midi_loader import LEFT, RIGHT, is_black_key
+from midi_loader import LEFT, RIGHT, is_black_key, note_name
 
 # --------------------------------------------------------------------------- #
 # Real-world sizes
@@ -133,6 +133,9 @@ FINGER_LIFT_MAX = math.radians(40)   # a playing finger's first bone rises at mo
 STEEP_FORWARD = (0.5, 0.85, 2.0, 0.12)   # solve_chain: from a target this steeply below (sine, eased in up
                             # to the second) the finger's joints bow forward (up to the third) and its plane turns
                             # the hand's way as if the target were up to the fourth share of its length further on
+STRICT_KEY_MARGIN = 0.2     # a held fingertip is at least this share of its key's width in from its sides...
+STRICT_KEY_MARGIN_PX = 3.0  # ...at most this many pixels
+STRICT_LOG_PX = 1.0         # a held tip still this far off its key after everything is logged (once per note)
 TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -323,6 +326,20 @@ def _clamp_apply(prep, x, y):
     h = hmin if h < hmin else hmax if h > hmax else h
     ux, uy = h * math.sin(a), h * math.cos(a)
     return bx + (ux * cp - uy * sp), by + (ux * sp + uy * cp)
+
+
+def fmt_song_time(t):
+    """A time in the MIDI file as m:ss.sss."""
+    m, s = divmod(max(0.0, t), 60.0)
+    return f"{int(m)}:{s:06.3f}"
+
+
+def log_unplaced(song, hand, notes):
+    """Say (the log) which notes a hand couldn't be given a finger for, and when."""
+    title = getattr(song, "title", "") or "song"
+    times = ", ".join(f"{note_name(n.pitch)} {fmt_song_time(n.start)}" for n in notes[:12])
+    more = f" (+{len(notes) - 12} more)" if len(notes) > 12 else ""
+    print(f"[hands] {title}: {hand} hand - {len(notes)} note(s) with no finger, not played: {times}{more}")
 
 
 def _shift_pose(p, dx, dy, mirror):
@@ -804,7 +821,11 @@ class HandAnimator:
                                        pianist=self.pianist, repair=repair, repaired=self.repaired)
         self.fingering = {id(n): fingering[id(n)] for _, ns in self.groups for n in ns
                           if fingering.get(id(n))}
-        # notes without a finger (a sixth note in one hand's chord) aren't animated
+        # notes without a finger (a sixth note in one hand's chord) aren't animated - logged, with their times
+        self.unplaced = sorted((n for _, ns in self.groups for n in ns if id(n) not in self.fingering),
+                               key=lambda n: n.start)
+        if self.unplaced:
+            log_unplaced(song, hand, self.unplaced)
         self.groups = [(t, [n for n in ns if id(n) in self.fingering]) for t, ns in self.groups]
         self.groups = [g for g in self.groups if g[1]]
         # One finger on two neighbouring keys (the thumb, or the little finger
@@ -898,6 +919,7 @@ class HandAnimator:
         self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
         self.span_starts = [a for a, _ in self.spans]
         self.partner = None                      # the other hand, see pair_hands
+        self.unreached_logged = set()            # id(note) of keys a finger couldn't be put on (logged once)
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
         self._gliss_cache = None
@@ -2866,7 +2888,74 @@ class HandAnimator:
         if target is not None:
             px, py = self._pose_wrist(p)
             p = _shift_pose(p, target[0] - px, target[1] - py, self.mirror)
+        if g <= 0.0:
+            p = self._settle_on_keys(p, t)
         return dict(p, anim=self)
+
+    # ----- strict: every held key under its finger ---------------------------------
+    def _held_note(self, f, t):
+        """The note finger f holds down at t (its performance), or None."""
+        starts = self.finger_starts[f]
+        i = bisect.bisect_right(starts, t) - 1
+        if i >= 0 and t < self.finger_ends[f][i]:
+            return self.by_finger[f][i]
+        return None
+
+    def _is_bridge(self, f, n):
+        pk = self.pair_key.get(id(n))
+        return bool(pk) and self._bridge_pair(pk, f)
+
+    def _key_box(self, pk):
+        """((x lo, x hi), (y lo, y hi)) a fingertip on key(s) pk may be at: working-frame x, world y, in from the edges."""
+        ps = pk if isinstance(pk, tuple) else (pk,)
+        rs = [self.kb.key_rects[p] for p in ps if p in self.kb.key_rects]
+        if not rs:
+            return (-math.inf, math.inf), (-math.inf, math.inf)
+        xs = [self._mx(r.left) for r in rs] + [self._mx(r.right) for r in rs]
+        m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX)
+        front = self.kb.rect.bottom
+        ys = [front - r.bottom for r in rs] + [front - r.top for r in rs]
+        return (min(xs) + m, max(xs) - m), (min(ys) + m, max(ys) - m)
+
+    def _settle_on_keys(self, p, t):
+        """
+        The last word on the pose: every finger holding a key has its tip on
+        it. Fingertips already go to their keys (_finger_pose); one that still
+        isn't there (out of its finger's reach) gets the whole hand shifted
+        across the keys as little as puts every held tip on its key. If no
+        shift can (the keys held are too far apart for this hand), the shift
+        that leaves the worst one least off - and that note is logged, once.
+        The pose carries what was done: "key_check" [(finger, note, off before
+        the shift, off after)] in pixels (0 = on its key).
+        """
+        st = p["struct"]
+        lims = []
+        for f, c in st["chains"].items():
+            n = self._held_note(f, t)
+            if n is None or self._is_bridge(f, n):
+                continue
+            ps = self._pk(n)
+            ps = ps if isinstance(ps, tuple) else (ps,)
+            rs = [self.kb.key_rects[q] for q in ps if q in self.kb.key_rects]
+            if not rs:
+                continue
+            m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX)
+            lo, hi = min(r.left for r in rs) + m, max(r.right for r in rs) - m
+            x = c[-1][0]
+            lims.append((f, n, lo - x, hi - x))
+        if not lims:
+            return dict(p, key_check=[])
+        a, b = max(l[2] for l in lims), min(l[3] for l in lims)
+        dx = 0.0 if a <= 0.0 <= b else (a if a > 0 else b) if a <= b else (a + b) / 2
+        out = [(f, n, max(0.0, lo, -hi), max(0.0, lo - dx, dx - hi)) for f, n, lo, hi in lims]
+        if abs(dx) > 0.01:
+            p = _shift_pose(p, dx, 0.0, self.mirror)
+        for f, n, _, after in out:
+            if after > STRICT_LOG_PX and id(n) not in self.unreached_logged:
+                self.unreached_logged.add(id(n))
+                print(f"[hands] {self.hand} hand, finger {f} can't reach {note_name(n.pitch)} at "
+                      f"{fmt_song_time(n.start)} (MIDI {n.start:.3f} s): {after:.0f} px off its key")
+        return dict(p, key_check=out)
 
     def footprint(self, t):
         """
@@ -3474,6 +3563,19 @@ class HandAnimator:
                 z = gw * rigid + (1.0 - gw) * z0
                 tips[f] = (tips[f][0], tips[f][1], max(min(z0, 0.0), z))
 
+        # strict: a finger holding a key has its tip on that key (STRICT_KEY_MARGIN in from its sides);
+        # how far it had to be brought there is kept for checking (anim_check: the aim was off)
+        pulled = {}
+        for f in tips:
+            n = self._held_note(f, t)
+            if n is None or self._is_bridge(f, n):
+                continue
+            (xlo, xhi), (ylo, yhi) = self._key_box(self._pk(n))
+            x, y, z = tips[f]
+            cx, cy = min(max(x, xlo), xhi), min(max(y, ylo), yhi)
+            pulled[f] = math.hypot(cx - x, cy - y)
+            tips[f] = (cx, cy, z)
+
         bones, joints = [], []
         up = (0.0, 0.0, 1.0)
         geo = self.geo
@@ -3531,7 +3633,7 @@ class HandAnimator:
             joints = [(fx(p), k) for p, k in joints]
             struct = {"chains": {f: [fx(p) for p in c] for f, c in chains.items()},
                       "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True}
-        return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi,
+        return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi, "key_pulled": pulled,
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}
 

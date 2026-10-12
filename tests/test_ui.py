@@ -264,7 +264,7 @@ def test_version_and_changelog_headings_are_well_formed():
     import os
     import re
     from version import VERSION
-    assert re.fullmatch(r"v\d\d\.\d+\.\d+(\.SNAPSHOT-\d+)?", VERSION)
+    assert re.fullmatch(r"v\d\d\.\d+\.\d+(\.SNAPSHOT-\d+|\.[A-Z][A-Z0-9-]*)?", VERSION)
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
     with open(path, encoding="utf-8") as fh:
         top = next(line for line in fh if line.startswith("## "))

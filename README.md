@@ -135,6 +135,11 @@ Benchmarks that need data you download yourself (not in the repository):
 - `python pig_eval.py path/to/FingeringFiles` - match rates against the
   [PIG dataset](https://beam.kisarazu.ac.jp/research/PianoFingeringDataset/) annotators.
 - `python learn_weights.py path/to/FingeringFiles` - re-tune the planner weights on PIG pieces 031-150.
+- `python tools/maestro_check.py path/to/MAESTRO` - check the hand animation against every MIDI file of the
+  [MAESTRO dataset](https://magenta.tensorflow.org/datasets/maestro) (or any folder): where a fingertip
+  misses its key or a note gets no finger, with times in the file, and whether the cause is the pianist's
+  anatomy, their top speed or the hand solver. Runs in parallel with live progress and can be stopped and
+  resumed; `--pianist`, `--map` (a rename map, original,renamed), `--match`, `--workers` - see `--help`.
 
 ## Data not included
 
