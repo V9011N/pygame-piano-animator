@@ -3,6 +3,20 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.20 - Video export, hands on top of each other
+- Export a performance to an .mp4 from the button under the player's progress bar: choose whether the progress
+  bar, pedals and pianist badge are in it; it's rendered at the window's size and 60 fps with its sound (the
+  soundfont, or the synced recording), behind a progress screen with Cancel. (From source it needs the
+  imageio-ffmpeg package; the .exe has everything.)
+- Hands playing on top of each other: the one playing further into the keys lies on top, it's chosen before the
+  hands meet, and the hands never swap places or flicker while they overlap.
+- Fingers look more natural: no more pointing up into the air, rearing knuckles, or bending out sideways for a
+  frame; lifted fingers stay curved.
+- Chords are rolled only when the hand really can't hold them, so fingertips no longer land between black keys
+  and ordinary chords are no longer rolled.
+- Pianist overview: point at a finger or the thumb and scroll to curl it in or out (Natural curve / Stretched out
+  resets the hand).
+
 ## v26.1.19 - Settings, soundfonts, bigger hands
 - New Settings screen: drag the keyboard up or down, keyboard type, frame rate cap (24-240 fps or uncapped),
   performance overlay, soundfont and interface font.

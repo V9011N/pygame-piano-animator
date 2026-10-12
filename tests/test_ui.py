@@ -349,6 +349,9 @@ def test_the_progress_bar_is_clear_and_the_controls_sit_under_it(screen):
     bar = v.bar_rect
     # nothing on the bar but the name and time: every control is below it, on the right
     for rect, _ in v._top_items:
+        if rect == v.export_button:                      # (the export button: under the bar on the left)
+            assert rect.top >= bar.bottom and rect.left < screen.get_width() // 2
+            continue
         assert rect.top >= bar.bottom and rect.right > screen.get_width() // 2
     assert v.controls_rect.top >= v.fall_rect.top and v.keys_button.top >= v.controls_rect.bottom
     # so a click anywhere along the bar seeks - even at its right end, where the controls were
@@ -440,3 +443,53 @@ def test_a_falling_note_keeps_its_length_and_moves_smoothly():
     assert all(s in (1, 2) for s in steps)           # 1.2 px a frame: never still, never back
     for i, r in enumerate(rects):                    # and within half a pixel of where it truly is
         assert abs(r.bottom - (700 - (5.0 - i / 144) * pps)) <= 0.5
+
+
+def test_bend_chain_curls_fingers_down_and_tucks_the_thumb():
+    import math
+    import pianist
+    from hands import BEND_RANGE, HandGeometry, clamp_bend, curl_factor, static_skeleton
+    p = pianist.Pianist("x")
+    geo = HandGeometry(p.anatomy)
+    for shape in ("stretched", "natural"):
+        flat = static_skeleton(geo, shape, curl_factor(p))
+        bent = static_skeleton(geo, shape, curl_factor(p), {2: 1.0, 5: -0.5, 1: 1.0})
+        t0, t1 = flat["tips"], bent["tips"]
+        assert t1[2][2] < t0[2][2] - 0.5                    # the index curls down
+        assert t1[5][2] > t0[5][2] + 0.5                    # the little finger lifts
+        assert t1[3] == t0[3] and t1[4] == t0[4]            # the others stay put
+        assert t1[1][0] > t0[1][0]                          # the thumb swings in toward the palm
+        def turns(chain):                                   # each thumb joint's turn toward +x (rad)
+            d = [math.atan2(q[0] - p[0], q[1] - p[1]) for p, q in zip(chain, chain[1:])]
+            return [b - a for a, b in zip(d, d[1:])]
+        flat_t, bent_t = turns(flat["struct"]["chains"][1]), turns(bent["struct"]["chains"][1])
+        assert all(b > a + 0.3 for a, b in zip(flat_t, bent_t))   # every joint curls, not just the base
+        for f in (1, 2):                                    # bones keep their lengths
+            for a, b, c, d in zip(flat["struct"]["chains"][f], flat["struct"]["chains"][f][1:],
+                                  bent["struct"]["chains"][f], bent["struct"]["chains"][f][1:]):
+                assert math.isclose(math.dist(a, b), math.dist(c, d), rel_tol=1e-9)
+    assert clamp_bend(2, 5) == BEND_RANGE["finger"][1] and clamp_bend(1, -5) == BEND_RANGE["thumb"][0]
+
+
+def test_overview_scrolls_a_hovered_finger_and_the_shape_button_resets(screen):
+    app = app_on(screen)
+    app.studio()
+    st = app.mode
+    st._start_new("Bendy")
+    st.render()
+    _, pts = st._finger_lines[2]
+    pos = ((pts[-2][0] + pts[-1][0]) // 2, (pts[-2][1] + pts[-1][1]) // 2)
+    st.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=pos, rel=(0, 0), buttons=(0, 0, 0)))
+    assert st.hover_finger == 2
+    for _ in range(3):                                      # scrolling down curls it in
+        st.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=-1))
+        st.render()
+    assert st.hover_finger == 2 and abs(st.bends[2] - 0.3) < 1e-9
+    st.handle_event(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=8))
+    assert st.bends[2] == -0.5                              # up: straightens, then lifts (clamped)
+    st.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(2, screen.get_height() // 2),
+                                       rel=(0, 0), buttons=(0, 0, 0)))
+    assert st.hover_finger is None
+    st._action("shape")
+    assert st.bends == {} and st.shape == "natural"
+    assert "bends" not in st.work.to_json()                 # (a preview: nothing saved)

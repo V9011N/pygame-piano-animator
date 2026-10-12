@@ -1059,3 +1059,148 @@ def test_hand_split_keeps_notes_out_of_the_other_hands_chord():
     closing = [Note(63, 2.03, 2.5, 80, 0, RIGHT), Note(75, 2.03, 2.5, 80, 0, RIGHT)]
     assert HS._inside(HS._Hand(70.0), lh2, 2.03, closing, []) == HS.INSIDE
     assert HS.INSIDE > HS.TRACK_SWITCH and HS.INSIDE > HS.REPEAT_SPLIT   # above every preference
+
+
+def test_a_close_target_folds_the_finger_without_rearing_its_knuckle():
+    # a fingertip pulled in close to its knuckle: the first bone stays below FINGER_LIFT_MAX, tip on target
+    L = [2.0, 1.2, 0.9]
+    for target in ((0.0, 1.2, -0.3), (0.2, 1.6, -0.2), (-0.3, 1.1, -0.1)):
+        free = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX)
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX)
+        rise = math.asin(pts[1][2] / L[0])
+        assert rise <= hands.FINGER_LIFT_MAX + 1e-6 < math.asin(free[1][2] / L[0]), target
+        assert math.dist(pts[-1], target) < 1e-6
+        for a, b, l in zip(pts, pts[1:], L):
+            assert math.isclose(math.dist(a, b), l, rel_tol=1e-9)
+
+
+def test_playing_fingers_stay_below_their_knuckles(screen):
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    an = hands.build_hands(s)
+    for a in an.values():
+        t = 0.0
+        while t < min(s.duration, 20.0):
+            ch = a.pose(t, kb)["struct"]["chains"]
+            for f in range(2, 6):
+                mcp, j1, _, tip = ch[f][1:]
+                assert tip[2] < mcp[2], (t, f)                    # never pointing up into the air
+                rise = math.atan2(j1[2] - mcp[2], math.hypot(j1[0] - mcp[0], j1[1] - mcp[1]))
+                assert rise <= hands.FINGER_LIFT_MAX + 0.02, (t, f, math.degrees(rise))
+            t += 0.05
+
+
+def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
+    # a thumb across C#4-D#4 (its tip on C#4), G4, A#4 and the little finger on D#5: within the planner's
+    # thumb-to-little-finger span, but past the drawn hand - held together, a tip landed between keys
+    import pianist
+    geo = hands.HandGeometry(pianist.default_pianist().anatomy)
+    assert hands.drawn_reach(geo, 0.0, 1, 5) < F.BASE_MAX_SPAN[(1, 5)]
+    ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate((61, 63, 67, 70, 75))]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 1, 2, 3, 5))})
+    assert a.rolled == 1
+    # an octave on the same black keys is held as it is, and so is C#-D#-F#-C# (1-2-3-5): the drawn
+    # hand holds it, though index to little finger is near the quick pairwise bound (it was rolled)
+    for ps, fs in (((63, 70, 75), (1, 3, 5)), ((73, 75, 78, 85), (1, 2, 3, 5))):
+        ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate(ps)]
+        a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, fs)})
+        assert a.rolled == 0, ps
+
+
+def test_a_finger_reaching_straight_down_curls_forward_not_sideways():
+    # a target nearly under the knuckle: without the hand's forward, the chain's plane follows the target's
+    # slightest sideways offset (the finger folded out sideways for a frame); with it, the finger curls forward
+    L = [2.0, 1.2, 0.9]
+    for target in ((0.05, 0.02, -2.0), (-0.04, -0.03, -2.2), (0.0, 0.1, -1.9)):
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX, (0.0, 1.0))
+        assert pts[1][1] > 3 * abs(pts[1][0]), (target, pts[1])
+        assert math.dist(pts[-1], target) < 1e-6
+
+
+def test_a_finger_lifted_far_above_its_knuckle_keeps_its_reach(screen):
+    # lifted high (an arc over the thumb), the reach clamp once pulled the tip in under the knuckle
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a = hands.HandAnimator(midi_loader.load_song(midi_path("demo_song.mid")), RIGHT)
+    a._ensure_layout(kb)
+    wx, wy, psi = 700.0, -40.0, 0.0
+    for f in range(2, 6):
+        rx, ry = a.rest_local[f]
+        for z in (0.0, 2 * a.base_local[f][2], 5 * a.base_local[f][2]):
+            x, y, _ = a._limit_tip(f, (wx + rx, wy + ry, z), wx, wy, psi)
+            bx, by = wx + a.base_local[f][0], wy + a.base_local[f][1]
+            assert math.hypot(x - bx, y - by) > 0.3 * a.length[f], (f, z)
+
+
+def test_seen_from_above_a_finger_never_bends_sideways_at_its_middle_joints():
+    # SNAPSHOT-04 leant the bending plane forward for steep targets, tilting it: the middle joints bowed sideways
+    L = [2.0, 1.2, 0.9]
+    # (nearer than a quarter of its length to straight under the knuckle, it curls forward on purpose)
+    for target in ((1.0, 0.4, -2.4), (-0.9, 0.7, -2.2), (1.1, -0.4, -2.4), (1.2, 2.0, -1.0), (0.4, 1.0, -2.0)):
+        pts = hands.solve_chain((0, 0, 0), target, L, (0, 0, 1), hands.FINGER_COUPLING, hands.FINGER_BEND_MAX,
+                                hands.FINGER_LIFT_MAX, (0.0, 1.0))
+        assert math.dist(pts[-1], target) < 1e-6
+        tx, ty = target[0], target[1]
+        h = math.hypot(tx, ty)
+        for p in pts[1:3]:
+            assert abs(p[0] * ty - p[1] * tx) / h < 0.01 * sum(L), (target, p)
+
+
+def test_a_chord_just_past_the_planners_span_is_held_if_the_drawn_hand_can(monkeypatch):
+    # F4-G#4-C#5-F5 (1-2-3-5): with a hand whose 2-3 span scales 0.99, G#4-C#5 was a hundredth of a key
+    # past the planner's span and the chord was rolled, though the hand holds it easily
+    monkeypatch.setattr(hands, "reach_scale", lambda anatomy: {k: 0.99 for k in F.BASE_MAX_SPAN})
+    ns = [Note(p, 1.0 + 0.002 * i, 1.3, 80, 0, RIGHT) for i, p in enumerate((65, 68, 73, 77))]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 2, 3, 5))})
+    assert a.rolled == 0
+
+
+def test_interlocked_hands_lie_one_over_the_other_by_depth():
+    # the hands trilling on top of each other: the LH on D5 / F5 (white keys, at their front), the RH on
+    # D#5 / F#5 (black keys, further in). The LH moved in, but the RH's palm and fingers are over the
+    # LH's fingertips: the RH is on top (the LH's thumb used to be drawn through the RH's fingers)
+    def trill(lh, rh):
+        ns = [Note(75, 0.5, 0.6, 80, 0, RIGHT)]                     # (the RH starts above)
+        for i in range(16):
+            t = 1.0 + 0.12 * i
+            if i % 2:
+                ns.append(Note(rh[(i // 2) % 2], t, t + 0.1, 80, 0, RIGHT))
+            else:
+                ns.append(Note(lh[(i // 2) % 2], t, t + 0.1, 80, 1, LEFT))
+        return hands.crossing_episodes(song_of(ns, 4.0))
+    eps = trill((62, 65), (63, 66))
+    assert eps and all(e[2] == RIGHT for e in eps), eps
+    # the black and white keys the other way round: the LH (further in) on top
+    eps = trill((63, 66), (62, 65))
+    assert eps and all(e[2] == LEFT for e in eps), eps
+
+
+def test_the_hands_never_swap_layers_while_they_overlap(screen):
+    # the LH leaps in from far below to trill on D5 / F5 against the RH's D#5 / F#5 (the RH on top, by depth):
+    # the RH must be on top from before the hands touch, not rise through the LH once they overlap
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns = [Note(36, 0.5, 0.8, 80, 1, LEFT), Note(40, 0.9, 1.2, 80, 1, LEFT)]
+    ns += [Note(p, 0.5 + 0.3 * i, 0.75 + 0.3 * i, 80, 0, RIGHT) for i, p in enumerate((63, 66, 63, 66, 63))]
+    for i in range(14):
+        t = 2.0 + 0.12 * i
+        ns.append(Note((63, 66)[(i // 2) % 2], t, t + 0.1, 80, 0, RIGHT) if i % 2 else
+                  Note((62, 65)[(i // 2) % 2], t, t + 0.1, 80, 1, LEFT))
+    an = hands.build_hands(song_of(ns, 4.0))
+    swaps, touched = [], False
+    prev = None
+    for i in range(int(3.8 * 60)):
+        t = i / 60
+        poses = [a.pose(t, kb) for a in an.values()]
+        top = hands.arrange_crossing(poses)[-1]["hand"]
+        xs = {p["hand"]: [q[0] for c in p["struct"]["chains"].values() for q in c] for p in poses}
+        overlap = min(max(xs[RIGHT]), max(xs[LEFT])) - max(min(xs[RIGHT]), min(xs[LEFT]))
+        touched = touched or overlap > 0
+        if prev is not None and top != prev and overlap > 0:
+            swaps.append((round(t, 3), prev, top))
+        prev = top
+    assert touched and not swaps, swaps
+    assert top == RIGHT

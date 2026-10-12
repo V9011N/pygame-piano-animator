@@ -42,6 +42,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `sf2.py` | The built-in SoundFont player (.sf2 / .sf3) in numpy: zones, loops, volume envelope; no compiled package |
 | `audio_sync.py` | Synced recordings: `SyncAudio` (decode, waveform peaks, play from any point, `offset`), `PlaybackSetup` (default sound or sync; speed, then the audio file, length-checked) |
 | `common.py` | Shared UI and playback: colours, `bottom_layout` (keyboard placement), `Keyboard` (realistic or equal keys, `key_style`), `MidiOut`, `Performance`, `Transport`, dialogs, buttons, sliders, `VolumeSlider`, `draw_tooltip`, `run_busy` (a job in a worker thread behind a progress bar) |
+| `video_export.py` | The player's "Export video": `VideoExport` (frames via `Visualizer.render_video_frame` piped to ffmpeg from imageio-ffmpeg, the sound rendered offline or cut from a synced recording, muxed; run in steps with Cancel) |
 | `recent.py` | The main menu's Recent list: the last five setups launched (play with soundfont / recording + speed, or edit), in settings.json |
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
@@ -52,7 +53,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing, `build_hands` / `load_with_hands` |
 | `skins.py` | Skinned hand drawing (cartoon, gloves, robot) from the pose structure |
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
-| `hand_editor.py` | "Pianists & hands" studio (browser, overview, anatomy, behaviour pages) |
+| `hand_editor.py` | "Pianists & hands" studio (browser, overview - with fingers curled by the wheel, `hands.bend_chain` - anatomy, behaviour pages) |
 | `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
 | `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Hand-thesia` or a portable `pianists` folder beside the .exe when compiled) |
 | `build.py` | Nuitka single-file build (`dist/Hand-thesia.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
@@ -72,10 +73,18 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while
   typing in sequential mode (`_rebuild_due`). `editor.notes` is the song's own list - update
   `editor.index` when replacing a note object.
+- A drawn finger never points up past its knuckle or rears its knuckle up (`TIP_BELOW_KNUCKLE`, `solve_chain`'s
+  `lift_max`), and a chord is rolled when the drawn hand can't hold it (`HandAnimator._chord_fits` decides near the planner's spans,
+  either side).
+- Hands crossing: the crosser goes over (`crossing_episodes`); hands interlocked (trilling on top of each other) lie
+  by depth instead - the one playing further in (black keys) on top - and the layers never flip for a blip, nor
+  swap while the hands overlap (`_layer_top` settles each stretch of contact ahead, from the notes).
 - Nothing in a hand moves faster than the pianist's top speed (`max_speed`): the hand split, the
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
   not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
+- What a video records is `Visualizer._draw_scene` - draw anything new for the screen only (controls, hints)
+  in `render`, not there.
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
   recording the player's clock follows the wall clock instead (audio heard at song time t:
   `offset + t / speed`), and the synth is muted.

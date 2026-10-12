@@ -33,7 +33,8 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
     as the setting); or `PlaybackSetup` on its speed page with the speed set, then `open_audio`, which plays
     or says why not (too short). If any of its files is missing: `recent.remove`, and a `Dialog` ("File not
     found", naming which file - MIDI, audio or soundfont) over the menu. `Dialog` now wraps its message.
-  - `Visualizer` is the falling-notes player. Esc returns to the menu.
+  - `Visualizer` is the falling-notes player. Esc returns to the menu. Its "Export video" button renders the
+    performance to an .mp4 (`video_export.py`, below).
   - Command line: `main.py file.mid` plays the file, `--edit` opens it in the editor, `--screenshot` saves one frame.
 - `common.py` – shared pieces:
   - colours, `Keyboard`, `MidiOut`;
@@ -146,6 +147,40 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - Added by the user: `Etude op25 n06.mid` (thirds; 4 non-hand tracks), `chopin-etude-no-2…op-10.mid`, `Chopin Ballade 1 Full.mid`, `Chopin Prelude 24…`, `chpn-p16.mid`, `Liszt Mazeppa Intro.mid`, `Ravel Ondine Sample…`, `ORIG-MIDI_02_7_10_13…midi` (a performance).
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
+
+## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
+- The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
+  opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
+  badge; kept in settings.json "export_parts"), a note that the controls on the right never are, and Confirm
+  Export: pause, `common.save_video_dialog` (the folder kept as "video_dir"), `Visualizer.start_export`.
+- What's recorded: the whole song from its lead-in (`start_time`, -LEAD_IN) to the end of playback
+  (`end_time`, a synced recording's end included) plus `VIDEO_TAIL_S` 1.5 s, at the playback speed, the window's
+  size (sides made even for x264's 4:2:0), `VIDEO_FPS` 60, with the player's view (seconds shown, hands and finger
+  numbers on or off). Never: the controls panel, the key list, tooltips, the waveform, "Paused", the version and
+  the performance overlay (those two are App's, drawn on the window only).
+  - `Visualizer.layout(size, video=parts)`: no waveform, and with the bar left out the notes fall from the top
+    (`bar_rect` 0 high). The keyboard and hand area don't change, so the hands keep their caches.
+  - `render_video_frame(t)`: `_draw_scene(parts)` (render's scene: notes, keys, hands, pedals / badge per
+    `draw_pianist_badge(..., badge=)`, the bar) onto a surface of its own at song time t.
+- `VideoExport` (one export) runs in steps from the player's frames (`update` -> `step(EXPORT_STEP_T` 0.04 s)),
+  the window kept alive: the frames' RGB bytes (`frame_bytes`) go through a queue (`QUEUE_FRAMES` 4) to a writer
+  thread piping them into ffmpeg (imageio-ffmpeg's own binary, `ffmpeg_exe`; no console window on Windows): x264
+  `fast`, CRF 18, yuv420p, to `<name>.video-tmp.mp4` beside the chosen file.
+  - The sound, in a thread of its own meanwhile, to `<name>.audio-tmp.wav`: a synced recording cut from its
+    decoded samples (`recording_audio`: song time t heard at offset + t / speed, silence before / after it);
+    else the hands' notes and the pedals rendered offline (`render_notes_audio`: a `Transport` of its own
+    driving `sf_synth.SoundfontOut` in-process - the same pedal and soft handling as playback - `AUDIO_BLOCK`
+    256 frames at a time, 5.8 ms timing) with the chosen soundfont, else pretty_midi's General MIDI
+    `TimGM6mb.sf2` (now in the .exe), else none; brought up to peak at -1 dBFS (`NORMALIZE_PEAK`, at most 16x:
+    a soundfont plays well below full scale).
+  - Then (`_finish`, a thread) ffmpeg puts them together: the video copied, the sound to AAC 192k; the
+    temporary files removed. A sound that fails to render: the video without it.
+- While it runs the window shows the frame being rendered, dimmed, and a panel: progress (frames 0.86, sound
+  0.10, putting together 0.04), what it's doing, the time left, Cancel (or Esc; quitting cancels too). Cancel
+  kills ffmpeg, abandons the sound and removes the temporary files. Done or failed: a `Dialog` (the player now
+  has one), and the player back where it was (paused).
+- Pace (this container, 1920 x 1080, the Polonaise, Ninthie): 22 frames/s - the skins' drawing as in playback,
+  `tobytes` 7 ms a frame, x264 in its own process alongside; 6:24 of video in about 17 minutes.
 
 ## Fonts and frame pacing (v26.1.19.SNAPSHOT-14, -15)
 - Every font comes from the bundled typeface: Source Sans Pro, regular and bold (`assets/fonts`, SIL Open Font
@@ -606,6 +641,16 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `common.Performance` feeds `Transport`, which sends note on/off events in time order along with the pedal CCs (64/66/67 from `MidiSong.controls`).
   - The keyboard shows the performed keys.
 - The Studio has four pages: browser (search, size chips, sort), overview (RGB sliders, stretched/natural view, Save that stays disabled for a new pianist until Anatomy and Behavior have both been visited), anatomy (clickable bones and table, group sliders, span-over-keys view with the thumb on C4) and behavior.
+- Overview finger curling (v26.1.20): pointing at a finger or the thumb highlights it (`_finger_at`, distance to its
+  drawn chain within about half a finger's width; kept while the pointer stays put, so a finger curling out from under
+  it keeps the wheel), and the wheel bends it, `BEND_STEP` 0.1 a notch, down = in. `PianistStudio.bends` {finger: b}
+  goes to `static_skeleton(..., bends)` → `hands.bend_chain`: a finger (b -0.5..1) turns down at MCP/PIP/DIP by
+  b x `FINGER_BEND_RAD` (0.6, 0.8, 0.5 rad), negative b lifting mostly at the MCP; the thumb (b -0.6..1) swings about
+  the vertical through its CMC - in, toward pointing `THUMB_TUCK_SHY` short of the index knuckle (at least
+  `THUMB_TUCK_MIN`; any further and the palm hides it from above) - and (v26.1.20.SNAPSHOT-02) curls at every joint:
+  `THUMB_CURL_RAD` (the CMC's share of that swing, then 0.55 / 0.6 rad about the vertical at the MCP and IP joints),
+  plus a little flexion down; out, by `THUMB_SWING_RAD`, its MCP and IP joints straightening `THUMB_SPREAD_RAD`. The view is fitted to the unbent hand so curling doesn't rescale it. A preview only (never saved);
+  the Natural curve / Stretched out button clears it, as does opening another pianist.
 - Badges: the active pianist appears in the bottom-right of the hand area (player and editor), in the menu line and in the Studio's top bar. The pedals sit bottom-left
   (v26.1.16, `common.draw_pedals`): a pedal box with soft, sostenuto and sustain pedals (CC 67, 66, 64, from
   `MidiSong.control_state`), each lit red while down (64+) and dipped a little - drawn 3x and smoothscaled (hard
@@ -726,6 +771,38 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     - This replaced a sampled-window version that merged the Toccatina's final LH-up and RH-down crossings into one LH-over episode.
     - Episodes are `(t0, t1, top, strength, lead)`. The hand rises from its previous onset (`lead` 0.25–0.6 s) and settles over 0.4 s.
     - `_crossing_lifts` gives each hand its own smoothed lift, so a handover between two crossings is smooth, and the larger lift is on top.
+  - Interlocked hands (v26.1.20.SNAPSHOT-08; Liszt HR 10, MAESTRO 2015, 3:18-4:08: the hands trilling on top of each
+    other): the crossing runs come in clusters (gaps under `INTERLOCK_NEAR` 1 s). A cluster where both hands strike
+    at least twice, each within `INTERLOCK_SPAN` 14 semitones (over it and 0.3 s either side), their ranges
+    overlapping, is interlocked: the hand with `INTERLOCK_BLACK` 0.3 more of its notes on black keys - further in,
+    its palm and fingers over the other's fingertips at the keys' front - is on top, whoever moved in. At 3:25 and
+    3:52 the LH on D5 / F5 crossed in while the RH held D#5 / F#5: the LH was on top and its thumb, striking F5's
+    front edge, was drawn over the RH's fingers reaching past it - through them. Hands sweeping past each other
+    (wider) or one wholly past the other stay crosser-on-top (its forearm goes over).
+    - Blips: a run under `INTERLOCK_BLIP` 0.3 s goes with the hand on top for most of its cluster, so the layers
+      no longer flip for one note of the other hand's (3:33.25, 3:35.07, 4:04.12, 4:04.73 were 0.04-0.11 s
+      RH-on-top flips inside LH-on-top stretches).
+    - Top-layer pressing fingertips over the lower hand's fingers or palm, HR 10 3:15-4:12 (Ninthie, 1/30 s): 32 ->
+      1 frame (default pianist: 0). Quick top flips (a change of top hand under 1 s apart): HR 10 8 -> 0, Op. 25
+      No. 12 3 -> 0, Scarbo 46 -> 9, Dante 1 -> 0; Ballade 1, Polonaise, Scriabin Op. 28, the Bach and
+      Rachmaninoff files unchanged.
+  - Layers settled ahead while the hands are in contact (v26.1.20.SNAPSHOT-09; HR 10 3:24-3:25: the LH leapt in, the
+    hands overlapped from 3:24.2, but the RH's episode only began lifting it - and putting it on top - at 3:25.27:
+    it rose through the LH in one frame). `arrange_crossing` asks `_layer_top` first:
+    - Contact: the hands' footprints overlap (`contact_overlap`, `CONTACT_GRID` 0.05 s, cached on the RH's
+      animator). `HandAnimator.footprint(t)` is from the notes, free to look far ahead (a placement solved
+      seconds ahead stalled a frame for up to 1.4 s): the keys of its latest chord (and the next within
+      `CONTACT_NEXT_T` 0.3 s; the next only when it has been silent `CROSS_STALE`), or - holding no key, its next
+      notes within `CONTACT_AHEAD_T` 1.2 s (an idle hand sets off up to 1.1 s ahead) - those; widened by
+      `CONTACT_PAD_WK` 2.5 white keys on the thumb side and 1 on the little finger's, at least the hand's own width;
+      None while idle with nothing near. Gaps under `CONTACT_BRIDGE` 0.3 s are bridged (contact seen a little
+      early, the swap done with the hands apart).
+    - The stretch of contact (scanned `CONTACT_SCAN` 6 s either way, cached per step) takes its first crossing
+      episode's top hand from its very start - before that episode begins. With later episodes of the other hand
+      on top, the swap comes at the step where the hands overlap least between them. Not in contact: as before
+      (the most-lifted hand). Only the hand on top is lifted.
+    - Layer swaps while the drawn hands overlapped (1/30 s, Ninthie): HR 10 3:15-4:12 2 -> 0, Op. 25 No. 12 0-160 s
+      12 -> 1, Dante 0-200 s 9 -> 0, Scarbo 0-260 s 18 -> 6. `arrange_crossing` 0.05-0.2 ms a frame.
   - `draw_hands` calls `arrange_crossing`: the crossing hand is drawn on layer 1, and its wrist, palm and forearm are raised by up to 0.8 in (`_lift_pose`). The lift fades to 0 at the fingertips and ramps in and out over 0.4 s.
   - `skins.draw_skinned` and `draw_skeletons` draw layer by layer, and the top hand's shadow falls on the lower hand.
 - **Idle hand keeps out of the way** (2026-09-28): hands cross only when the notes make them.
@@ -810,6 +887,67 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       chords drop the bridge for a plain fingering: the 3:20 chord D#4-F#4-A#4-D#5 is now 1-2-3-5 (29 bridges in
       the sonata, now 19). Top speed kept; the only new off-key notes are the bridges' near keys (the tip is on the
       far one by design).
+    - v26.1.20.SNAPSHOT-02: the bridge's MCP constraint is weighted `THUMB_BRIDGE_FIX_K` 0.15 of a key's - a nicety
+      that gives way to the keys (at full weight it pulled the hand in and kept the other fingers off theirs).
+- **Fingers that reared up or folded in** (v26.1.20.SNAPSHOT-02; Chopin Polonaise Op. 53, MAESTRO 2011, 0:30 LH,
+  default pianist): idle fingers in a wide stretch drew their tips above their knuckles - travelling to a key, the arc
+  over (`_tip_target`, up to 1.5 units) lifted the tip past the knuckle and the finger pointed up into the air (index
+  60 deg up) - or, the tip close in, `solve_chain`'s coupled curl folded the finger back under a knuckle reared 77 deg.
+  - `_finger_pose` keeps every tip `TIP_BELOW_KNUCKLE` 0.12 of the finger's length below its knuckle.
+  - `solve_chain(..., lift_max)` (`FINGER_LIFT_MAX` 40 deg, fingers in performance only): a first bone steeper than
+    that is tipped down in the chain's plane, as little as it takes, and the other two solved as a plain two-bone
+    chain to the same tip, curling the same way (PIP within the bend limit + 0.35, DIP within it); otherwise the
+    chain is left as it was (`_lower_knuckle`).
+  - The first minute, both hands, every 1/30 s: first bone over 45 deg 819 -> 0 samples (of 14408), tip above the
+    knuckle 1171 -> 0; 95th percentile rise 47 -> 37 deg.
+  - Follow-up (author's "Ninthie" pianist: long metacarpals, cross_height 0.7; Polonaise 0:09.1 / 0:16.3 LH index
+    leaving Eb-Ab-Eb): lifted in an arc over the thumb its target rose ~3 in above the key surface; at that height
+    `_clamp_tip`'s reach had no room across and pulled the tip in under the knuckle, and the below-knuckle cap then
+    dropped it straight down - a target right under the knuckle, where `solve_chain`'s plane (from the bulge and
+    the direction to the target, nearly parallel) swung with the target's slightest offset: the finger folded out
+    sideways for a frame or two.
+    - `_limit_tip` clamps with the height `_finger_pose` will draw (capped `TIP_BELOW_KNUCKLE` below the knuckle).
+    - `solve_chain(..., forward)` (the hand's forward, fingers in performance): for a target steeply below the base
+      the bulge leans forward (`STEEP_FORWARD`: from sine 0.5, eased in by 0.85, up to 2x), so the finger curls
+      forward and down.
+    - Ninthie, first minute, shape spikes (a joint jumping > 0.25 finger lengths for a frame and back): 29 -> 25;
+      the four ~0.8 ones (0:09.08, 0:09.1, 0:16.33, 0:30.12, all LH index) gone (SNAPSHOT-01 had 47).
+    - SNAPSHOT-05: leaning the bulge forward tilted the chain's plane off the vertical, so seen from above the PIP
+      and DIP joints bowed sideways (Ninthie, first 40 s: 1056 samples with a joint > 0.08 finger lengths off the
+      knuckle-tip line, up to 0.18; SNAPSHOT-03 had none). Now with `forward` the plane is always vertical: through
+      the target's horizontal direction, turned toward the hand's forward only for a target nearly straight under
+      the knuckle (`STEEP_FORWARD`[3]: forward weighs up to 0.12 of the finger's length, fading out by 0.24 of it
+      across), the joints bowing forward in it; what the target is then off the plane is made up along the finger
+      (each joint shifted by its share of the length). Ninthie: 0 such samples, mean 0.0; shape spikes 24.
+- **Chords past the drawn hand** (v26.1.20.SNAPSHOT-02; same piece, 0:22.65 RH, default pianist): C#4+D#4 (thumb
+  bridge, tip on C#4), G4, A#4, D#5 - within the planner's 1-5 span (`BASE_MAX_SPAN` 8.3 + 0.25 white keys; C#4-D#5
+  is 8.14) but past the drawn hand's: no hand position reached them all (brute force: the little finger 18 px off
+  at best), and held together it landed between D#5 and E5, twitching as the fit traded fingers.
+  - `hands.drawn_reach(geo, lift_in, fa, fb)`: how far apart two fingertips of the drawn hand can hold keys (white
+    keys) - each tip anywhere in its pressing splay (+ `PRESS_SLACK_DEG`) and reach (0.99 of its length at the key's
+    depth below its base), the hand turned through `ROLL_TURN_DEG` (-40..20), the tips at most `ROLL_DEPTH_IN` 1.6 in
+    apart along the keys. Default pianist: 1-2 6.2, 1-3 7.5, 1-4 7.8, 1-5 7.8, 2-3 3.7, 2-4 4.3, 2-5 5.3, 3-4 3.4,
+    3-5 4.7, 4-5 3.7 (a brute-force fit of the real IK reaches about 0.1-0.2 further).
+  - SNAPSHOT-02 rolled when a pair passed drawn_reach plus a per-end slack; pairwise, that both missed chords that
+    only fail with several fingers at once and rolled ones the hand holds fine (1:31.58 RH C#5-D#5-F#5-C#6, 1-2-3-5:
+    index to little finger 5.86 white keys against drawn_reach's 5.3).
+  - v26.1.20.SNAPSHOT-03: drawn_reach is only a filter (a pair within `ROLL_SUSPECT_WK` 0.4 of it). Such a chord is
+    rolled unless `HandAnimator._chord_fits`: numpy search over the hand's place and turn (25 x 17 x 17 grid, then
+    twice 9^3 finer about the best) on a reference keyboard (`ROLL_FIT_WW` 30 px per white key, the user's key style),
+    each tip clamped into its pressing splay and reach as `_clamp_tip` does, the hand as low as `_low` puts it for
+    the chord's span (a flattened hand reaches further - leaving that out rejected the 1:31 chord), anywhere along
+    the key's playing area +- `ROLL_DEPTH_SLACK_WK` 0.15; it fits if some hand has every tip within `ROLL_MISS_WK`
+    of its key's aim (0.45 white key on a white key, 0.22 on a black one).
+  - Calibration (default pianist, Polonaise): with rolling switched off for the flagged chords, the two the fit
+    rejects are the two that really land a tip off its key (0:22.65 5 px, 1:03.71 4 px); a black-key allowance of
+    0.3, or a depth slack of 0.1 with 0.3, rejects none, 0.22 without depth slack also rejects 0:19.31 (1 px).
+    Rolled chords: Polonaise RH 4 -> 6, LH 0; Scarbo and Liszt HR 10 as before SNAPSHOT-02 (RH 12 / 2, LH 0 / 3).
+    Load time unchanged within noise (the fit runs only for suspects).
+  - v26.1.20.SNAPSHOT-06: the planner's pairwise spans no longer roll a chord outright unless a pair is past them by
+    more than `ROLL_PLAN_SLACK_WK` 0.75 white keys; nearer, `_chord_fits` decides either way. (Polonaise 1:02.85 RH
+    F4-G#4-C#5-F5, 1-2-3-5, author's Ninthie pianist: G#4-C#5 is 2.93 white keys against 2-3's 2.70 x 0.99 + 0.25
+    = 2.92, so it was rolled; the drawn hand holds it.) Polonaise, chords no longer rolled: Ninthie 2, default 1, all
+    landing on their keys (worst 2 px past an edge); none newly rolled.
 - **Aspect ratio** (2026-09-27): `common.bottom_layout` draws everything at the bottom to one scale, pixels per white key.
   - The keys are `KEY_LEN_WW` 5.6 widths long and the hand area `HAND_LEN_WW` 7.0 widths tall. Before this, the key height was capped at 20% of the window height, which squashed the keys in wide windows and left the hands mismatched.
   - If keys + hands would take more than `BOTTOM_MAX_SHARE` 0.5 of the height (windows wider than about 16:9), the keyboard gets narrower and is centred.

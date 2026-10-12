@@ -919,6 +919,25 @@ def save_file_dialog(title="Export MIDI file", initialdir=None, initialfile=None
         _after_dialog()
 
 
+def save_video_dialog(initialdir=None, initialfile=None):
+    """Native save dialog for an .mp4 video; '' if cancelled or unavailable."""
+    try:
+        from tkinter import filedialog
+        root = _tk_root()
+        path = filedialog.asksaveasfilename(parent=root, title="Export video",
+                                            filetypes=[("MP4 video", "*.mp4")], defaultextension=".mp4",
+                                            initialdir=initialdir or None, initialfile=initialfile or None)
+        root.destroy()
+        if path and not path.lower().endswith(".mp4"):
+            path += ".mp4"
+        return path or ""
+    except Exception as exc:
+        print(f"File dialog unavailable ({exc})")
+        return ""
+    finally:
+        _after_dialog()
+
+
 def _after_dialog():
     # Clicks and key presses made in the dialog must not reach the app.
     try:
@@ -1038,24 +1057,25 @@ class Dialog:
             x += bw + gap
 
 
-def draw_pianist_badge(surf, fonts, area, pianist, pedals=None):
+def draw_pianist_badge(surf, fonts, area, pianist, pedals=None, badge=True):
     """
-    The active pianist, small, in the bottom-right corner of `area` - and the
-    pedals in the bottom-left (draw_pedals), given `pedals` ({controller:
-    value} in force, MidiSong.control_state). Returns where the pedals went.
+    The active pianist, small, in the bottom-right corner of `area` (unless
+    not `badge`) - and the pedals in the bottom-left (draw_pedals), given
+    `pedals` ({controller: value} in force, MidiSong.control_state). Returns
+    where the pedals went.
     """
-    name = pianist.name
-    img = fonts["small"].render(name, True, TEXT_DIM)
     pad = 8
-    w = img.get_width() + 30
-    box = pygame.Rect(area.right - w - pad, area.bottom - img.get_height() - 10 - pad, w,
-                      img.get_height() + 8)
-    panel = pygame.Surface(box.size, pygame.SRCALPHA)
-    panel.fill((0, 0, 0, 90))
-    surf.blit(panel, box)
-    pygame.draw.circle(surf, tuple(pianist.badge_color), (box.x + 12, box.centery), 6)
-    pygame.draw.circle(surf, (150, 150, 160), (box.x + 12, box.centery), 6, 1)
-    surf.blit(img, (box.x + 24, box.y + 4))
+    if badge:
+        img = fonts["small"].render(pianist.name, True, TEXT_DIM)
+        w = img.get_width() + 30
+        box = pygame.Rect(area.right - w - pad, area.bottom - img.get_height() - 10 - pad, w,
+                          img.get_height() + 8)
+        panel = pygame.Surface(box.size, pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 90))
+        surf.blit(panel, box)
+        pygame.draw.circle(surf, tuple(pianist.badge_color), (box.x + 12, box.centery), 6)
+        pygame.draw.circle(surf, (150, 150, 160), (box.x + 12, box.centery), 6, 1)
+        surf.blit(img, (box.x + 24, box.y + 4))
     if pedals is not None:
         # above the version in the window's corner (App.draw_version)
         bottom = min(area.bottom - pad, surf.get_height() - fonts["small"].get_height() - 10)

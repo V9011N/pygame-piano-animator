@@ -127,7 +127,9 @@ def command(console=False, tcl_tk=()):
         "--nofollow-import-to=pig_eval,learn_weights,tests,conftest,pytest",
         "--noinclude-pytest-mode=nofollow",
         "--noinclude-setuptools-mode=nofollow",
-        "--noinclude-data-files=pretty_midi/*.sf2",                   # a soundfont for fluidsynth, unused
+        "--include-package-data=pretty_midi",                         # its General MIDI soundfont: a video's sound
+                                                                       # when no soundfont is chosen (video_export)
+        "--include-package-data=imageio_ffmpeg",                      # the ffmpeg binary video export pipes to
         "--assume-yes-for-downloads",
         "--product-name=Hand-thesia",
         f"--product-version={numeric_version()}",
