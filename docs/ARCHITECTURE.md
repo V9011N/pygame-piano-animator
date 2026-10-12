@@ -956,7 +956,9 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
       chord; `cluster_key` holds the keys the finger holds as one (`_mates`), while `pair_key` (where it aims)
       is the note's own key until the slip (unless caught within `SMUDGE_TOL`: the keys from the start), then the
       keys slipped across by then - the finger slides over to touch both. A held voice as loud as the melody, or
-      a trill (nothing held across another), isn't a slip.
+      a trill (nothing held across another), isn't a slip. Ten MAESTRO files (Ninthie): 39 slips in 34,087 notes;
+      the check's incidents as without slips (solver 9, speed 1, anatomy 2, timing 2, corrected 2); Hanon 60
+      unchanged.
     - PIG (the author's run, all 150 pieces): with Ninthie, the planner before and after give the same fingering
       on every piece - no smudge or cluster is taken there. Test split 001-030, both hands: default pianist
       general 65.97% / high 72.00% / soft 87.56% (the reference now; 66.23% was measured in September, before
