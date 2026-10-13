@@ -255,6 +255,9 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   nor C#5 on 3 struck 6 ms before an octave A#4-A#5 on 1-4 comes up (2008, 2:59.5: counted in, it pulled 4 off A#5).
 - Left as it is: 2014, 18:20.7 - a descending arpeggio crossing over the thumb 3 ms after the keys come up; the drawn
   hand runs a little ahead into the next notes (speed).
+- Canary: seen 38 -> 25 against round 1 (-34%; 16 fixed, 3 new), 72 -> 25 against round 0 (-65%; 50 fixed, 3 new).
+  Solver 28 -> 17, speed 4 -> 5, anatomy 6 -> 3, corrected 29 -> 25. (Before the span check in `_in_shape`: 38 -> 38,
+  17 new - mostly 4 and 5 shifted onto black keys by notes wrongly counted with an octave.) Hanon 60 2.37%.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
