@@ -230,6 +230,9 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   late - speed incidents 3 -> 14, e.g. a rolled D#5-A5-F6 whose thumb came 26 ms after the 5.) That octave: on both
   keys.
 - Also gone with these: Chopin Op. 25 (2004, 4:37.5) RH G#5 on 5 in a repeated figure (59% off).
+- Canary (30 MAESTRO files, 3 a year; Ninthie; tools/regress.py): seen incidents 72 -> 38 (-47%: solver 64 -> 28,
+  speed 3 -> 4, anatomy 5 -> 6; 49 fixed, 15 new). The weaker-getting-ready version: 72 -> 41 (solver 18, but speed 14).
+  PIG test split 65.51% / all 69.31% (Ninthie, unchanged: the fingering isn't touched), Hanon 60 2.37%.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
