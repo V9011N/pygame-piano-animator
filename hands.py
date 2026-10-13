@@ -228,6 +228,7 @@ THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys,
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
 KEY_FIX_ITERS = 6
+KEY_FIX_AHEAD_SHARE = 0.05  # while a finger holds a key, one only getting ready for its next key counts this share
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
 # it still has to go)
@@ -252,6 +253,8 @@ TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key j
 TREM_REACH_EXTRA = 1.25     # white keys: a tremolo's cycle may span this much more than the thumb-little finger stretch
 TREM_SLACK_WK = 0.35        # ...and the drawn hand, held still, reach each key of it within this much more than a
                             # chord's (_chord_fits: rocking the forearm reaches a little further)
+TREM_OFF_KEY_W = 0.3        # in a tremolo the still hand can't quite span, a finger in the air keeps the hand by its
+                            # key this share as firmly as one down on its key (_key_fix): the hand rocks
 TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
@@ -975,6 +978,7 @@ class HandAnimator:
         self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
+        self.trem_rock = set()
         self.trems = self._find_tremolos()
         self._group_ts = [t for t, _ in self.groups]
         self.trem_starts = [a for a, _ in self.trems]
@@ -1083,10 +1087,14 @@ class HandAnimator:
             # stretch is a real hand's: a tenth passed it, and the still hand missed both ends)
             i = widths.index(max(widths))
             cycle = [m for _, ns in groups[lo + i:lo + i + TREM_PERIOD] for m in ns]
-            if len({(self.fingering[id(m)], m.pitch) for m in cycle}) > 1 and not self._chord_fits(cycle, TREM_SLACK_WK):
+            several = len({(self.fingering[id(m)], m.pitch) for m in cycle}) > 1
+            if several and not self._chord_fits(cycle, TREM_SLACK_WK):
                 continue
             t1, ns = groups[hi]
-            out.append((groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T)))
+            span = (groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T))
+            if several and not self._chord_fits(cycle):
+                self.trem_rock.add(span)           # (only with the slack: played rocking, _key_fix)
+            out.append(span)
         return out
 
     def _trem_span(self, t):
@@ -1698,13 +1706,22 @@ class HandAnimator:
         cons = []
         comp, low = self._run_w(t), self._low(t)
         tw, tr = self._trem_w(t)
+        down = [f for f in range(1, 6) if self._pressing(f, t)]
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
+            if down and f not in down and n is not None:
+                # keys down come first: a finger only getting ready for its next key moves the hand
+                # no further than the held keys let it (an octave held, its thumb's next note far off)
+                w *= KEY_FIX_AHEAD_SHARE
             if tw > 0.0:
-                # in a tremolo every finger playing in it counts as on its key throughout
+                # in a tremolo every finger playing in it counts as on its key throughout - but in one the
+                # still hand can't quite span (only with _tremolos' TREM_SLACK_WK, trem_rock) a finger in
+                # the air keeps the hand by its key only TREM_OFF_KEY_W as firmly as one down on its key:
+                # the hand rocks toward each finger as it strikes
                 m = self._trem_note(f, t, tr)
-                if m is not None and (n is None or (n.pitch == m.pitch and w < tw)):
-                    w, n = tw if n is None else max(w, tw), m      # (a finger moving to a new key keeps to it)
+                ow = tw * (TREM_OFF_KEY_W if tr in self.trem_rock else 1.0)
+                if m is not None and (n is None or (n.pitch == m.pitch and w < ow)):
+                    w, n = ow if n is None else max(w, ow), m      # (a finger moving to a new key keeps to it)
             if n is None or not self._has_key(self._pk(n)):
                 continue
             kx, ky = self.key_target(self._pk(n), f, n)

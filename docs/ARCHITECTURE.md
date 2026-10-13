@@ -209,6 +209,24 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   MAESTRO bench sample checked and compared with the last round's (`--baseline`); each round appended to
   runs/history.jsonl and the history printed.
 
+### Round 1 (from the full run of 97ed615, Ninthie: 1279 files, 7.05M notes, 3021 seen solver incidents)
+- Patterns: an outer finger (5, sometimes 4) on one black key at the hand's far end, the hand shifted (LH bass /
+  RH treble; ~60% of the seen solver incidents); octave-type chords (1-5, 1-4) on black keys drawn off, LH bass (~15%).
+- **Tremolos the still hand can't quite span.** Schubert D. 960 (2004, F# minor, 1:04 and 10:00): LH F#2-C#3-A#3
+  fingered 5-3-1-3-5, a tenth, taken for a tremolo (`_find_tremolos` accepts a cycle the drawn hand reaches within
+  `TREM_SLACK_WK` more than `_chord_fits` allows - the forearm rocks). But `_key_fix` held every tremolo finger on its
+  key at full weight, in the air or not: the still hand between F#2 and A#3, the little finger 27 px short of F#2 (85 px
+  from its knuckle, reach 58), `_settle_on_keys` jolting the hand 0.23-0.27 white keys at each strike. Now a tremolo
+  that fits only with the slack (`trem_rock`) has its fingers in the air keep the hand by their keys at
+  `TREM_OFF_KEY_W` 0.3 of a pressing finger's weight: it rocks toward each finger as it strikes; one that fits is held
+  still as before (Dante's opening tremolo, in the tests). That file: 20 seen incidents -> 0.
+- **Keys down come first.** Mephisto Waltz No. 1 (2008, 8:07.6): LH octave C#2-C#3 (1-5), finger 2's next key G4 two
+  octaves up 5 ms after it's let go; its anticipation weight in `_key_fix` turned the hand (psi 0.52) and dragged the
+  little finger 2.2 keys off C#2. Now, while any finger holds a key, one only getting ready for its next key counts
+  `KEY_FIX_AHEAD_SHARE` 0.05 of its weight (tremolo fingers apart): it moves the hand only as far as the held keys let
+  it. That octave: on both keys.
+- Also gone with these: Chopin Op. 25 (2004, 4:37.5) RH G#5 on 5 in a repeated figure (59% off).
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
