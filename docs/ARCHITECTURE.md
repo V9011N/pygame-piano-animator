@@ -222,9 +222,13 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   still as before (Dante's opening tremolo, in the tests). That file: 20 seen incidents -> 0.
 - **Keys down come first.** Mephisto Waltz No. 1 (2008, 8:07.6): LH octave C#2-C#3 (1-5), finger 2's next key G4 two
   octaves up 5 ms after it's let go; its anticipation weight in `_key_fix` turned the hand (psi 0.52) and dragged the
-  little finger 2.2 keys off C#2. Now, while any finger holds a key, one only getting ready for its next key counts
-  `KEY_FIX_AHEAD_SHARE` 0.05 of its weight (tremolo fingers apart): it moves the hand only as far as the held keys let
-  it. That octave: on both keys.
+  little finger 2.2 keys off C#2. Now held keys - and the keys of the chord being struck (its group: a rolled chord's
+  later notes are part of the shape) - weigh `KEY_FIX_HELD_K` 20 times as much in `_key_fix` (fading out in a
+  tremolo, which has its own rule): a finger getting ready for a later chord moves the hand toward it only as far as
+  the held keys let it, but that far in good time. (A first version weakened the getting-ready fingers to 0.05
+  instead: the canary's solver incidents fell as far, but the hand then waited for the keys to come up and arrived
+  late - speed incidents 3 -> 14, e.g. a rolled D#5-A5-F6 whose thumb came 26 ms after the 5.) That octave: on both
+  keys.
 - Also gone with these: Chopin Op. 25 (2004, 4:37.5) RH G#5 on 5 in a repeated figure (59% off).
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)

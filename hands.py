@@ -228,7 +228,7 @@ THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys,
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
 KEY_FIX_ITERS = 6
-KEY_FIX_AHEAD_SHARE = 0.05  # while a finger holds a key, one only getting ready for its next key counts this share
+KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
 # it still has to go)
@@ -979,6 +979,7 @@ class HandAnimator:
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
         self.trem_rock = set()
+        self._group_of = None
         self.trems = self._find_tremolos()
         self._group_ts = [t for t, _ in self.groups]
         self.trem_starts = [a for a, _ in self.trems]
@@ -1706,13 +1707,18 @@ class HandAnimator:
         cons = []
         comp, low = self._run_w(t), self._low(t)
         tw, tr = self._trem_w(t)
-        down = [f for f in range(1, 6) if self._pressing(f, t)]
+        if self._group_of is None:
+            self._group_of = {id(m): gi for gi, (_, ns) in enumerate(self.groups) for m in ns}
+        go = self._group_of
+        held = {go.get(id(m)) for m in (self._held_note(g, t) for g in range(1, 6)) if m is not None}
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
-            if down and f not in down and n is not None:
-                # keys down come first: a finger only getting ready for its next key moves the hand
-                # no further than the held keys let it (an octave held, its thumb's next note far off)
-                w *= KEY_FIX_AHEAD_SHARE
+            if held and n is not None and go.get(id(n)) in held:
+                # keys down come first: a held key - or one of the chord being struck - weighs
+                # KEY_FIX_HELD_K times as much, so a finger getting ready for a later chord moves the hand
+                # toward it only as far as the held keys let it (an octave held, its thumb's next note far
+                # off) - but that far, in good time. (Not in a tremolo: it has its own rule, below.)
+                w *= 1.0 + (KEY_FIX_HELD_K - 1.0) * (1.0 - tw)
             if tw > 0.0:
                 # in a tremolo every finger playing in it counts as on its key throughout - but in one the
                 # still hand can't quite span (only with _tremolos' TREM_SLACK_WK, trem_rock) a finger in
