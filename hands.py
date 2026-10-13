@@ -228,6 +228,8 @@ THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys,
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
 KEY_FIX_ITERS = 6
+KEY_FIX_STEP_PX = 40.0      # the key fit's steps: at most this far...
+KEY_FIX_STEP_RAD = 0.25     # ...and this much turn each
 KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
@@ -956,6 +958,7 @@ class HandAnimator:
                         e = max(s0 + 0.5 * (sm - s0), sm - lift)
                         self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
                     gi += 1
+        self._release_unheld()
         # Nothing travels faster than the pianist's top speed: keys are let
         # go early enough to get to the next ones, or those are struck late.
         self._speed_schedule()
@@ -1709,16 +1712,23 @@ class HandAnimator:
         tw, tr = self._trem_w(t)
         if self._group_of is None:
             self._group_of = {id(m): gi for gi, (_, ns) in enumerate(self.groups) for m in ns}
+            self._end_of_f = {id(m): self.finger_ends[f][i] for f, ns in self.by_finger.items()
+                              for i, m in enumerate(ns)}
         go = self._group_of
-        held = {go.get(id(m)) for m in (self._held_note(g, t) for g in range(1, 6)) if m is not None}
+        down = [m for m in (self._held_note(g, t) for g in range(1, 6)) if m is not None]
+        held = {go.get(id(m)) for m in down}
+        held_end = max((self._end_of_f.get(id(m), 0.0) for m in down), default=-math.inf)
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
-            if held and n is not None and go.get(id(n)) in held:
-                # keys down come first: a held key - or one of the chord being struck - weighs
-                # KEY_FIX_HELD_K times as much, so a finger getting ready for a later chord moves the hand
-                # toward it only as far as the held keys let it (an octave held, its thumb's next note far
-                # off) - but that far, in good time. (Not in a tremolo: it has its own rule, below.)
-                w *= 1.0 + (KEY_FIX_HELD_K - 1.0) * (1.0 - tw)
+            boost = 1.0
+            if held and n is not None and (go.get(id(n)) in held or (
+                    self.start_of.get(id(n), math.inf) < held_end and self._in_shape(n, f, down))):
+                # keys down come first: a held key - or one of the chord being struck, or struck while the
+                # held keys are still down (a chord rolled across groups) - weighs KEY_FIX_HELD_K times as
+                # much, so a finger getting ready for a later chord moves the hand toward it only as far as
+                # the held keys let it (an octave held, its thumb's next note far off, struck after it's
+                # let go) - but that far, in good time. (Not in a tremolo: it has its own rule, below.)
+                boost = 1.0 + (KEY_FIX_HELD_K - 1.0) * (1.0 - tw)
             if tw > 0.0:
                 # in a tremolo every finger playing in it counts as on its key throughout - but in one the
                 # still hand can't quite span (only with _tremolos' TREM_SLACK_WK, trem_rock) a finger in
@@ -1738,7 +1748,7 @@ class HandAnimator:
             m = math.radians(KEY_FIX_MARGIN_DEG) - (math.radians(PRESS_SLACK_DEG[f]) if self._pressing(f, t) else 0.0)
             hmin, hmax = self._reach_range(f, self.base_local[f][2] * low + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
-            cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w))
+            cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w, boost))
             pk = self._pk(n)
             if f == 1 and self._bridge_pair(pk, 1):
                 # a thumb bridging two black keys lies straight across them (_thumb_bridge): from
@@ -1754,17 +1764,20 @@ class HandAnimator:
                 reach = math.sqrt(max(0.0, l1 * l1 - dz * dz))
                 # (a nicety, not a key: it gives way when it would keep another finger off its key)
                 cons.append((mx, [my], self.base_local[1], -math.pi, math.pi, 0.0, reach,
-                             THUMB_BRIDGE_FIX_K * KEY_FIX_K * w))
+                             THUMB_BRIDGE_FIX_K * KEY_FIX_K * w, 1.0))
         if not cons:
             return wx, wy, psi
         arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
         arm *= 1.0 + (RUN_TURN_STIFF - 1.0) * comp     # (in a run the hand keeps its turn: chromatic octaves)
 
-        def residuals(q):
+        def residuals(q, boosted):
             x, y, p = q
             c, s_ = math.cos(p), math.sin(p)
-            out = [x - wx, y - wy, arm * (p - psi)]
-            for kx, ys, (blx, bly, _), lo, hi, hmin, hmax, k in cons:
+            # (with held keys weighing more, the hand's turn stiffens as much: it moves rather than turns)
+            out = [x - wx, y - wy, arm * (KEY_FIX_HELD_K if boosted else 1.0) * (p - psi)]
+            for kx, ys, (blx, bly, _), lo, hi, hmin, hmax, k, boost in cons:
+                if boosted:
+                    k *= boost
                 # anywhere along the key will do: the depth that needs the least
                 best = None
                 for ky in ys:
@@ -1778,35 +1791,57 @@ class HandAnimator:
                         best = (ea * ea + eh * eh, ea, eh)
                 out += [k * best[1], k * best[2]]
             return out
-        q = [wx, wy, psi]
-        r0 = residuals(q)
-        cost = sum(v * v for v in r0)
-        eps = (0.5, 0.5, 1e-3)
-        for _ in range(KEY_FIX_ITERS):
-            if sum(v * v for v in r0[3:]) < 1e-6:
-                break
-            cols = []
-            for j in range(3):
-                qq = list(q)
-                qq[j] += eps[j]
-                cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq), r0)])
-            A = _gram(cols)
-            g = [-sum(map(mul, cols[i], r0)) for i in range(3)]
-            for i in range(3):
-                A[i][i] *= 1.0 + GN_DAMPING
-            dq = _solve3(A, g)
-            # only ever downhill: halve a step that would overshoot
-            for _ in range(6):
-                qn = [q[i] + dq[i] for i in range(3)]
-                rn = residuals(qn)
-                cn = sum(v * v for v in rn)
-                if cn < cost:
-                    q, r0, cost = qn, rn, cn
+
+        def solve(q, boosted):
+            r0 = residuals(q, boosted)
+            cost = sum(v * v for v in r0)
+            eps = (0.5, 0.5, 1e-3)
+            for _ in range(KEY_FIX_ITERS):
+                if sum(v * v for v in r0[3:]) < 1e-6:
                     break
-                dq = [d * 0.5 for d in dq]
-            else:
-                break
+                cols = []
+                for j in range(3):
+                    qq = list(q)
+                    qq[j] += eps[j]
+                    cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq, boosted), r0)])
+                A = _gram(cols)
+                g = [-sum(map(mul, cols[i], r0)) for i in range(3)]
+                for i in range(3):
+                    A[i][i] *= 1.0 + GN_DAMPING
+                dq = _solve3(A, g)
+                # within a trust region (a fit weighing its keys far above the hand's place can ask for a huge
+                # step), and only ever downhill: halve a step that would overshoot
+                big = max(abs(dq[0]) / KEY_FIX_STEP_PX, abs(dq[1]) / KEY_FIX_STEP_PX, abs(dq[2]) / KEY_FIX_STEP_RAD)
+                if big > 1.0:
+                    dq = [d / big for d in dq]
+                for _ in range(10):
+                    qn = [q[i] + dq[i] for i in range(3)]
+                    rn = residuals(qn, boosted)
+                    cn = sum(v * v for v in rn)
+                    if cn < cost:
+                        q, r0, cost = qn, rn, cn
+                        break
+                    dq = [d * 0.5 for d in dq]
+                else:
+                    break
+            return q
+        # the fit with every key as it weighs (quick to settle), then - where held keys come first - again
+        # from there with them weighing KEY_FIX_HELD_K as much (alone, those steps crawl)
+        q = solve([wx, wy, psi], False)
+        if any(c[-1] > 1.0 for c in cons):
+            q = solve(q, True)
         return tuple(q)
+
+    def _in_shape(self, n, f, down):
+        """Can note n on finger f join the held notes `down` in one hand shape - no finger crossing another?"""
+        vn = self.vp(n.pitch)
+        for m in down:
+            g = self.fingering.get(id(m))
+            if g is None or g == f:
+                continue
+            if (f > g) != (vn > self.vp(m.pitch)):
+                return False
+        return True
 
     def _pressing(self, f, t):
         starts = self.finger_starts[f]
@@ -2012,6 +2047,49 @@ class HandAnimator:
                     e = max(s0 + 1e-3, min(e, s0 + (n.end - n.start)))
                 out.append((s0, e, n))
         return out
+
+    def _release_unheld(self):
+        """
+        Keys still down from earlier chords that the drawn hand can't hold
+        together with a new chord (_chord_fits - the planner's span is a real
+        hand's, and a chord struck a little apart, top first, isn't one group
+        to be rolled) are let go just before it, as a rolled chord's are: the
+        hand moves on to the new keys. Only where some pair of them is near
+        the drawn hand's reach (ROLL_SUSPECT_WK), so the check stays rare.
+        """
+        drawn = {}
+
+        def near_reach(keys):
+            for i, (pa, fa) in enumerate(keys):
+                for pb, fb in keys[i + 1:]:
+                    if fa == fb:
+                        continue
+                    a, b = min(fa, fb), max(fa, fb)
+                    if (a, b) not in drawn:
+                        drawn[(a, b)] = drawn_reach(self.geo, self.curl_lift_in, a, b)
+                    if abs(pb - pa) > drawn[(a, b)] - ROLL_SUSPECT_WK:
+                        return True
+            return False
+        so = self.start_of
+        ends = {id(n): (f, i) for f, ns in self.by_finger.items() for i, n in enumerate(ns)}
+        recent = []                               # notes of earlier chords that may still be down
+        for gi, (_, ns) in enumerate(self.groups):
+            s1 = min(so[id(m)] for m in ns)
+            new_f = {self.fingering[id(m)] for m in ns}
+            recent = [n for n in recent if self.finger_ends[ends[id(n)][0]][ends[id(n)][1]] > s1 + 1e-3]
+            held = [n for n in recent if self.fingering[id(n)] not in new_f]
+            if held:
+                keys = [(key_pos(self.vp(n.pitch)), self.fingering[id(n)]) for n in held + ns]
+                if near_reach(keys) and not self._chord_fits(held + list(ns)):
+                    for n in held:
+                        f, i = ends[id(n)]
+                        s0 = so[id(n)]
+                        e = max(s0 + 0.5 * (s1 - s0), s1 - self.early_lift)
+                        self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
+            recent += list(ns)
+            if len(recent) > 24:
+                recent = recent[-24:]
+        self._unify_clusters()
 
     def _roll_wide_chords(self):
         """

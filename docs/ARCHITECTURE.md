@@ -234,6 +234,27 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   speed 3 -> 4, anatomy 5 -> 6; 49 fixed, 15 new). The weaker-getting-ready version: 72 -> 41 (solver 18, but speed 14).
   PIG test split 65.51% / all 69.31% (Ninthie, unchanged: the fingering isn't touched), Hanon 60 2.37%.
 
+### Round 2 (from the full run of round 1: seen 3680 -> 1930, -47.6%; solver 3021 -> 1153; speed 148 -> 264)
+- **Keys held over a chord struck a little apart.** Chopin Polonaise Op. 26 (2008, 2:39 / 3:01 / 3:23): RH C#5 (5) and
+  E4 (2), then the thumb's A#3 42 ms later - a tenth, past the drawn hand with E4 between, but not one group (beyond
+  `CHORD_TOL`), so not rolled; and the early release across groups asked only for the planner's span. "Anatomy",
+  drawn off 14-21%. `_release_unheld`: where a new chord comes while keys of earlier chords are down, some pair of
+  them near the drawn hand's reach (`ROLL_SUSPECT_WK`), and `_chord_fits` says the hand can't hold them all, the held
+  keys are let go just before it (`early_lift`), as a rolled chord's are.
+- **The key fit stalled with held keys weighing 20 times.** Chopin Nocturne Op. 9 No. 2 (2011, 0:18.8): LH A#3-D#4-G#4
+  (4-2-1), three fingers out of range, and `_key_fit` didn't move the hand at all - with the held keys at
+  `KEY_FIX_HELD_K` the place term hardly counted, the Gauss-Newton step was huge and nearly singular and no halving
+  went downhill (round 1's regression: none of these in round 0). Now steps keep to a trust region
+  (`KEY_FIX_STEP_PX` 40, `KEY_FIX_STEP_RAD` 0.25, ten halvings), and the fit is solved twice: with every key as it
+  weighs (settles in a few steps), then from there with the held keys boosted - the hand's turn stiffened as much
+  (else chromatic octaves in a run turned for each octave again: 116 deg against 102).
+- **What counts as held.** A chord rolled down across groups (2009, 11:32.4: C5, E4, then A#3 57 ms later), or
+  arpeggiated (2014, 18:20.7): the boost demoted the later notes, so the hand reached them late ("speed"). Now a
+  note also counts with the held keys if it's struck before they come up and crosses no held finger (`_in_shape`);
+  Mephisto's G4, struck after the octave is let go, still doesn't.
+- Left as it is: 2014, 18:20.7 - a descending arpeggio crossing over the thumb 3 ms after the keys come up; the drawn
+  hand runs a little ahead into the next notes (speed).
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
