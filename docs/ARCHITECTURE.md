@@ -250,8 +250,9 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   (else chromatic octaves in a run turned for each octave again: 116 deg against 102).
 - **What counts as held.** A chord rolled down across groups (2009, 11:32.4: C5, E4, then A#3 57 ms later), or
   arpeggiated (2014, 18:20.7): the boost demoted the later notes, so the hand reached them late ("speed"). Now a
-  note also counts with the held keys if it's struck before they come up and crosses no held finger (`_in_shape`);
-  Mephisto's G4, struck after the octave is let go, still doesn't.
+  note also counts with the held keys if it's struck before they come up, crosses no held finger and is within each
+  pair's span (`_in_shape`, `fingering.MAX_SPAN`); Mephisto's G4, struck after the octave is let go, still doesn't -
+  nor C#5 on 3 struck 6 ms before an octave A#4-A#5 on 1-4 comes up (2008, 2:59.5: counted in, it pulled 4 off A#5).
 - Left as it is: 2014, 18:20.7 - a descending arpeggio crossing over the thumb 3 ms after the keys come up; the drawn
   hand runs a little ahead into the next notes (speed).
 

@@ -1833,13 +1833,18 @@ class HandAnimator:
         return tuple(q)
 
     def _in_shape(self, n, f, down):
-        """Can note n on finger f join the held notes `down` in one hand shape - no finger crossing another?"""
+        """
+        Can note n on finger f join the held notes `down` in one hand shape - no finger crossing another,
+        and each pair within its span (the planner's, fingering.MAX_SPAN: an octave on 1-4 with 3 by the thumb isn't)?
+        """
+        from fingering import MAX_SPAN
         vn = self.vp(n.pitch)
         for m in down:
             g = self.fingering.get(id(m))
             if g is None or g == f:
                 continue
-            if (f > g) != (vn > self.vp(m.pitch)):
+            vm = self.vp(m.pitch)
+            if (f > g) != (vn > vm) or abs(key_pos(vn) - key_pos(vm)) > MAX_SPAN[(min(f, g), max(f, g))]:
                 return False
         return True
 
