@@ -219,6 +219,9 @@ ROLL_TURN_DEG = (-40, 20)    # drawn_reach: the hand's turn (the wrist's range a
 ROLL_DEPTH_IN = 1.6         # ...and how far apart along the keys two fingertips of one chord can be
 ROLL_PLAN_SLACK_WK = 0.75  # a chord past the planner's span for a pair by more than this (white keys) is rolled
                             # unchecked; less, it's rolled only if the drawn hand can't hold it (_chord_fits)
+ROLL_CHECK_SPAN_WK = 5.0    # a chord of three or more keys this wide (white keys) is checked whole by _chord_fits
+ROLL_NEXT_GAP_T = 0.03      # s, a rolled chord is over this long before the hand's next chord
+ROLL_LET_GO_T = 0.02        # s, a rolled key the next can't be held with is let go this long before it
 ROLL_SUSPECT_WK = 0.4       # a chord within this of drawn_reach (white keys) is checked by _chord_fits
 ROLL_MISS_WK = {False: 0.45, True: 0.22}  # _chord_fits: how far (white keys) a held fingertip may land from its
                                           # key's aim and still be on it - white key / black key (about half its width)
@@ -2198,17 +2201,40 @@ class HandAnimator:
             # between black keys), and just past them it often can (a fourth on 2-3 rolled for a
             # hundredth of a key)
             too_wide = any(d > reach(f1, f2) + ROLL_PLAN_SLACK_WK for d, f1, f2 in pairs)
-            if not too_wide and any(d > reach(f1, f2) or suspect(f1, f2, d) for d, f1, f2 in pairs):
+            # (three or more keys over a sixth or more: the whole shape may not fit though every pair does)
+            wide3 = len(fs) >= 3 and max(p for p, _, _ in fs) - min(p for p, _, _ in fs) >= ROLL_CHECK_SPAN_WK
+            if not too_wide and (wide3 or any(d > reach(f1, f2) or suspect(f1, f2, d) for d, f1, f2 in pairs)):
                 too_wide = not self._chord_fits(ns)
             if not too_wide:
                 continue
             self.rolled += 1
             order = sorted(ns, key=lambda n: n.pitch)            # bottom to top, both hands
+            # the whole roll before the hand's next chord: quicker if it must be
+            nxt = (groups[gi + 1][0] - ROLL_NEXT_GAP_T) if gi + 1 < len(groups) else math.inf
+            first = min(n.start for n in order)
+            dt = min(self.roll_dt, max(0.0, nxt - first) / max(1, len(order) - 1))
             for k, n in enumerate(order):
-                so[id(n)] = n.start + k * self.roll_dt
+                so[id(n)] = max(n.start, min(first + k * dt, nxt))
+            # each key let go before one the drawn hand can't hold it with is struck (a 2-5 octave under
+            # the thumb's note above: only the top note's reach was weighed)
+            for k, n in enumerate(order[1:], 1):
+                fn = self.fingering[id(n)]
+                for m in order[:k]:
+                    fm = self.fingering[id(m)]
+                    if fm == fn or eo[id(m)] <= so[id(n)]:
+                        continue
+                    d = abs(pos(n) - pos(m))
+                    if d > reach(fm, fn) or (suspect(fm, fn, d) and not self._chord_fits([m, n])):
+                        eo[id(m)] = min(eo[id(m)], max(so[id(m)] + 0.03, so[id(n)] - ROLL_LET_GO_T))
+                # ...and all of them together: the farthest let go until the rest fit with it
+                held = [m for m in order[:k] if self.fingering[id(m)] != fn and eo[id(m)] > so[id(n)]]
+                while len(held) >= 2 and not self._chord_fits(held + [n]):
+                    m = max(held, key=lambda m: abs(pos(m) - pos(n)))
+                    eo[id(m)] = min(eo[id(m)], max(so[id(m)] + 0.03, so[id(n)] - ROLL_LET_GO_T))
+                    held.remove(m)
             top = order[-1]
             ft, pt = self.fingering[id(top)], pos(top)
-            latest = max(so[id(top)], (groups[gi + 1][0] - 0.03) if gi + 1 < len(groups) else math.inf)
+            latest = max(nxt, top.start)                          # (never before it's written)
             for n in order[:-1]:
                 f = self.fingering[id(n)]
                 if f == ft:                     # (one finger on two keys, a thumb on a pair: no stretch between them)

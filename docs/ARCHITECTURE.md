@@ -278,6 +278,24 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - Canary: seen 25 -> 18 against round 2 (-28%; 7 fixed, none new), 72 -> 18 against round 0 (-75%). Solver 17 -> 10,
   speed 5, anatomy 3, corrected 25 -> 19. Checking time about as before. Hanon 60 2.37%.
 
+### Round 4 (from the full run of round 3: seen 1293 -> 686, -47%; solver 880 -> 280, anatomy 242 -> 230, speed 171 -> 176;
+  -81% since round 0; checking time 64 -> 72.5 CPU-hours)
+- Anatomy, four samples, mostly rolled chords:
+  - **A roll running into the next chord.** 2009, 8:15.3-8:15.5: a five-note LH chord rolled `roll_dt` a note, its top
+    (and the top's wait for the stretch: `latest` was max(...)) past the hand's next chord - the two chords' fingers
+    tangled, 425% off. Now the roll is quickened to end `ROLL_NEXT_GAP_T` before the next chord, the top capped there
+    too (never before it's written).
+  - **Only the top's reach was weighed.** 2018, 3:34.99: F#2 on 5 still down under F#3 on 2 - an octave on 2-5 the drawn
+    hand can't hold. Now each rolled key is let go `ROLL_LET_GO_T` before one it can't be held with (past the planner's
+    span, or near the drawn reach and `_chord_fits` says no), and before each key the held ones are let go, farthest
+    first, until they fit with it.
+  - **A chord whose pairs all fit, but not the whole.** 2011, 0:04.6: G#2-F#3-C4 on 5-2-1, never checked (no pair near
+    its reach). A chord of three or more keys over `ROLL_CHECK_SPAN_WK` 5 is checked whole now. (That one still shows:
+    the next chord comes 36 ms later, no time to roll.)
+  - Left: a thumb holding C#2 while 3 crosses over to D2, 15 ms of overlap (short thumb crossings are let stay legato).
+- Speed, three samples: leaps faster than Ninthie's top speed (4 m/s) - F6 to F#5 in 19 ms, D2-F#3 alternating every
+  30 ms, an octave and a half in 60 ms. The limit working as set, not the solver.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
