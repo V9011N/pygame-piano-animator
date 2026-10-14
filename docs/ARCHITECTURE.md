@@ -312,6 +312,10 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 
 Round 4: 101 fixed, 27 new. About one seen incident per 11,500 notes; 940 files clean.
 
+The top speed as a lever: the 12 files with the most speed incidents after round 4, Ninthie at 4 m/s against 6 m/s:
+speed incidents 37 -> 23 (-38%), all seen 73 -> 60 (-18%; 27 fixed, 14 new), late strikes 23 -> 15. Half again as
+fast removes about a third of them: most are leaps of a few tens of milliseconds that no plausible top speed covers.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
