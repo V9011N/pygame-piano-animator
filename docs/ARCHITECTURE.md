@@ -259,6 +259,23 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   Solver 28 -> 17, speed 4 -> 5, anatomy 6 -> 3, corrected 29 -> 25. (Before the span check in `_in_shape`: 38 -> 38,
   17 new - mostly 4 and 5 shifted onto black keys by notes wrongly counted with an octave.) Hanon 60 2.37%.
 
+### Round 3 (from the full run of round 2: seen 1930 -> 1293, -33%; solver 1153 -> 880, anatomy 513 -> 242, speed 264 -> 171)
+- Still mostly the outer little finger (LH bass, RH treble) shifted. Six samples, all inside tremolos (repeated
+  broken-chord accompaniments, held still) - two causes:
+- **A tremolo's keys that don't make one shape.** `_trem_note` gives each finger its last (or next) key in the
+  tremolo, and `_key_fix` held them all: over a span of seconds that may be a stray note (Schubert, 2018, 6:10.5: the
+  thumb's D4 a twelfth above the little finger's G2) or the figure's fingering changing (a 2018 recital, 20:15.7: 2
+  and 4 each last on one G#3). `_trem_keys`: a finger's tremolo key counts only if it makes one hand shape with the
+  keys the fingers are on and the tremolo keys already taken, nearest in time first (`_in_shape`: no crossing, no two
+  fingers on one key, each pair within `MAX_SPAN`). Five of the six samples: on their keys.
+- **A tremolo held still that only fits allowing a chord's misses.** 2017, 2:52.2: LH G#2-C3-F3-G#3 (5-4-2-1),
+  `_chord_fits` true - each fingertip may land `ROLL_MISS_WK` off - but those misses add up over four fingers to more
+  than `_key_fix` can find (38 px all told, from any start). And only the widest cycle was tested, while the figure
+  follows the harmony. Now a tremolo rocks (`trem_rock`) if any of its distinct cycles fails `_chord_fits` with
+  `TREM_ROCK_STRICT_WK` 0.22 less allowed. Also: `_key_fix` tries other starts (a white key or two across, a turn of
+  0.3) when its fit stays more than `KEY_FIX_RETRY_PX` 3 off its keys - not what fixed this one (none was better), kept
+  for shapes a local fit can't reach from where the hand is.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

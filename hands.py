@@ -230,7 +230,8 @@ KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside it
 KEY_FIX_ITERS = 6
 KEY_FIX_STEP_PX = 40.0      # the key fit's steps: at most this far...
 KEY_FIX_STEP_RAD = 0.25     # ...and this much turn each
-KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
+KEY_FIX_HELD_K = 20.0
+KEY_FIX_RETRY_PX = 3.0      # a fit leaving its keys further off than this (px, all told) tries other starts       # a held key weighs this many times a finger's getting ready for its next one
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
 # it still has to go)
@@ -255,6 +256,7 @@ TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key j
 TREM_REACH_EXTRA = 1.25     # white keys: a tremolo's cycle may span this much more than the thumb-little finger stretch
 TREM_SLACK_WK = 0.35        # ...and the drawn hand, held still, reach each key of it within this much more than a
                             # chord's (_chord_fits: rocking the forearm reaches a little further)
+TREM_ROCK_STRICT_WK = 0.22  # a tremolo is held still only if it fits with this much less than a chord's misses allowed
 TREM_OFF_KEY_W = 0.3        # in a tremolo the still hand can't quite span, a finger in the air keeps the hand by its
                             # key this share as firmly as one down on its key (_key_fix): the hand rocks
 TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
@@ -1096,8 +1098,20 @@ class HandAnimator:
                 continue
             t1, ns = groups[hi]
             span = (groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T))
-            if several and not self._chord_fits(cycle):
-                self.trem_rock.add(span)           # (only with the slack: played rocking, _key_fix)
+            if several:
+                # played rocking (_key_fix) if any of its cycles fits only with the slack - or only allowing
+                # the misses a held chord may have, which added up over a whole figure leave the fit short;
+                # every distinct cycle, not only the widest: over a long span the figure follows the harmony
+                seen = set()
+                for j in range(max(1, len(kp) - TREM_PERIOD + 1)):
+                    cyc = [m for _, ns in groups[lo + j:lo + j + TREM_PERIOD] for m in ns]
+                    key = frozenset((self.fingering[id(m)], m.pitch) for m in cyc)
+                    if len(key) < 2 or key in seen:
+                        continue
+                    seen.add(key)
+                    if not self._chord_fits(cyc, -TREM_ROCK_STRICT_WK):
+                        self.trem_rock.add(span)
+                        break
             out.append(span)
         return out
 
@@ -1718,6 +1732,7 @@ class HandAnimator:
         down = [m for m in (self._held_note(g, t) for g in range(1, 6)) if m is not None]
         held = {go.get(id(m)) for m in down}
         held_end = max((self._end_of_f.get(id(m), 0.0) for m in down), default=-math.inf)
+        trem = self._trem_keys(t, tr) if tw > 0.0 else {}
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
             boost = 1.0
@@ -1734,7 +1749,7 @@ class HandAnimator:
                 # still hand can't quite span (only with _tremolos' TREM_SLACK_WK, trem_rock) a finger in
                 # the air keeps the hand by its key only TREM_OFF_KEY_W as firmly as one down on its key:
                 # the hand rocks toward each finger as it strikes
-                m = self._trem_note(f, t, tr)
+                m = trem.get(f)
                 ow = tw * (TREM_OFF_KEY_W if tr in self.trem_rock else 1.0)
                 if m is not None and (n is None or (n.pitch == m.pitch and w < ow)):
                     w, n = ow if n is None else max(w, ow), m      # (a finger moving to a new key keeps to it)
@@ -1827,10 +1842,50 @@ class HandAnimator:
             return q
         # the fit with every key as it weighs (quick to settle), then - where held keys come first - again
         # from there with them weighing KEY_FIX_HELD_K as much (alone, those steps crawl)
-        q = solve([wx, wy, psi], False)
-        if any(c[-1] > 1.0 for c in cons):
-            q = solve(q, True)
+        boosted = any(c[-1] > 1.0 for c in cons)
+
+        def fit(start):
+            q = solve(start, False)
+            if boosted:
+                q = solve(q, True)
+            r = residuals(q, boosted)
+            return q, sum(v * v for v in r[3:]), sum(v * v for v in r)
+        q, kc, tot = fit([wx, wy, psi])
+        if kc > (KEY_FIX_RETRY_PX * KEY_FIX_K) ** 2:
+            # stuck short of the keys (a shape the hand can make, but not by moving a little from here: its
+            # fingers all strained): from a few other places and turns as well, the best of them
+            wkp = self.kb.white_w
+            for dx, dp in ((wkp, 0.0), (-wkp, 0.0), (2 * wkp, 0.0), (-2 * wkp, 0.0), (0.0, 0.3), (0.0, -0.3),
+                           (wkp, -0.3), (-wkp, 0.3)):
+                q2, kc2, tot2 = fit([wx + dx * math.cos(psi), wy + dx * math.sin(psi), psi + dp])
+                if tot2 < tot:
+                    q, kc, tot = q2, kc2, tot2
         return tuple(q)
+
+    def _trem_keys(self, t, tr):
+        """
+        {finger: its key in tremolo tr at t (_trem_note)} for _key_fix - only those that make one hand shape
+        (_in_shape) with the keys the fingers are on and with each other, nearest in time first: over a long
+        span a finger's last key may be a stray note (a thumb's D4 a twelfth above the little finger's G2), or
+        the figure's fingering changes (2 and 4 each last on one G#3) - held all at once, the hand can't.
+        """
+        own = {}
+        for f in range(1, 6):
+            w, n = self._key_weight(f, t)
+            if n is not None and w > 0.0:
+                own[f] = n
+        cands = []
+        for f in range(1, 6):
+            m = self._trem_note(f, t, tr)
+            if m is None or (f in own and own[f].pitch != m.pitch):
+                continue
+            cands.append((abs(self.start_of.get(id(m), m.start) - t), f, m))
+        kept = dict(own)
+        out = {}
+        for _, f, m in sorted(cands, key=lambda c: (c[0], c[1])):
+            if self._in_shape(m, f, [x for g, x in kept.items() if g != f]):
+                out[f] = kept[f] = m
+        return out
 
     def _in_shape(self, n, f, down):
         """
@@ -1844,7 +1899,7 @@ class HandAnimator:
             if g is None or g == f:
                 continue
             vm = self.vp(m.pitch)
-            if (f > g) != (vn > vm) or abs(key_pos(vn) - key_pos(vm)) > MAX_SPAN[(min(f, g), max(f, g))]:
+            if vn == vm or (f > g) != (vn > vm) or abs(key_pos(vn) - key_pos(vm)) > MAX_SPAN[(min(f, g), max(f, g))]:
                 return False
         return True
 
