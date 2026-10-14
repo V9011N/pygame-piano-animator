@@ -297,6 +297,9 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   - Left: a thumb holding C#2 while 3 crosses over to D2, 15 ms of overlap (short thumb crossings are let stay legato).
 - Speed, three samples: leaps faster than Ninthie's top speed (4 m/s) - F6 to F#5 in 19 ms, D2-F#3 alternating every
   30 ms, an octave and a half in 60 ms. The limit working as set, not the solver.
+- Canary: seen 18 -> 17 against round 3 (1 fixed, none new), 72 -> 17 against round 0 (-76%); solver 9, speed 5,
+  anatomy 3, corrected 20. At 17 the canary says little more: the full run decides. Building the hands on the
+  2006 recital: 12.5 s (round 3: 13.5).
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
