@@ -275,6 +275,8 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   `TREM_ROCK_STRICT_WK` 0.22 less allowed. Also: `_key_fix` tries other starts (a white key or two across, a turn of
   0.3) when its fit stays more than `KEY_FIX_RETRY_PX` 3 off its keys - not what fixed this one (none was better), kept
   for shapes a local fit can't reach from where the hand is.
+- Canary: seen 25 -> 18 against round 2 (-28%; 7 fixed, none new), 72 -> 18 against round 0 (-75%). Solver 17 -> 10,
+  speed 5, anatomy 3, corrected 25 -> 19. Checking time about as before. Hanon 60 2.37%.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
