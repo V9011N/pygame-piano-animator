@@ -301,6 +301,17 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   anatomy 3, corrected 20. At 17 the canary says little more: the full run decides. Building the hands on the
   2006 recital: 12.5 s (round 3: 13.5).
 
+### The curve (full runs, Ninthie, 1279 files, 7.05M notes)
+| round | seen | change | solver | anatomy | speed | corrected | files with any seen |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 3680 | | 3021 | 511 | 148 | 1471 | 744 |
+| 1 | 1930 | -48% | 1153 | 513 | 264 | 1232 | 642 |
+| 2 | 1293 | -33% | 880 | 242 | 171 | 1051 | 536 |
+| 3 | 686 | -47% | 280 | 230 | 176 | 785 | 350 |
+| 4 | 612 | -11% | 253 | 176 | 183 | 793 | 339 |
+
+Round 4: 101 fixed, 27 new. About one seen incident per 11,500 notes; 940 files clean.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
