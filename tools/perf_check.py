@@ -4,7 +4,10 @@ the player, frame by frame, and find where it hitches.
 
 Each file is loaded and its hands planned as the app does (timed: the load),
 then played start to end through the player itself (main.Visualizer,
-offscreen) at --fps: every frame's update() and render() timed. A frame that
+offscreen) at --fps: every frame's update() timed with the hands' motion
+(their poses), or with --draw the whole render() (about 30 times the work); the
+rest of each frame's time goes to the hands' work ahead (Visualizer.idle), as in
+the app, and what that runs over its budget counts to the frame. A frame that
 takes much longer than the frame before it is a hitch; hitches close together
 are one stall, reported with its time in the song and what it was spent on -
 the functions below each timed by their own time in that frame (what they
@@ -13,7 +16,7 @@ called that's also timed counted apart). Then --seeks jumps to random places
 
     python tools/perf_check.py PATH/TO/MAESTRO --pianist Ninthie
     python tools/perf_check.py PATH --match Chopin --limit 10 --workers 6
-    python tools/perf_check.py PATH --no-draw       # the hands' motion only, not the drawing (quicker)
+    python tools/perf_check.py PATH --draw --limit 30   # whole frames, drawing too (slow: a sample)
     python tools/perf_check.py PATH --report-only
 
 PATH, --map, --pianist, --match, --limit, --workers, --size and --keys are as
@@ -50,7 +53,7 @@ for p in (ROOT, TOOLS):
         sys.path.insert(0, p)
 import maestro_check as mc                           # noqa: E402  (files, names, pianists, the progress block)
 
-RESULTS_FORMAT = 1
+RESULTS_FORMAT = 2
 STALL_GAP_T = 0.1           # s of song, hitches this close are one stall
 CULPRITS = [                # (module, class or None, function): timed in every frame, by their own time
     ("hands", "HandAnimator", "pose"),
@@ -137,7 +140,10 @@ _OPTS, _NOW, _TIMER = {}, {"key": None, "phase": "", "frac": 0.0, "start": 0.0},
 def _heartbeat(status):
     import progress
     pid = os.getpid()
+    parent = multiprocessing.parent_process()
     while True:
+        if parent is not None and not parent.is_alive():
+            os._exit(1)                               # (the run was stopped: don't carry on alone)
         key = _NOW["key"]
         try:
             if key is None:
@@ -197,13 +203,13 @@ def check_file(path, key=None):
             v = main.Visualizer(screen, song, midi=common.MidiOut(False), hands=an)
             v.paused = False
             dt = 1.0 / _OPTS["fps"]
-            t_end = song.duration + 0.5
+            t_end = song.duration                     # (the player pauses at the end)
             v.t = v.start_time()
             _NOW["phase"] = "playing"
             frames, times = [], []
             _TIMER.take()
             n_total = max(1, int((t_end - v.t) / dt))
-            while v.t < t_end:
+            while v.t < t_end and not v.paused:
                 t = v.t
                 f0 = time.perf_counter()
                 v.update(dt)
@@ -211,9 +217,21 @@ def check_file(path, key=None):
                     v.render()
                 else:
                     for a in an.values():
-                        a.pose(v.t, v.kb)
-                ms = 1000.0 * (time.perf_counter() - f0)
+                        a.pose(v.t, v.keyboard)
+                work = time.perf_counter() - f0
                 spent = _TIMER.take()
+                # the rest of the frame's time goes to the hands' work ahead, as in App.run:
+                # what it runs over its budget delays the next frame
+                spare = dt - work - main.IDLE_MARGIN_T
+                over = 0.0
+                if spare > 0:
+                    i0 = time.perf_counter()
+                    v.idle(spare)
+                    over = max(0.0, time.perf_counter() - i0 - spare)
+                    ahead = _TIMER.take()
+                    if over > 0.0005:                 # (named "ahead: ...": what that work was spent on)
+                        spent.update({"ahead: " + n: v_ for n, v_ in ahead.items()})
+                ms = 1000.0 * (work + over)
                 frames.append(ms)
                 times.append((t, ms, spent))
                 if len(frames) % 120 == 0:
@@ -256,13 +274,14 @@ def check_file(path, key=None):
             for _ in range(_OPTS["seeks"]):
                 ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
                 v.seek(ts)
+                v.paused = False
                 f0 = time.perf_counter()
                 v.update(dt)
                 if _OPTS["draw"]:
                     v.render()
                 else:
                     for a in an.values():
-                        a.pose(v.t, v.kb)
+                        a.pose(v.t, v.keyboard)
                 ms = 1000.0 * (time.perf_counter() - f0)
                 spent = _TIMER.take()
                 out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)]))
@@ -485,7 +504,9 @@ def main():
     ap.add_argument("--size", default="1920x1080", help="the window (default 1920x1080)")
     ap.add_argument("--keys", default="realistic", choices=("realistic", "equal"))
     ap.add_argument("--fps", type=float, default=60.0, help="frames a second played (default 60)")
-    ap.add_argument("--no-draw", dest="draw", action="store_false", help="time the hands' motion only, not drawing")
+    ap.add_argument("--draw", action="store_true",
+                    help="time whole frames, drawing too (about 30 times the work: a drawn frame is ~19 ms against "
+                         "~0.6 ms for the hands' motion alone, on a 2026 laptop core)")
     ap.add_argument("--seeks", type=int, default=10, help="random jumps a file, first frame after each timed")
     ap.add_argument("--hitch-x", type=float, default=3.0, help="a hitch: this many times the file's median frame...")
     ap.add_argument("--hitch-ms", type=float, default=25.0, help="...and at least this many ms (default 25)")

@@ -61,6 +61,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `anim_check.py` | Does the drawn hand match what's played: `check_song` (notes with no finger, tips pulled onto / off their keys, late strikes; anatomy / speed / solver) |
 | `tools/maestro_check.py` | `anim_check` over every MIDI file in a folder (the MAESTRO dataset, renamed files + rename map), in parallel, resumable, live progress; report.md + incidents.csv |
 | `tools/maestro_diff.py` | Two maestro_check runs compared: incidents fixed / new / still there, counted by pattern (coarse: hand, category, what; fine: + keys, register, size, fingers) |
+| `tools/perf_check.py` | Every MIDI file in a folder played through the player offscreen, frame by frame (hands only, or `--draw` whole frames; spare time to `Visualizer.idle` as `App.run`), plus load and seek times: hitches grouped into stalls with their song times and the functions they were spent on; report.md + stalls.csv |
 | `tools/regress.py` | A round's checks with history: tests, PIG test split (`pig_eval.TEST`, `summary`), Hanon vs the book, a MAESTRO bench sample vs a baseline run (runs/history.jsonl) |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 

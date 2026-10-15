@@ -316,6 +316,27 @@ The top speed as a lever: the 12 files with the most speed incidents after round
 speed incidents 37 -> 23 (-38%), all seen 73 -> 60 (-18%; 27 fixed, 14 new), late strikes 23 -> 15. Half again as
 fast removes about a third of them: most are leaps of a few tens of milliseconds that no plausible top speed covers.
 
+## Performance check over MAESTRO (tools/perf_check.py, v26.1.21.SNAPSHOT-02)
+- Each file loaded as the app does (timed), then played start to end through `main.Visualizer` offscreen at
+  `--fps`: per frame `update()` plus the hands' poses (default) or the whole `render()` (`--draw`, ~30x the work);
+  the rest of the frame's time goes to `Visualizer.idle` (the hands' work ahead, as `App.run`), and what that runs
+  over its budget counts to the frame. Without that step every frame did the work-ahead late: the first runs
+  reported ~100 stalls a file that the app doesn't have. A hitch: a frame over max(`--hitch-ms` 25, `--hitch-x` 3 x
+  the file's median); hitches within `STALL_GAP_T` 0.1 s of song are one stall, with its functions' own time
+  (`CULPRITS`, wrapped by `Timer`; work-ahead's as "ahead: ..."). Then `--seeks` random seeks, first frame each.
+- Workers (and the status manager) exit when the main process is gone (`multiprocessing.parent_process()`), in
+  maestro_check too: a killed run used to leave them playing on.
+- Fixed from it (the 114 s Bach test file, Ninthie): load 3.1 -> 1.3 s (97ed615: 1.6 s), all results identical:
+  - `_chord_fits` (61 searches a load, 52 from `_release_unheld`, ~30 ms each, all of them fitting) tries every
+    4th, then every 2nd point of its coarse grid first - points of the grid, so the same answer, sooner;
+    kept by shape too (`_fits_memo`: fingers and keys);
+  - `drawn_reach` (354k Python steps per finger pair, 1 s a load) is kept by the fingers' bones (`_DRAWN_REACH`)
+    and its pair search done in numpy - bit-identical.
+  - Frames: `_key_fix`'s retries (rounds 2-3) start from the last fit (`_kf_last`), then the start that won for
+    the same keys (`_kf_memo`); fits stop once a step betters the cost by less than `KEY_FIX_SETTLED`, retries
+    after `KEY_FIX_RETRY_ITERS`; the 8-start search is off (`KEY_FIX_SEARCH`, under evaluation). Hands-only p99
+    47 -> 14-16 ms (97ed615: 13-14), without work-ahead.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

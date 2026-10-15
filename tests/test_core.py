@@ -1109,6 +1109,20 @@ def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
         assert a.rolled == 0, ps
 
 
+def test_chord_fits_is_kept_by_shape():
+    # _chord_fits is searched once per shape (fingers and keys): a finger on a pair of keys and the same
+    # finger on one key are told apart, and the answer is the search's
+    ns = [Note(61, 1.0, 1.3, 80, 0, RIGHT), Note(63, 1.0, 1.3, 80, 0, RIGHT), Note(67, 1.0, 1.3, 80, 0, RIGHT),
+          Note(60, 2.0, 2.3, 80, 0, RIGHT), Note(67, 2.0, 2.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(ns, 3.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 1, 2, 1, 2))})
+    assert isinstance(a._pk(ns[0]), tuple) and not isinstance(a._pk(ns[3]), tuple)
+    for chord in ([ns[0], ns[3]], [ns[0], ns[2]], [ns[3], ns[4]], [ns[0], ns[2]]):
+        got = a._chord_fits(chord)
+        assert got == a._chord_fits_search(chord, 0.0, __import__("numpy"))
+    geo = a.geo
+    assert hands.drawn_reach(geo, 0.0, 1, 5) == hands._drawn_reach(geo, 0.0, 1, 5)
+
+
 def test_a_finger_reaching_straight_down_curls_forward_not_sideways():
     # a target nearly under the knuckle: without the hand's forward, the chain's plane follows the target's
     # slightest sideways offset (the finger folded out sideways for a frame); with it, the finger curls forward

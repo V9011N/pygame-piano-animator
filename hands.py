@@ -232,8 +232,11 @@ KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside it
 KEY_FIX_ITERS = 6
 KEY_FIX_STEP_PX = 40.0      # the key fit's steps: at most this far...
 KEY_FIX_STEP_RAD = 0.25     # ...and this much turn each
-KEY_FIX_HELD_K = 20.0
-KEY_FIX_RETRY_PX = 3.0      # a fit leaving its keys further off than this (px, all told) tries other starts       # a held key weighs this many times a finger's getting ready for its next one
+KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
+KEY_FIX_SETTLED = 0.005     # a key-fit step bettering its cost by less than this share ends the fit...
+KEY_FIX_SEARCH = 0
+KEY_FIX_RETRY_ITERS = 3     # ...and a retry's fit takes at most this many steps a pass
+KEY_FIX_RETRY_PX = 3.0      # a fit leaving its keys further off than this (px, all told) tries other starts
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
 # it still has to go)
@@ -727,6 +730,18 @@ def drawn_reach(geo, lift_in, fa, fb):
     flattening over wide chords): a chord near or past it for some pair is
     checked properly by HandAnimator._chord_fits.
     """
+    key = (lift_in, fa, fb) + tuple(tuple(geo.base(f)) + tuple(geo.bones[f]) for f in (fa, fb))
+    got = _DRAWN_REACH.get(key)
+    if got is None:
+        got = _DRAWN_REACH[key] = _drawn_reach(geo, lift_in, fa, fb)
+    return got
+
+
+_DRAWN_REACH = {}                 # drawn_reach by the two fingers' bones (the same for every chord, hand and song)
+
+
+def _drawn_reach(geo, lift_in, fa, fb):
+    import numpy as np
     u = INCHES_PER_UNIT
     pts = {}
     for f in (fa, fb):
@@ -740,15 +755,15 @@ def drawn_reach(geo, lift_in, fa, fb):
         pts[f] = [(bx + h * math.sin(lo + (hi - lo) * i / 16), by + h * math.cos(lo + (hi - lo) * i / 16))
                   for i in range(17) for h in (hmin + (hmax - hmin) * j / 6 for j in range(7))]
     best = 0.0
+    (ax, ay), (bx_, by_) = (np.array(pts[f]).T for f in (fa, fb))
     for k in range(25):
         psi = math.radians(ROLL_TURN_DEG[0] + (ROLL_TURN_DEG[1] - ROLL_TURN_DEG[0]) * k / 24)
         c, s = math.cos(psi), math.sin(psi)
-        A = [(x * c - y * s, x * s + y * c) for x, y in pts[fa]]
-        B = [(x * c - y * s, x * s + y * c) for x, y in pts[fb]]
-        for ax, ay in A:
-            for bx_, by_ in B:
-                if bx_ - ax > best and abs(by_ - ay) <= ROLL_DEPTH_IN:
-                    best = bx_ - ax
+        dx = (bx_ * c - by_ * s)[None, :] - (ax * c - ay * s)[:, None]
+        dy = (bx_ * s + by_ * c)[None, :] - (ax * s + ay * c)[:, None]
+        ok = dx[np.abs(dy) <= ROLL_DEPTH_IN]
+        if ok.size:
+            best = max(best, float(ok.max()))
     return best / WHITE_KEY_IN
 
 
@@ -902,6 +917,7 @@ class HandAnimator:
         eo = self.end_of = {id(n): n.end for _, ns in self.groups for n in ns}
         self.rolled = 0
         self._ref_kb = None
+        self._fits_memo = {}             # _chord_fits by shape
         self._layout_sig = None
         self._roll_wide_chords()
         for f in self.by_finger:
@@ -987,6 +1003,7 @@ class HandAnimator:
         self.run_starts = [a for a, _ in self.runs]
         self.trem_rock = set()
         self._group_of = None
+        self._kf_memo, self._kf_last = {}, None      # (_key_fix's retries: the keys last searched, the start that won)
         self.trems = self._find_tremolos()
         self._group_ts = [t for t, _ in self.groups]
         self.trem_starts = [a for a, _ in self.trems]
@@ -1735,6 +1752,7 @@ class HandAnimator:
         held = {go.get(id(m)) for m in down}
         held_end = max((self._end_of_f.get(id(m), 0.0) for m in down), default=-math.inf)
         trem = self._trem_keys(t, tr) if tw > 0.0 else {}
+        keyset = []
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
             boost = 1.0
@@ -1766,6 +1784,7 @@ class HandAnimator:
             hmin, hmax = self._reach_range(f, self.base_local[f][2] * low + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
             cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w, boost))
+            keyset.append((f, id(n)))
             pk = self._pk(n)
             if f == 1 and self._bridge_pair(pk, 1):
                 # a thumb bridging two black keys lies straight across them (_thumb_bridge): from
@@ -1809,11 +1828,11 @@ class HandAnimator:
                 out += [k * best[1], k * best[2]]
             return out
 
-        def solve(q, boosted):
+        def solve(q, boosted, iters=KEY_FIX_ITERS):
             r0 = residuals(q, boosted)
             cost = sum(v * v for v in r0)
             eps = (0.5, 0.5, 1e-3)
-            for _ in range(KEY_FIX_ITERS):
+            for _ in range(iters):
                 if sum(v * v for v in r0[3:]) < 1e-6:
                     break
                 cols = []
@@ -1836,32 +1855,62 @@ class HandAnimator:
                     rn = residuals(qn, boosted)
                     cn = sum(v * v for v in rn)
                     if cn < cost:
+                        settled = cn > (1.0 - KEY_FIX_SETTLED) * cost
                         q, r0, cost = qn, rn, cn
                         break
                     dq = [d * 0.5 for d in dq]
                 else:
                     break
+                if settled:
+                    break                                 # (barely better: as good as it gets from here)
             return q
         # the fit with every key as it weighs (quick to settle), then - where held keys come first - again
         # from there with them weighing KEY_FIX_HELD_K as much (alone, those steps crawl)
         boosted = any(c[-1] > 1.0 for c in cons)
 
-        def fit(start):
-            q = solve(start, False)
+        def fit(start, iters=KEY_FIX_ITERS):
+            q = solve(start, False, iters)
             if boosted:
-                q = solve(q, True)
+                q = solve(q, True, iters)
             r = residuals(q, boosted)
             return q, sum(v * v for v in r[3:]), sum(v * v for v in r)
         q, kc, tot = fit([wx, wy, psi])
         if kc > (KEY_FIX_RETRY_PX * KEY_FIX_K) ** 2:
             # stuck short of the keys (a shape the hand can make, but not by moving a little from here: its
-            # fingers all strained): from a few other places and turns as well, the best of them
+            # fingers all strained): from other places and turns as well, the best of them. All of them only
+            # once for the keys being fitted (the hand moves smoothly: then from where the last fit put it,
+            # and the start that won) - each start is a fit, and every one of them in every frame stalled
+            # playback (frames 4 times as slow at the 99th percentile)
             wkp = self.kb.white_w
-            for dx, dp in ((wkp, 0.0), (-wkp, 0.0), (2 * wkp, 0.0), (-2 * wkp, 0.0), (0.0, 0.3), (0.0, -0.3),
-                           (wkp, -0.3), (-wkp, 0.3)):
-                q2, kc2, tot2 = fit([wx + dx * math.cos(psi), wy + dx * math.sin(psi), psi + dp])
+            key = tuple(keyset)
+            memo = self._kf_memo
+            starts = []
+            last = self._kf_last
+            if last is not None and abs(last[0] - t) < 0.1 and (
+                    math.hypot(last[1][0] - q[0], last[1][1] - q[1]) > 2.0 or abs(last[1][2] - q[2]) > 0.02):
+                starts.append(("last", last[1]))
+            if not KEY_FIX_SEARCH:
+                pass
+            elif memo.get("key") == key:
+                if memo.get("won") is not None:
+                    starts.append(("won", memo["won"]))
+            else:
+                starts += [("off", o) for o in ((wkp, 0.0), (-wkp, 0.0), (2 * wkp, 0.0), (-2 * wkp, 0.0),
+                                                (0.0, 0.3), (0.0, -0.3), (wkp, -0.3), (-wkp, 0.3))]
+                memo.clear()
+                memo["key"], memo["won"] = key, None
+            for kind, o in starts:
+                if kind == "last":
+                    start = list(o)
+                else:
+                    dx, dp = o
+                    start = [wx + dx * math.cos(psi), wy + dx * math.sin(psi), psi + dp]
+                q2, kc2, tot2 = fit(start, KEY_FIX_RETRY_ITERS)
                 if tot2 < tot:
                     q, kc, tot = q2, kc2, tot2
+                    if kind == "off":
+                        memo["won"] = o
+        self._kf_last = (t, tuple(q))
         return tuple(q)
 
     def _trem_keys(self, t, tr):
@@ -2256,11 +2305,21 @@ class HandAnimator:
         (ROLL_FIT_WW pixels per white key, the user's key style).
         """
         import numpy as np
+        # (music repeats its shapes: each is searched once - it depends only on the fingers and keys)
+        memo_key = (tuple(sorted(((self.fingering[id(n)], self._pk(n)) for n in ns), key=repr)), slack)
+        got = self._fits_memo.get(memo_key)
+        if got is not None:
+            return got
         if self._ref_kb is None:
             from common import KEY_LEN_WW, Keyboard
             import pygame
             self._ref_kb = Keyboard(pygame.Rect(0, 0, 52 * ROLL_FIT_WW, int(KEY_LEN_WW * ROLL_FIT_WW)))
         self._ensure_layout(self._ref_kb)
+        got = self._fits_memo[memo_key] = self._chord_fits_search(ns, slack, np)
+        return got
+
+    def _chord_fits_search(self, ns, slack, np):
+        """_chord_fits' search (its result kept by shape)."""
         wk = self.kb.white_w
         keys = [(n, self.fingering[id(n)], self._pk(n)) for n in ns]
         keys = [(n, f, pk, self.key_target(pk, f)[0]) for n, f, pk in keys if self._has_key(pk)]
@@ -2300,6 +2359,12 @@ class HandAnimator:
         cx = sum(it[0] for it in items) / len(items)
         axes = [np.linspace(cx - 3 * wk, cx + 3 * wk, 25), np.linspace(-5 * wk, 3 * wk, 17),
                 np.radians(np.linspace(-50, 30, 17))]
+        # most chords fit: every 4th, then every 2nd point of the coarse grid first
+        # (points of it, so the answer is the same - just found sooner)
+        for step in (4, 2):
+            g = np.meshgrid(*(ax[::step] for ax in axes), indexing="ij")
+            if worst(*(x.ravel() for x in g)).min() <= 0.0:
+                return True
         best = None
         for _ in range(3):
             g = np.meshgrid(*axes, indexing="ij")

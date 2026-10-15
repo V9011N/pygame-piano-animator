@@ -77,7 +77,10 @@ def _heartbeat(status):
     """Tell the main process, every second, which file this worker is on and how far it's got."""
     import progress
     pid = os.getpid()
+    parent = multiprocessing.parent_process()
     while True:
+        if parent is not None and not parent.is_alive():
+            os._exit(1)                               # (the run was stopped: don't carry on alone)
         key = _NOW["key"]
         try:
             if key is None:
@@ -444,6 +447,13 @@ def _ignore_sigint():
     """(Ctrl+C is for the main process: it stops the run; the workers and the manager are ended by it.)"""
     import signal
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    parent = multiprocessing.parent_process()
+
+    def watch():                                      # (and if the main process is killed, they end too)
+        while parent is None or parent.is_alive():
+            time.sleep(1.0)
+        os._exit(1)
+    threading.Thread(target=watch, daemon=True).start()
 
 
 class Status:
