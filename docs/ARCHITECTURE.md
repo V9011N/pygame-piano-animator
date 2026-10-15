@@ -274,7 +274,8 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
   follows the harmony. Now a tremolo rocks (`trem_rock`) if any of its distinct cycles fails `_chord_fits` with
   `TREM_ROCK_STRICT_WK` 0.22 less allowed. Also: `_key_fix` tries other starts (a white key or two across, a turn of
   0.3) when its fit stays more than `KEY_FIX_RETRY_PX` 3 off its keys - not what fixed this one (none was better), kept
-  for shapes a local fit can't reach from where the hand is.
+  for shapes a local fit can't reach from where the hand is. (SNAPSHOT-02: dropped - it stalled frames and the canary
+  found nothing it fixed; the retry from the last fit stays, see the performance check below.)
 - Canary: seen 25 -> 18 against round 2 (-28%; 7 fixed, none new), 72 -> 18 against round 0 (-75%). Solver 17 -> 10,
   speed 5, anatomy 3, corrected 25 -> 19. Checking time about as before. Hanon 60 2.37%.
 
@@ -323,7 +324,14 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   over its budget counts to the frame. Without that step every frame did the work-ahead late: the first runs
   reported ~100 stalls a file that the app doesn't have. A hitch: a frame over max(`--hitch-ms` 25, `--hitch-x` 3 x
   the file's median); hitches within `STALL_GAP_T` 0.1 s of song are one stall, with its functions' own time
-  (`CULPRITS`, wrapped by `Timer`; work-ahead's as "ahead: ..."). Then `--seeks` random seeks, first frame each.
+  (`CULPRITS`, wrapped by `Timer`; work-ahead's as "ahead: ..."). `--seeks` random seeks (the same places every
+  run, `zlib.crc32` of the file) come first, the first frame after each timed - before the playthrough, so into
+  parts not worked out yet, as in the app (after it every cache was warm: ~1 ms).
+- Cold seeks: 200-470 ms on the Bach test files (97ed615: about the same, 300-360 at worst). The speed limit's
+  chain restarts `LIMIT_RESTART_T` 0.5 s back - ~37 steps a hand, each a `_placed_at` (hand solves, the partner's
+  path) and `_key_fix`, then the fingertips' chain the same; 0.25 s would make it ~185 ms. The first frame of
+  play (~180 ms) is the same cold start. Not changed yet: a cheaper pose while scrubbing, or a shorter restart,
+  changes what's drawn after a seek.
 - Workers (and the status manager) exit when the main process is gone (`multiprocessing.parent_process()`), in
   maestro_check too: a killed run used to leave them playing on.
 - Fixed from it (the 114 s Bach test file, Ninthie): load 3.1 -> 1.3 s (97ed615: 1.6 s), all results identical:
@@ -332,10 +340,12 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
     kept by shape too (`_fits_memo`: fingers and keys);
   - `drawn_reach` (354k Python steps per finger pair, 1 s a load) is kept by the fingers' bones (`_DRAWN_REACH`)
     and its pair search done in numpy - bit-identical.
-  - Frames: `_key_fix`'s retries (rounds 2-3) start from the last fit (`_kf_last`), then the start that won for
-    the same keys (`_kf_memo`); fits stop once a step betters the cost by less than `KEY_FIX_SETTLED`, retries
-    after `KEY_FIX_RETRY_ITERS`; the 8-start search is off (`KEY_FIX_SEARCH`, under evaluation). Hands-only p99
-    47 -> 14-16 ms (97ed615: 13-14), without work-ahead.
+  - Frames: `_key_fix`'s retry (round 3: eight other starts - a white key or two across, a turn of 0.3 - in
+    every frame a fit stayed `KEY_FIX_RETRY_PX` off its keys) now starts only from where the last fit put the
+    hand (`_kf_last`, within 0.1 s), for at most `KEY_FIX_RETRY_ITERS` steps a pass; every fit stops once a step
+    betters its cost by less than `KEY_FIX_SETTLED`. Canary (30 files) without the eight starts: seen 17, none
+    fixed or new against round 4b, corrected 20 -> 19. Hands-only p99 47 -> 14-16 ms (97ed615: 13-14), without
+    work-ahead.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)

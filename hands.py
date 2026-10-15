@@ -234,7 +234,6 @@ KEY_FIX_STEP_PX = 40.0      # the key fit's steps: at most this far...
 KEY_FIX_STEP_RAD = 0.25     # ...and this much turn each
 KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
 KEY_FIX_SETTLED = 0.005     # a key-fit step bettering its cost by less than this share ends the fit...
-KEY_FIX_SEARCH = 0
 KEY_FIX_RETRY_ITERS = 3     # ...and a retry's fit takes at most this many steps a pass
 KEY_FIX_RETRY_PX = 3.0      # a fit leaving its keys further off than this (px, all told) tries other starts
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
@@ -1003,7 +1002,7 @@ class HandAnimator:
         self.run_starts = [a for a, _ in self.runs]
         self.trem_rock = set()
         self._group_of = None
-        self._kf_memo, self._kf_last = {}, None      # (_key_fix's retries: the keys last searched, the start that won)
+        self._kf_last = None                         # (_key_fix: when and where it last put the hand)
         self.trems = self._find_tremolos()
         self._group_ts = [t for t, _ in self.groups]
         self.trem_starts = [a for a, _ in self.trems]
@@ -1752,7 +1751,6 @@ class HandAnimator:
         held = {go.get(id(m)) for m in down}
         held_end = max((self._end_of_f.get(id(m), 0.0) for m in down), default=-math.inf)
         trem = self._trem_keys(t, tr) if tw > 0.0 else {}
-        keyset = []
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
             boost = 1.0
@@ -1784,7 +1782,6 @@ class HandAnimator:
             hmin, hmax = self._reach_range(f, self.base_local[f][2] * low + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
             cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w, boost))
-            keyset.append((f, id(n)))
             pk = self._pk(n)
             if f == 1 and self._bridge_pair(pk, 1):
                 # a thumb bridging two black keys lies straight across them (_thumb_bridge): from
@@ -1875,41 +1872,16 @@ class HandAnimator:
             r = residuals(q, boosted)
             return q, sum(v * v for v in r[3:]), sum(v * v for v in r)
         q, kc, tot = fit([wx, wy, psi])
-        if kc > (KEY_FIX_RETRY_PX * KEY_FIX_K) ** 2:
+        last = self._kf_last
+        if kc > (KEY_FIX_RETRY_PX * KEY_FIX_K) ** 2 and last is not None and abs(last[0] - t) < 0.1 and (
+                math.hypot(last[1][0] - q[0], last[1][1] - q[1]) > 2.0 or abs(last[1][2] - q[2]) > 0.02):
             # stuck short of the keys (a shape the hand can make, but not by moving a little from here: its
-            # fingers all strained): from other places and turns as well, the best of them. All of them only
-            # once for the keys being fitted (the hand moves smoothly: then from where the last fit put it,
-            # and the start that won) - each start is a fit, and every one of them in every frame stalled
-            # playback (frames 4 times as slow at the 99th percentile)
-            wkp = self.kb.white_w
-            key = tuple(keyset)
-            memo = self._kf_memo
-            starts = []
-            last = self._kf_last
-            if last is not None and abs(last[0] - t) < 0.1 and (
-                    math.hypot(last[1][0] - q[0], last[1][1] - q[1]) > 2.0 or abs(last[1][2] - q[2]) > 0.02):
-                starts.append(("last", last[1]))
-            if not KEY_FIX_SEARCH:
-                pass
-            elif memo.get("key") == key:
-                if memo.get("won") is not None:
-                    starts.append(("won", memo["won"]))
-            else:
-                starts += [("off", o) for o in ((wkp, 0.0), (-wkp, 0.0), (2 * wkp, 0.0), (-2 * wkp, 0.0),
-                                                (0.0, 0.3), (0.0, -0.3), (wkp, -0.3), (-wkp, 0.3))]
-                memo.clear()
-                memo["key"], memo["won"] = key, None
-            for kind, o in starts:
-                if kind == "last":
-                    start = list(o)
-                else:
-                    dx, dp = o
-                    start = [wx + dx * math.cos(psi), wy + dx * math.sin(psi), psi + dp]
-                q2, kc2, tot2 = fit(start, KEY_FIX_RETRY_ITERS)
-                if tot2 < tot:
-                    q, kc, tot = q2, kc2, tot2
-                    if kind == "off":
-                        memo["won"] = o
+            # fingers all strained): from where the last fit put the hand too, the better of the two. (A
+            # search from other places and turns in every such frame stalled playback - frames 4 times as
+            # slow at the 99th percentile - and found nothing the last fit's start doesn't)
+            q2, _, tot2 = fit(list(last[1]), KEY_FIX_RETRY_ITERS)
+            if tot2 < tot:
+                q = q2
         self._kf_last = (t, tuple(q))
         return tuple(q)
 

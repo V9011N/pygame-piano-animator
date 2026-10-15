@@ -44,6 +44,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from multiprocessing.managers import SyncManager
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,7 +54,7 @@ for p in (ROOT, TOOLS):
         sys.path.insert(0, p)
 import maestro_check as mc                           # noqa: E402  (files, names, pianists, the progress block)
 
-RESULTS_FORMAT = 2
+RESULTS_FORMAT = 3
 STALL_GAP_T = 0.1           # s of song, hitches this close are one stall
 CULPRITS = [                # (module, class or None, function): timed in every frame, by their own time
     ("hands", "HandAnimator", "pose"),
@@ -203,8 +204,28 @@ def check_file(path, key=None):
             v = main.Visualizer(screen, song, midi=common.MidiOut(False), hands=an)
             v.paused = False
             dt = 1.0 / _OPTS["fps"]
+            # seeks (dragging the progress bar): the first frame after each - before playing, so
+            # into parts not worked out yet, as in the app
+            _NOW["phase"] = "seeking"
+            rng = random.Random(zlib.crc32((key or path).encode("utf-8")))     # (the same places every run)
+            _TIMER.take()
+            for _ in range(_OPTS["seeks"]):
+                ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
+                v.seek(ts)
+                v.paused = False
+                f0 = time.perf_counter()
+                v.update(dt)
+                if _OPTS["draw"]:
+                    v.render()
+                else:
+                    for a in an.values():
+                        a.pose(v.t, v.keyboard)
+                ms = 1000.0 * (time.perf_counter() - f0)
+                spent = _TIMER.take()
+                out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)]))
             t_end = song.duration                     # (the player pauses at the end)
-            v.t = v.start_time()
+            v.seek(v.start_time())
+            v.paused = False
             _NOW["phase"] = "playing"
             frames, times = [], []
             _TIMER.take()
@@ -268,23 +289,6 @@ def check_file(path, key=None):
             for _, _, spent in times:
                 whole.update(spent)
             out["spent_s"] = {n: round(v_, 2) for n, v_ in whole.most_common(12)}
-            # seeks (dragging the progress bar): the first frame after each
-            _NOW["phase"] = "seeking"
-            rng = random.Random(hash(key or path) & 0xFFFF)
-            for _ in range(_OPTS["seeks"]):
-                ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
-                v.seek(ts)
-                v.paused = False
-                f0 = time.perf_counter()
-                v.update(dt)
-                if _OPTS["draw"]:
-                    v.render()
-                else:
-                    for a in an.values():
-                        a.pose(v.t, v.keyboard)
-                ms = 1000.0 * (time.perf_counter() - f0)
-                spent = _TIMER.take()
-                out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)]))
     except Exception as exc:
         import traceback
         out["error"] = f"{type(exc).__name__}: {exc}"
