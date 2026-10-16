@@ -1433,3 +1433,22 @@ def test_an_inner_voice_or_a_trill_is_not_a_slip():
     # a trill: each note let go before the next - nothing is held across another
     tr = [Note(72 + (k % 2) * 2, 0.1 * k, 0.1 * k + 0.09, 70 if k % 2 else 80, 0, RIGHT) for k in range(10)]
     assert F.find_slips(tr) == {}
+
+
+def test_settle_heap_keeps_the_song_out_of_gc_passes_and_frees_the_last_one():
+    # a song's hands are frozen out of the garbage collector's full passes, and the next settle frees them
+    # once nothing refers to them (two paired animators refer to each other: only the collector frees them)
+    import gc
+    import weakref
+    ns = [Note(60 + i, 0.2 * i, 0.2 * i + 0.15, 80, 0, RIGHT if i % 2 else LEFT) for i in range(8)]
+    an = hands.build_hands(song_of(ns, 2.0))
+    ref = weakref.ref(an[RIGHT])
+    hands.settle_heap()
+    try:
+        assert gc.get_freeze_count() > 0
+        del an
+        assert ref() is not None                    # (a cycle, frozen: waits for the next settle)
+        hands.settle_heap()
+        assert ref() is None
+    finally:
+        gc.unfreeze()

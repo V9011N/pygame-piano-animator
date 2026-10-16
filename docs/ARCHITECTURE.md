@@ -347,6 +347,23 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
     fixed or new against round 4b, corrected 20 -> 19. Hands-only p99 47 -> 14-16 ms (97ed615: 13-14), without
     work-ahead.
 
+### The first full run (1279 files) and the garbage collector
+- 108,614 stalls in 43.1M frames, single 25-70 ms frames, almost all "ahead: _placed_at"; the worst files the long
+  2004 recitals. Locally (one worker a core) the same files had a few dozen times fewer (Op. 54: 14 against 709),
+  and loads ran 3x slower in the full run: most were the processes taking turns (more workers than cores - the time
+  slice lands on whatever runs most, the work ahead). Now --workers defaults to half the logical CPUs less one, and a
+  stall whose thread got under `WAITED_CPU` 50% of the time that passed (`time.thread_time`) is counted as waiting.
+- What's real: Python's full garbage-collector passes. They walk every tracked object - the song's notes and plans
+  (~95,000 for a long piece: 30-40 ms a pass) and the hands' caches built during play (dicts of fingertips, up to
+  20,000 entries, re-tracked as they fill: the pass grows with the song, 2 ms at 5 s to 16 ms at 5 min) - 36-76 ms
+  each, every half minute or so. `hands.settle_heap` (`App._switch`, the editor's rebuild and its opening a song):
+  `gc.unfreeze`, `collect` (the last song's cycles - two paired animators refer to each other), `gc.freeze`; and
+  `prepare_hands` freezes again every `FREEZE_EVERY_T` 2 s. Full passes during play now 0.1-0.6 ms. Playback makes no
+  reference cycles (none found after 10 min of play, unfrozen), and memory is the same with or without (173 MB).
+- The report: the culprit tables count only stalls while the code ran; the first frame of each file (the player
+  opening, ~160-200 ms, in the lead-in) is counted apart; each file's listing is its 30 worst stalls, for the
+  `--top` files only (the first report was 19 MB) - stalls.csv has them all, with cpu_ms and waited.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

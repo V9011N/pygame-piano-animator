@@ -413,8 +413,16 @@ def idle_weight(spans, starts, t):
 
 def prepare_hands(animators, t, kb, budget):
     """Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare)."""
+    global _frozen_at
     anims = list(animators)
     end = time.perf_counter() + budget
+    if end - budget - _frozen_at > FREEZE_EVERY_T:
+        # what playback has built up (the hands' caches, ~20,000 entries each) out of the garbage collector's
+        # full passes too, as settle_heap does for the song: each pass otherwise walks all of it, longer the
+        # further into the song (16 ms five minutes in). Playback makes no reference cycles to collect.
+        import gc
+        gc.freeze()
+        _frozen_at = end - budget
     for i, a in enumerate(anims):
         left = end - time.perf_counter()
         if left <= 0:
@@ -444,6 +452,28 @@ def load_with_hands(path_or_song, **kw):
             song = midi_loader.load_song(path_or_song)
     with progress.stage(0.5 if isinstance(path_or_song, str) else 0.0, 1.0):
         return song, build_hands(song, **kw)
+
+
+
+FREEZE_EVERY_T = 2.0        # s, prepare_hands keeps what playback builds out of gc passes this often
+_frozen_at = -math.inf
+
+
+def settle_heap():
+    """
+    Once a song's hands are built (a new mode, an editor's rebuild - never in a
+    playing frame): what's left of the last song is collected, and everything
+    alive now is kept out of the garbage collector's full passes (gc.freeze).
+    Those passes walk every object: with a song's notes and plans (~100,000
+    objects for a long one) each took 40-65 ms, a dropped frame every half
+    minute or so; now they walk only what playback adds. Objects frozen are
+    still freed when nothing refers to them - only cycles wait for the next
+    call (which unfreezes first).
+    """
+    import gc
+    gc.unfreeze()
+    gc.collect()
+    gc.freeze()
 
 
 def pair_hands(animators):

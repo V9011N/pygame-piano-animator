@@ -59,7 +59,7 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_with_slips, score_fingering
-from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands
+from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands, settle_heap
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, note_name, save_fingered_midi,
@@ -326,6 +326,7 @@ class FingeringEditor(Transport):
         self.hands = {h: HandAnimator(self.song, h, fingering=fing) for h in (RIGHT, LEFT)
                       if any(n.hand == h for n in self.notes)}
         pair_hands(self.hands.values())
+        settle_heap()                           # (the old animators collected, the new ones kept out of gc passes)
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.difficulty = None
         self.seek(self.t)
@@ -624,6 +625,7 @@ class FingeringEditor(Transport):
             song, hands = run_busy(self.screen, self.fonts, f"Loading {os.path.basename(path)}…",
                                    lambda: load_with_hands(path, repair=False))
             self.load_song(song, hands)
+            settle_heap()
             self.app.last_dir = os.path.dirname(os.path.abspath(path))
         except Exception as exc:
             self.say(f"Could not open {os.path.basename(path)}: {exc}")

@@ -19,11 +19,18 @@ called that's also timed counted apart). Then --seeks jumps to random places
     python tools/perf_check.py PATH --draw --limit 30   # whole frames, drawing too (slow: a sample)
     python tools/perf_check.py PATH --report-only
 
-PATH, --map, --pianist, --match, --limit, --workers, --size and --keys are as
-for tools/maestro_check.py (renamed files and a rename map work the same).
+PATH, --map, --pianist, --match, --limit, --size and --keys are as for
+tools/maestro_check.py (renamed files and a rename map work the same).
 Times depend on the machine: compare runs made on the same one, and read the
 spikes against each file's own typical frame (the median), which is what the
 hitch threshold does (--hitch-x, at least --hitch-ms).
+
+Timing wants each worker a core of its own (--workers defaults to half the
+logical CPUs, less one): with more, the processes take turns and a frame can
+wait a whole time slice. Each stall's CPU time is measured too, and one whose
+thread got less than half the time that passed is counted as waiting (the
+machine busy), apart from the rest. The first frame of each file (the player
+opening, in the lead-in) is counted apart as well.
 
 Output (--out, default ./perf_check): results.jsonl (one line a file, appended -
 run again to carry on), report.md (the culprits over all stalls, the worst
@@ -54,8 +61,10 @@ for p in (ROOT, TOOLS):
         sys.path.insert(0, p)
 import maestro_check as mc                           # noqa: E402  (files, names, pianists, the progress block)
 
-RESULTS_FORMAT = 3
+RESULTS_FORMAT = 4
 STALL_GAP_T = 0.1           # s of song, hitches this close are one stall
+WAITED_CPU = 0.5            # a stall whose thread got less CPU time than this share of the time passed was waiting
+LIST_STALLS = 30            # the report lists each file's this many worst stalls (stalls.csv has them all)
 CULPRITS = [                # (module, class or None, function): timed in every frame, by their own time
     ("hands", "HandAnimator", "pose"),
     ("hands", "HandAnimator", "_finger_pose"),
@@ -202,8 +211,10 @@ def check_file(path, key=None):
             screen = pygame.display.get_surface()
             common.set_key_style(_OPTS["keys"])
             v = main.Visualizer(screen, song, midi=common.MidiOut(False), hands=an)
+            hands.settle_heap()                       # (as App._switch does)
             v.paused = False
             dt = 1.0 / _OPTS["fps"]
+            out.update(workers=_OPTS.get("workers"), cpus=os.cpu_count())
             # seeks (dragging the progress bar): the first frame after each - before playing, so
             # into parts not worked out yet, as in the app
             _NOW["phase"] = "seeking"
@@ -213,7 +224,7 @@ def check_file(path, key=None):
                 ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
                 v.seek(ts)
                 v.paused = False
-                f0 = time.perf_counter()
+                c0, f0 = time.thread_time(), time.perf_counter()
                 v.update(dt)
                 if _OPTS["draw"]:
                     v.render()
@@ -221,8 +232,10 @@ def check_file(path, key=None):
                     for a in an.values():
                         a.pose(v.t, v.keyboard)
                 ms = 1000.0 * (time.perf_counter() - f0)
+                cpu = 1000.0 * (time.thread_time() - c0)
                 spent = _TIMER.take()
-                out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)]))
+                out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)],
+                                     round(cpu, 1)))
             t_end = song.duration                     # (the player pauses at the end)
             v.seek(v.start_time())
             v.paused = False
@@ -230,9 +243,10 @@ def check_file(path, key=None):
             frames, times = [], []
             _TIMER.take()
             n_total = max(1, int((t_end - v.t) / dt))
+            first = True
             while v.t < t_end and not v.paused:
                 t = v.t
-                f0 = time.perf_counter()
+                c0, f0 = time.thread_time(), time.perf_counter()
                 v.update(dt)
                 if _OPTS["draw"]:
                     v.render()
@@ -253,8 +267,14 @@ def check_file(path, key=None):
                     if over > 0.0005:                 # (named "ahead: ...": what that work was spent on)
                         spent.update({"ahead: " + n: v_ for n, v_ in ahead.items()})
                 ms = 1000.0 * (work + over)
+                # the CPU time this thread got over the whole frame (work ahead included) against the
+                # time that passed: well under it, the process was waiting (other work on the machine)
+                cpu, wall = 1000.0 * (time.thread_time() - c0), 1000.0 * (time.perf_counter() - f0)
+                if first:                             # (the player opening: the lead-in, nothing moves yet)
+                    out["first_ms"], first = round(ms, 1), False
+                    continue
                 frames.append(ms)
-                times.append((t, ms, spent))
+                times.append((t, ms, spent, cpu, wall))
                 if len(frames) % 120 == 0:
                     _NOW["frac"] = len(frames) / n_total
             # hitches: frames well over the file's own typical frame
@@ -265,28 +285,32 @@ def check_file(path, key=None):
                        p99_ms=round(srt[min(len(srt) - 1, int(0.99 * len(srt)))], 2) if srt else 0.0,
                        max_ms=round(srt[-1], 2) if srt else 0.0, threshold_ms=round(thr, 2),
                        duration=round(song.duration, 1), notes=len(song.notes))
-            hitches = [(t, ms, spent) for t, ms, spent in times if ms > thr]
+            hitches = [h for h in times if h[1] > thr]
             out["hitches"] = len(hitches)
             stall = None
-            for t, ms, spent in hitches:
+            for t, ms, spent, cpu, wall in hitches:
                 if stall and t - stall["t1"] <= STALL_GAP_T:
                     stall["t1"] = t
                     stall["ms"] += ms
                     stall["worst_ms"] = max(stall["worst_ms"], ms)
                     stall["frames"] += 1
                     stall["spent"].update(spent)
+                    stall["cpu_ms"] += cpu
+                    stall["wall_ms"] += wall
                 else:
                     stall = {"t0": t, "t1": t, "ms": ms, "worst_ms": ms, "frames": 1,
-                             "spent": collections.Counter(spent)}
+                             "spent": collections.Counter(spent), "cpu_ms": cpu, "wall_ms": wall}
                     out["stalls"].append(stall)
             for s_ in out["stalls"]:
                 tot = sum(s_["spent"].values()) or 1.0
                 s_["culprits"] = [(n, round(1000 * v_, 1), round(100 * v_ / tot)) for n, v_ in s_["spent"].most_common(4)]
                 del s_["spent"]
+                s_["waited"] = s_["cpu_ms"] < WAITED_CPU * s_["wall_ms"]
                 s_["ms"], s_["worst_ms"] = round(s_["ms"], 1), round(s_["worst_ms"], 1)
+                s_["cpu_ms"], s_["wall_ms"] = round(s_["cpu_ms"], 1), round(s_["wall_ms"], 1)
             # all frames' time by function, for the run's overall picture
             whole = collections.Counter()
-            for _, _, spent in times:
+            for _, _, spent, _, _ in times:
                 whole.update(spent)
             out["spent_s"] = {n: round(v_, 2) for n, v_ in whole.most_common(12)}
     except Exception as exc:
@@ -335,7 +359,7 @@ def run(args, meta):
     if not todo:
         return
     opts = {"pianist": args.pianist, "size": args.size, "keys": args.keys, "fps": args.fps, "draw": args.draw,
-            "seeks": args.seeks, "hitch_ms": args.hitch_ms, "hitch_x": args.hitch_x}
+            "seeks": args.seeks, "hitch_ms": args.hitch_ms, "hitch_x": args.hitch_x, "workers": args.workers}
     sizes = {f: max(1, os.path.getsize(f)) for f in todo}
     view = mc.Status(args.progress_every)
     by_key = {keys[f]: f for f in todo}
@@ -367,11 +391,11 @@ def run(args, meta):
                     fh.flush()
                     n_done += 1
                     done_work += sizes[f]
-                    stalls_so_far += len(r.get("stalls", []))
+                    stalls_so_far += sum(1 for s in r.get("stalls", []) if not s.get("waited"))
                     w = len(str(len(todo)))
                     state = (f"FAILED: {r['error']}" if r.get("error") else
                              f"load {r.get('load_s', 0):5.1f} s  frame median {r.get('median_ms', 0):5.1f} ms  "
-                             f"max {r.get('max_ms', 0):6.1f}  {len(r['stalls']):>3} stalls  "
+                             f"max {r.get('max_ms', 0):6.1f}  {sum(1 for s in r['stalls'] if not s.get('waited')):>3} stalls  "
                              f"worst seek {max((s[1] for s in r['seeks']), default=0):6.1f} ms")
                     view.log(f"[{n_done:>{w}}/{len(todo)}] {mc.fmt_dur(r.get('seconds', 0)):>7}  "
                              f"{mc.label(keys[f], meta)}\n{'':>{2 * w + 12}}{state}")
@@ -424,7 +448,9 @@ def report(args, meta):
     bad = [r for r in results if r.get("error")]
     for r in results:
         r.setdefault("key", r["file"])
-    stalls = [(r, s) for r in ok for s in r.get("stalls", [])]
+    ran = lambda r: [s for s in r.get("stalls", []) if not s.get("waited")]
+    stalls = [(r, s) for r in ok for s in ran(r)]
+    waited = sum(1 for r in ok for s in r.get("stalls", []) if s.get("waited"))
     culprit_ms = collections.Counter()
     culprit_n = collections.Counter()
     for _, s in stalls:
@@ -435,66 +461,92 @@ def report(args, meta):
     whole = collections.Counter()
     for r in ok:
         whole.update(r.get("spent_s", {}))
-    seeks = sorted(((s[1], r, s) for r in ok for s in r.get("seeks", [])), key=lambda x: -x[0])
+    seeks = sorted(((s[1], r, s) for r in ok for s in r.get("seeks", [])
+                    if len(s) < 4 or s[3] >= WAITED_CPU * s[1]), key=lambda x: -x[0])
+    firsts = sorted(r["first_ms"] for r in ok if r.get("first_ms") is not None)
     frames = sum(r.get("frames", 0) for r in ok)
+    workers = {r.get("workers") for r in ok if r.get("workers")}
+    cpus = {r.get("cpus") for r in ok if r.get("cpus")}
+    minutes = sum(r.get("duration", 0) for r in ok) / 60 or 1
     lines = ["# Playback performance", "",
              f"{len(results)} files played ({len(bad)} failed), {frames:,} frames at {args.fps} fps "
-             f"({'drawn' if args.draw else 'hands only'}), {len(stalls):,} stalls. Pianist: "
-             f"{getattr(args, 'pianist_name', None) or 'the default pianist'}; window {args.size[0]}x{args.size[1]}.", "",
+             f"({'drawn' if args.draw else 'hands only'}). Pianist: "
+             f"{getattr(args, 'pianist_name', None) or 'the default pianist'}; window {args.size[0]}x{args.size[1]}; "
+             f"{'/'.join(map(str, sorted(workers))) or '?'} workers on {'/'.join(map(str, sorted(cpus))) or '?'} "
+             "logical CPUs.", "",
+             f"**{len(stalls):,} stalls** ({len(stalls) / minutes:.2f} a minute of music) while the code ran; "
+             f"{waited:,} more while the process was waiting (it got less than {WAITED_CPU:.0%} of the CPU time "
+             "that passed: the machine busy with other work - fewer --workers - and not counted below).", "",
              "A **hitch** is a frame longer than the file's typical (median) frame times "
              f"{args.hitch_x:g}, and at least {args.hitch_ms:g} ms; hitches within {STALL_GAP_T} s of song are one "
              "**stall**. What a stall was spent on: each timed function's own time in it (what it called that's also "
-             "timed counted apart; the rest of a frame falls to the function that called it).", "",
-             "## What the stalls were spent on", "",
-             "| function | ms in stalls | stalls it led |", "|---|---:|---:|"]
+             "timed counted apart; the rest of a frame falls to the function that called it; \"ahead:\" - the "
+             "hands' work ahead in a frame's spare time, past its budget). The first frame of each file (the "
+             "player opening, in the lead-in) is counted apart.", ""]
+    if firsts:
+        lines += [f"First frames: median {firsts[len(firsts) // 2]:.0f} ms, worst {firsts[-1]:.0f} ms.", ""]
+    lines += ["## What the stalls were spent on", "",
+              "| function | ms in stalls | stalls it led |", "|---|---:|---:|"]
     lines += [f"| {n} | {ms:,.0f} | {culprit_n[n]:,} |" for n, ms in culprit_ms.most_common(15)]
     lines += ["", "## Where the time goes over all frames", "", "| function | seconds |", "|---|---:|"]
     lines += [f"| {n} | {v:,.1f} |" for n, v in whole.most_common(15)]
-    worst = sorted(ok, key=lambda r: (-sum(s["ms"] for s in r.get("stalls", [])), mc.label(r["key"], meta)))
+    worst = sorted(ok, key=lambda r: (-sum(s["ms"] for s in ran(r)), mc.label(r["key"], meta)))
+    worst = [r for r in worst if ran(r)]
     lines += ["", "## Files with the most time in stalls", "",
-              "| # | piece | stalls | in stalls (ms) | worst frame (ms) | median frame (ms) | load (s) | file |",
-              "|---:|---|---:|---:|---:|---:|---:|---|"]
-    for k, r in enumerate([r for r in worst if r.get("stalls")][:args.top], 1):
-        lines.append(f"| {k} | {mc.label(r['key'], meta)} | {len(r['stalls'])} | "
-                     f"{sum(s['ms'] for s in r['stalls']):,.0f} | {r.get('max_ms', 0):.1f} | "
+              "| # | piece | stalls | a minute | in stalls (ms) | worst frame (ms) | median frame (ms) | load (s) | file |",
+              "|---:|---|---:|---:|---:|---:|---:|---:|---|"]
+    for k, r in enumerate(worst[:args.top], 1):
+        st = ran(r)
+        lines.append(f"| {k} | {mc.label(r['key'], meta)} | {len(st)} | {len(st) / max(1e-9, r.get('duration', 0) / 60):.1f} | "
+                     f"{sum(s['ms'] for s in st):,.0f} | {max(s['worst_ms'] for s in st):.1f} | "
                      f"{r.get('median_ms', 0):.1f} | {r.get('load_s', 0):.1f} | `{r['key']}` |")
     slow = sorted(ok, key=lambda r: -r.get("load_s", 0))[:10]
     lines += ["", "## Slowest loads", "", "| piece | load (s) | notes | file |", "|---|---:|---:|---|"]
     lines += [f"| {mc.label(r['key'], meta)} | {r.get('load_s', 0):.1f} | {r.get('notes', 0):,} | `{r['key']}` |"
               for r in slow]
-    lines += ["", "## Slowest seeks (the first frame after a jump)", "",
-              "| piece | to | ms | spent on | file |", "|---|---:|---:|---|---|"]
-    lines += [f"| {mc.label(r['key'], meta)} | {mc.fmt_t(s[0])} | {ms:.0f} | "
-              f"{', '.join(f'{n} {v:.0f}' for n, v in s[2])} | `{r['key']}` |" for ms, r, s in seeks[:15]]
+    if seeks:
+        ms_all = sorted(x[0] for x in seeks)
+        lines += ["", "## Slowest seeks (the first frame after a jump)", "",
+                  f"{len(ms_all):,} seeks: median {ms_all[len(ms_all) // 2]:.0f} ms, 90% under "
+                  f"{ms_all[int(0.9 * (len(ms_all) - 1))]:.0f} ms.", "",
+                  "| piece | to | ms | spent on | file |", "|---|---:|---:|---|---|"]
+        lines += [f"| {mc.label(r['key'], meta)} | {mc.fmt_t(s[0])} | {ms:.0f} | "
+                  f"{', '.join(f'{n} {v:.0f}' for n, v in s[2])} | `{r['key']}` |" for ms, r, s in seeks[:15]]
     if bad:
         lines += ["", "## Failed", ""] + [f"- `{r['key']}`: {r['error']}" for r in bad]
-    lines += ["", "## Every file's stalls", "", "Worst first; times are in the song (m:ss.sss)."]
+    lines += ["", f"## The worst files' stalls", "",
+              f"The {args.top} files above, worst first: each file's {LIST_STALLS} worst stalls, in song order "
+              "(m:ss.sss). Every stall of every file is in stalls.csv."]
     with open(os.path.join(args.out, "stalls.csv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
-        w.writerow(["piece", "file", "start", "end", "start_s", "end_s", "frames", "ms", "worst_ms",
-                    "median_ms", "culprit", "culprit_ms", "culprit_share", "others"])
-        for r in worst:
-            if not r.get("stalls"):
-                continue
-            lines += ["", f"### {mc.label(r['key'], meta)}", "",
-                      f"`{r['key']}` - median frame {r.get('median_ms', 0):.1f} ms, worst {r.get('max_ms', 0):.1f}, "
-                      f"load {r.get('load_s', 0):.1f} s", "", "```"]
-            for s in r["stalls"]:
+        w.writerow(["piece", "file", "start", "end", "start_s", "end_s", "frames", "ms", "worst_ms", "cpu_ms",
+                    "waited", "median_ms", "culprit", "culprit_ms", "culprit_share", "others"])
+        for r in sorted(ok, key=lambda r: r["key"]):
+            for s in r.get("stalls", []):
                 c = s["culprits"]
-                span = mc.fmt_t(s["t0"]) if s["t1"] - s["t0"] < 1e-3 else f"{mc.fmt_t(s['t0'])} - {mc.fmt_t(s['t1'])}"
-                lines.append(f"{span:<21} {s['frames']:>3} frame{'s' if s['frames'] > 1 else ' '}  "
-                             f"{s['ms']:7.0f} ms (worst {s['worst_ms']:5.0f})  " +
-                             ", ".join(f"{n} {v:.0f} ms ({p}%)" for n, v, p in c[:3]))
                 w.writerow([mc.label(r["key"], meta), r["key"], mc.fmt_t(s["t0"]), mc.fmt_t(s["t1"]),
-                            f"{s['t0']:.3f}", f"{s['t1']:.3f}", s["frames"], s["ms"], s["worst_ms"],
-                            r.get("median_ms", 0), c[0][0] if c else "", c[0][1] if c else "",
-                            c[0][2] if c else "", "; ".join(f"{n} {v}" for n, v, _ in c[1:])])
-            lines.append("```")
+                            f"{s['t0']:.3f}", f"{s['t1']:.3f}", s["frames"], s["ms"], s["worst_ms"], s.get("cpu_ms", ""),
+                            int(bool(s.get("waited"))), r.get("median_ms", 0), c[0][0] if c else "",
+                            c[0][1] if c else "", c[0][2] if c else "", "; ".join(f"{n} {v}" for n, v, _ in c[1:])])
+    for r in worst[:args.top]:
+        st = ran(r)
+        shown = sorted(sorted(st, key=lambda s: -s["ms"])[:LIST_STALLS], key=lambda s: s["t0"])
+        lines += ["", f"### {mc.label(r['key'], meta)}", "",
+                  f"`{r['key']}` - {len(st)} stalls ({len(shown)} worst here), median frame "
+                  f"{r.get('median_ms', 0):.1f} ms, load {r.get('load_s', 0):.1f} s", "", "```"]
+        for s in shown:
+            c = s["culprits"]
+            span = mc.fmt_t(s["t0"]) if s["t1"] - s["t0"] < 1e-3 else f"{mc.fmt_t(s['t0'])} - {mc.fmt_t(s['t1'])}"
+            lines.append(f"{span:<21} {s['frames']:>3} frame{'s' if s['frames'] > 1 else ' '}  "
+                         f"{s['ms']:7.0f} ms (worst {s['worst_ms']:5.0f})  " +
+                         ", ".join(f"{n} {v:.0f} ms ({p}%)" for n, v, p in c[:3]))
+        lines.append("```")
     with open(os.path.join(args.out, "report.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"Report: {os.path.join(args.out, 'report.md')} (and stalls.csv)")
+    print(f"{len(stalls):,} stalls while the code ran, {waited:,} while the process waited")
     if culprit_ms:
-        print("Stalls spent most on: " + ", ".join(f"{n} {ms / 1000:.1f} s" for n, ms in culprit_ms.most_common(5)))
+        print("Stalls spent most on: " + ", ".join(f"{n} {ms:,.0f} ms" for n, ms in culprit_ms.most_common(5)))
 
 
 def main():
@@ -503,7 +555,9 @@ def main():
     ap.add_argument("path", help="folder of MIDI files (searched recursively) - or one file")
     ap.add_argument("--map", help="the rename map (as maestro_check.py)")
     ap.add_argument("--out", default="perf_check", help="output folder (default ./perf_check)")
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2 - 1),
+                    help="files played at once (default: half the logical CPUs, less one - timing wants each worker "
+                         "a core of its own: with more, stalls are mostly the processes waiting their turn)")
     ap.add_argument("--pianist", help="a pianist's name or .json (default: the default pianist)")
     ap.add_argument("--size", default="1920x1080", help="the window (default 1920x1080)")
     ap.add_argument("--keys", default="realistic", choices=("realistic", "equal"))

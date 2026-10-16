@@ -58,7 +58,7 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
 import paths
 import pianist as pianists
 import recent
-from hands import build_hands, draw_hands, load_with_hands, prepare_hands
+from hands import build_hands, draw_hands, load_with_hands, prepare_hands, settle_heap
 from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
@@ -1328,6 +1328,7 @@ class App:
         self.mode.leave()
         self.mode = mode
         self._fresh = True
+        settle_heap()                           # (the last mode's song collected, this one's kept out of gc passes)
 
     def menu(self, message=""):
         if isinstance(self.mode, Visualizer) and not self.mode.audio:
