@@ -376,6 +376,8 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
     solves those poses first, one per budget check, for the next strike after `WARM_NEXT_STEPS` 8 steps past the
     one it works on (a grid pose depends only on its step: identical results). Work-ahead steps over 20 ms in the
     first 10 min of a long recital: 6 -> 0.
+  - The five files again (2 workers, 4 CPUs): stalls 97 (before the gc change) -> 37 -> 3 (26-32 ms, in 65 min of
+    music; 3 more counted waiting), worst frames 14-21 ms in three of them. Canary: seen 17, none fixed or new.
 - The report: the culprit tables count only stalls while the code ran; the first frame of each file (the player
   opening, ~160-200 ms, in the lead-in) is counted apart; each file's listing is its 30 worst stalls, for the
   `--top` files only (the first report was 19 MB) - stalls.csv has them all, with cpu_ms and waited.
