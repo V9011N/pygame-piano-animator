@@ -801,15 +801,19 @@ def _drawn_reach(geo, lift_in, fa, fb):
 # --------------------------------------------------------------------------- #
 # Animation
 # --------------------------------------------------------------------------- #
-def _trim(cache, cap):
+def _trim(cache, cap, near):
     """
-    A cache past `cap` entries drops its older half (the first stored). Not
-    all of it: the speed limit's chains go on from the step before (a cleared
-    cache restarted them, every 20,000 steps - 5.5 min - a burst of work and a
-    restarted motion), and in play the steps stored last are the ones near.
+    A cache past `cap` entries (int keys: grid steps) keeps the half nearest
+    `near` (the key being worked out), the rest dropped. Not all of it: the
+    speed limit's chains go on from the step before (a cleared cache restarted
+    them every 20,000 steps - 5.5 min - a burst of work and a restarted motion);
+    and by distance, not by when stored - a jump ahead earlier (a seek) stores
+    steps far ahead first, and the oldest half then held the very steps
+    playback was about to reach (two frames of 40-50 ms there).
     """
     if len(cache) > cap:
-        for key in list(itertools.islice(cache, len(cache) // 2)):
+        r = cap // 4
+        for key in [key for key in cache if abs(key - near) > r]:
             del cache[key]
 
 
@@ -1550,7 +1554,7 @@ class HandAnimator:
         cache = self._smooth_hand_cache
         q = cache.get(k)
         if q is None:
-            _trim(cache, 20000)
+            _trim(cache, 20000, k)
             def avg(n):
                 acc, ws = [0.0, 0.0, 0.0], 0.0
                 for d in range(-n, n + 1):
@@ -1707,7 +1711,7 @@ class HandAnimator:
         cache = self._smooth_tip_cache
         q = cache.get(k)
         if q is None:
-            _trim(cache, 20000)
+            _trim(cache, 20000, k)
             n = LIMIT_SMOOTH_TIPS
             grids = [(n + 1 - abs(d), self._limited_tip_grid(k + d)) for d in range(-n, n + 1)]
             ws = sum(w for w, _ in grids)
@@ -1725,7 +1729,7 @@ class HandAnimator:
         cache = self._tip_limit_cache
         if k in cache:
             return cache[k]
-        _trim(cache, 20000)
+        _trim(cache, 20000, k)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g
         j, todo = k, []
@@ -1750,7 +1754,7 @@ class HandAnimator:
         cache = self._limit_cache
         if k in cache:
             return cache[k]
-        _trim(cache, 20000)
+        _trim(cache, 20000, k)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g           # pixels per grid step
         arm = TIP_ARM_IN * self.ppi
@@ -2912,7 +2916,7 @@ class HandAnimator:
             if w > 0:
                 d = self._idle_cache.get(k)
                 if d is None:
-                    _trim(self._idle_cache, 4000)
+                    _trim(self._idle_cache, 4000, k)
                     d = self._idle_cache[k] = self._idle_shift_parts(k * g)
                 sd, sf, sw = sd + w * d[0], sf + w * d[1], sw + w
         dx = sd / sw if sw else 0.0
@@ -2997,7 +3001,7 @@ class HandAnimator:
         """The other hand's wrist x at tick i (IDLE_TICK_T), in this hand's frame."""
         x = self._path_cache.get(i)
         if x is None:
-            _trim(self._path_cache, 20000)
+            _trim(self._path_cache, 20000, i)
             p = self.partner
             x = self._path_cache[i] = self._mx(p._mx(p._grid_pose(int(round(i * IDLE_TICK_T / HAND_GRID_T)))[0]))
         return x
@@ -3013,7 +3017,7 @@ class HandAnimator:
         cache, p, g = self._clear_cache, self.partner, IDLE_GRID_T
         if k in cache:
             return cache[k]
-        _trim(cache, 20000)
+        _trim(cache, 20000, k)
         at, tick = self._partner_x, IDLE_TICK_T
 
         def ahead(j):
@@ -3035,7 +3039,7 @@ class HandAnimator:
         cache = self._cache
         pose = cache.get(k)
         if pose is None:
-            _trim(cache, 4000)
+            _trim(cache, 4000, k)
             t = k * HAND_GRID_T
             pose = cache[k] = self._solve_hand(self._items_at(t), self._run_w(t), self._low(t))
         return pose
@@ -4481,7 +4485,7 @@ def contact_overlap(right, left, k):
     cache = right.__dict__.setdefault("_contact_cache", {})
     v = cache.get(k)
     if v is None:
-        _trim(cache, 20000)
+        _trim(cache, 20000, k)
         t = k * CONTACT_GRID
         fr, fl = right.footprint(t), left.footprint(t)
         v = cache[k] = -1.0 if fr is None or fl is None else min(fr[1], fl[1]) - max(fr[0], fl[0])
@@ -4518,7 +4522,7 @@ def _layer_top(right, left, episodes, t):
         b = k
         while b < k + n and touching(b + 1):
             b += 1
-        _trim(spans, 20000)
+        _trim(spans, 20000, k)
         for j in range(a, b + 1):
             spans[j] = (a, b)
         ab = (a, b)

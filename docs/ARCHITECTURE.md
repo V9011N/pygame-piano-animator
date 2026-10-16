@@ -369,8 +369,8 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   worst frame 139 -> 53 ms. What was left, two kinds:
   - Bursts every 5.5 min (5:21, 10:54, 16:26, 21:56): the hands' caches were cleared whole at 20,000 entries
     (20,000 limit-grid steps), so the speed limit's chains restarted - a burst of work, and a motion restarted
-    where uninterrupted play would have gone on. Now `_trim` drops a full cache's older half (insertion order: in
-    play the steps stored last are the ones near), every cache that had a cap.
+    where uninterrupted play would have gone on. Now `_trim` drops part of a full cache instead
+    (what it keeps: the second full run, below), every cache that had a cap.
   - Single 40 ms work-ahead steps: a resting hand's place looks to its next notes (`_placed_at`,
     `_idle_shift_parts`: `_hand_at(next strike)`, averaged over ~20 grid poses, all new at once). `prepare` now
     solves those poses first, one per budget check, for the next strike after `WARM_NEXT_STEPS` 8 steps past the
@@ -381,6 +381,17 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
 - The report: the culprit tables count only stalls while the code ran; the first frame of each file (the player
   opening, ~160-200 ms, in the lead-in) is counted apart; each file's listing is its 30 worst stalls, for the
   `--top` files only (the first report was 19 MB) - stalls.csv has them all, with cpu_ms and waited.
+
+### The second full run (perf_check_round1: 7 workers on 16 logical CPUs)
+- 108,614 -> 104 stalls while the code ran (0.01 a minute of music), 471 more waiting. Of the 104, 38 at 5:20-5:40
+  (and some at twice that): two frames ~0.5 s apart in the frame itself (`_placed_at` / `_key_fix`, then
+  `_tips_at`) - the caches trimmed at 20,000 by insertion order, and perf_check's seeks (as a user's jump ahead)
+  had stored steps far ahead first: the "oldest" half held the steps playback was about to reach. `_trim` now
+  keeps the steps within cap/4 of the key being worked out. Reproduced (40-54 ms at 5:28) and gone.
+- The rest: single 30-60 ms work-ahead steps, at most a few a file, not reproducible here (the slowest step in
+  the same files, with the same seeks first, 18 ms): on Windows `time.thread_time` counts in 15.6 ms ticks, so a
+  frame waiting part of its time can pass as running. First frames: median 142 ms; the slowest (900 ms) were
+  the same few files, 166-199 ms here.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)

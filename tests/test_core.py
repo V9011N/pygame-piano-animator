@@ -1454,11 +1454,11 @@ def test_settle_heap_keeps_the_song_out_of_gc_passes_and_frees_the_last_one():
         gc.unfreeze()
 
 
-def test_a_full_cache_drops_its_older_half_not_the_step_before():
-    # the speed limit's chains go on from the step before: a full cache keeps the steps stored last
-    cache = {k: k for k in range(10)}
-    hands._trim(cache, 10)
-    assert len(cache) == 10
+def test_a_full_cache_keeps_the_half_nearest_where_it_is_used():
+    # the speed limit's chains go on from the step before; steps stored earlier far ahead (a seek) go first
+    cache = {k: k for k in list(range(1000, 1004)) + list(range(10))}     # (1000-1003: a jump ahead, stored first)
+    hands._trim(cache, 14, 9)
+    assert len(cache) == 14
     cache[10] = 10
-    hands._trim(cache, 10)
-    assert sorted(cache) == list(range(5, 11))
+    hands._trim(cache, 14, 10)
+    assert sorted(cache) == list(range(7, 11))
