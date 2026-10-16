@@ -493,3 +493,43 @@ def test_overview_scrolls_a_hovered_finger_and_the_shape_button_resets(screen):
     st._action("shape")
     assert st.bends == {} and st.shape == "natural"
     assert "bends" not in st.work.to_json()                 # (a preview: nothing saved)
+
+
+def test_scrubbing_the_bar_draws_quick_poses_and_lets_go_to_the_exact_ones(screen):
+    # dragging the progress bar: every frame a jump - a quick pose each (HandAnimator.pose(quick=True)), the
+    # work ahead paused; let go, the exact pose, which the quick ones left unchanged
+    import hands
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    seen = []
+    real = hands.HandAnimator.pose
+
+    def spy(self, t, kb, quick=False):
+        seen.append(quick)
+        return real(self, t, kb, quick=quick)
+    hands.HandAnimator.pose = spy
+    try:
+        r = v.bar_rect
+        y = r.centery
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 4, y)))
+        for k in range(1, 6):
+            app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(r.x + r.w // 4 + 20 * k, y), rel=(20, 0),
+                                                buttons=(1, 0, 0)))
+            v.update(1 / 60)
+            v.render()
+            warm = [a._warm_k for a in v.hands.values()]
+            v.idle(0.01)
+            assert [a._warm_k for a in v.hands.values()] == warm      # (no work ahead while scrubbed)
+        assert seen and all(seen)
+        seen.clear()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4 + 100, y)))
+        v.render()
+        assert seen and not any(seen)
+    finally:
+        hands.HandAnimator.pose = real
+    t = v.t
+    fresh = hands.build_hands(v.song)
+    for h, a in v.hands.items():
+        assert real(a, t, v.keyboard)["struct"]["chains"] == real(fresh[h], t, v.keyboard)["struct"]["chains"]

@@ -330,8 +330,13 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
 - Cold seeks: 200-470 ms on the Bach test files (97ed615: about the same, 300-360 at worst). The speed limit's
   chain restarts `LIMIT_RESTART_T` 0.5 s back - ~37 steps a hand, each a `_placed_at` (hand solves, the partner's
   path) and `_key_fix`, then the fingertips' chain the same; 0.25 s would make it ~185 ms. The first frame of
-  play (~180 ms) is the same cold start. Not changed yet: a cheaper pose while scrubbing, or a shorter restart,
-  changes what's drawn after a seek.
+  play (~180 ms) is the same cold start. Scrubbing (the player's bar dragged; the editor's ruler, or the roll
+  across time) draws `HandAnimator.pose(t, kb, quick=True)` instead: the hand's grid solve nearest t (`_grid_pose`,
+  cached as the exact pose's) fitted to its keys (`_key_fix`, its `_kf_last` restored), fingertips straight from
+  `_tips_at` - no speed limit, smoothing, idle placement or glissando ways in and out; `_settle_on_keys` without
+  logging. Both hands 3-4 ms a frame (worst 15) against 200-470; let go, the exact pose once (~200-250 ms). The
+  work ahead (`idle`) pauses while scrubbed: each jump would restart its chain. Nothing the quick pose works out
+  changes the exact one (test: scrubbed, then exact, equals a fresh animator's).
 - Workers (and the status manager) exit when the main process is gone (`multiprocessing.parent_process()`), in
   maestro_check too: a killed run used to leave them playing on.
 - Fixed from it (the 114 s Bach test file, Ninthie): load 3.1 -> 1.3 s (97ed615: 1.6 s), all results identical:

@@ -3226,15 +3226,29 @@ class HandAnimator:
         return (x, y, tip[2])
 
     # ----- full pose ------------------------------------------------------------
-    def pose(self, t, kb):
+    def pose(self, t, kb, quick=False):
         """
         Skeleton at time t (see _finger_pose), blended into the glissando
         pose (_gliss_pose) around this hand's glissandos.
+
+        quick: while the song is scrubbed - every frame a jump, and the exact
+        pose after one works out the hand's motion from LIMIT_RESTART_T back
+        (200-470 ms) - the hand solved at t alone and fitted to its keys, the
+        fingertips aimed straight at theirs (_quick_hand: no speed limit, no
+        smoothing, the idle hand not moved aside, glissandos without their
+        ways in and out); a few ms. Nothing it works out is kept where the
+        exact pose would differ for it: played on, the pose is the same.
         """
         self._ensure_layout(kb)
         g, ep = self._gliss_w(t)
         if g >= 1.0:
             return self._gliss_pose(t, ep, kb, g)
+        if quick:
+            fp = self._finger_pose(t, kb, quick=True)
+            p = fp if g <= 0.0 else _blend_pose(fp, self._gliss_pose(t, ep, kb, g), g)
+            if g <= 0.0:
+                p = self._settle_on_keys(p, t, log=False)
+            return dict(p, anim=self, quick=True)
         fp = self._finger_pose(t, kb)
         target = self._gliss_across(t, kb)
         if target is None:
@@ -3282,7 +3296,7 @@ class HandAnimator:
             yhi = min(yhi, self.kb.rect.h - self.kb.black_h)          # (C-D: in front of the black key between)
         return (min(xs) + m, max(xs) - m), (ylo, yhi), min(r.w for r in rs)
 
-    def _settle_on_keys(self, p, t):
+    def _settle_on_keys(self, p, t, log=True):
         """
         The last word on the pose: every finger holding a key has its tip on
         it. Fingertips already go to their keys (_finger_pose); one that still
@@ -3319,7 +3333,7 @@ class HandAnimator:
         if abs(dx) > 0.01:
             p = _shift_pose(p, dx, 0.0, self.mirror)
         for f, n, _, after in out:
-            if after > STRICT_LOG_KEY and id(n) not in self.unreached_logged:
+            if log and after > STRICT_LOG_KEY and id(n) not in self.unreached_logged:
                 self.unreached_logged.add(id(n))
                 print(f"[hands] {self.hand} hand, finger {f} can't reach {note_name(n.pitch)} at "
                       f"{fmt_song_time(n.start)} (MIDI {n.start:.3f} s): {100 * after:.0f}% of the key's width off it")
@@ -3884,7 +3898,16 @@ class HandAnimator:
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}
 
-    def _finger_pose(self, t, kb):
+    def _quick_hand(self, t):
+        """pose(quick=True)'s hand: the solve nearest t on the hand's grid (cached, as the exact pose's), fitted
+        to the keys held (_key_fix - whose memory of its last fit, for the exact chain, is left as it was)."""
+        last = self._kf_last
+        try:
+            return self._key_fix(t, *self._grid_pose(int(round(t / HAND_GRID_T))))
+        finally:
+            self._kf_last = last
+
+    def _finger_pose(self, t, kb, quick=False):
         """
         Skeleton at time t as a dict:
             'bones':  [(p, q, kind)]  3D world points, kind in
@@ -3894,7 +3917,7 @@ class HandAnimator:
         """
         self._ensure_layout(kb)
         S, rot = self.S, self._rot
-        wx, wy, psi = self._limited_at(t)
+        wx, wy, psi = self._quick_hand(t) if quick else self._limited_at(t)
         # The wrist playing (repeated chords, tremolos): the hand is a rigid
         # unit that takes the keys down itself - it drops by the key's depth
         # while a chord is held and springs up between chords (lift), and in
@@ -3918,7 +3941,7 @@ class HandAnimator:
         # fingertips, held to the top speed across the keys (_limited_tips)
         comp, low = self._run_w(t), self._low(t)
         tips = {f: self._limit_tip(f, p, wx, wy, psi, comp, self._key_weight(f, t)[0], low)
-                for f, p in self._limited_tips(t).items()}
+                for f, p in (self._tips_at(t, (wx, wy, psi)) if quick else self._limited_tips(t)).items()}
         tips = self._separate(tips, wx, wy, psi, t, comp)
         if gw > 0:
             travel = self.travel

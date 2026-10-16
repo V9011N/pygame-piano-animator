@@ -480,8 +480,9 @@ class Visualizer(Transport):
             self.seek(frac * self.song.duration)
 
     def idle(self, budget):
-        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
-        if self.song and self.hands and self.export is None:
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while the
+        bar is dragged (each jump would start the motion's chain over, the stall the quick pose avoids)."""
+        if self.song and self.hands and self.export is None and not self.dragging_bar:
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
@@ -643,7 +644,8 @@ class Visualizer(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            draw_hands(s, [a.pose(self.t, kb) for a in self.hands.values()])
+            quick = self.dragging_bar and video is None   # (scrubbed: a quick pose each jump, HandAnimator.pose)
+            draw_hands(s, [a.pose(self.t, kb, quick=quick) for a in self.hands.values()])
             s.set_clip(None)
         pedals = video is None or video.get("pedals")
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),

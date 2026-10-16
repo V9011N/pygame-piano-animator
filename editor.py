@@ -645,9 +645,15 @@ class FingeringEditor(Transport):
     def say(self, text):
         self.message, self.message_age = text, 0.0
 
+    def _scrubbing(self):
+        """Is the song being scrubbed (the ruler, or the roll across time, dragged)? Each frame a jump."""
+        p = self.press
+        return bool(p and p["moved"] and (p["kind"] == "ruler" or (p["kind"] == "pan" and p["time"])))
+
     def idle(self, budget):
-        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
-        if self.hands and not self._rebuild_due:
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while
+        scrubbed (each jump would start the motion's chain over, the stall the quick pose avoids)."""
+        if self.hands and not self._rebuild_due and not self._scrubbing():
             from hands import prepare_hands
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
@@ -1122,7 +1128,8 @@ class FingeringEditor(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            draw_hands(s, [a.pose(self.t, self.keyboard) for a in self.hands.values()])
+            quick = self._scrubbing()           # (a quick pose each jump: HandAnimator.pose)
+            draw_hands(s, [a.pose(self.t, self.keyboard, quick=quick) for a in self.hands.values()])
             s.set_clip(None)
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
                            self.song.control_state(self.t))
