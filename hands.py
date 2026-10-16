@@ -41,6 +41,7 @@ an octave up); that makes it about 7.6 in from wrist to middle fingertip.
 from __future__ import annotations
 
 import bisect
+import itertools
 import math
 import time
 from operator import mul
@@ -287,6 +288,7 @@ GLISS_TRAVEL_ACC = 40.0     # m/s^2, to and from a glissando the hand speeds up 
 GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
 GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
 WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out this far ahead of the song
+WARM_NEXT_STEPS = 8          # prepare(): the next notes after this many limit-grid steps past the one it works on
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
@@ -799,6 +801,18 @@ def _drawn_reach(geo, lift_in, fa, fb):
 # --------------------------------------------------------------------------- #
 # Animation
 # --------------------------------------------------------------------------- #
+def _trim(cache, cap):
+    """
+    A cache past `cap` entries drops its older half (the first stored). Not
+    all of it: the speed limit's chains go on from the step before (a cleared
+    cache restarted them, every 20,000 steps - 5.5 min - a burst of work and a
+    restarted motion), and in play the steps stored last are the ones near.
+    """
+    if len(cache) > cap:
+        for key in list(itertools.islice(cache, len(cache) // 2)):
+            del cache[key]
+
+
 def _clamp(x, lo, hi):
     return lo if x < lo else hi if x > hi else x
 
@@ -1536,8 +1550,7 @@ class HandAnimator:
         cache = self._smooth_hand_cache
         q = cache.get(k)
         if q is None:
-            if len(cache) > 20000:
-                cache.clear()
+            _trim(cache, 20000)
             def avg(n):
                 acc, ws = [0.0, 0.0, 0.0], 0.0
                 for d in range(-n, n + 1):
@@ -1694,8 +1707,7 @@ class HandAnimator:
         cache = self._smooth_tip_cache
         q = cache.get(k)
         if q is None:
-            if len(cache) > 20000:
-                cache.clear()
+            _trim(cache, 20000)
             n = LIMIT_SMOOTH_TIPS
             grids = [(n + 1 - abs(d), self._limited_tip_grid(k + d)) for d in range(-n, n + 1)]
             ws = sum(w for w, _ in grids)
@@ -1713,8 +1725,7 @@ class HandAnimator:
         cache = self._tip_limit_cache
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g
         j, todo = k, []
@@ -1739,8 +1750,7 @@ class HandAnimator:
         cache = self._limit_cache
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g           # pixels per grid step
         arm = TIP_ARM_IN * self.ppi
@@ -2902,8 +2912,7 @@ class HandAnimator:
             if w > 0:
                 d = self._idle_cache.get(k)
                 if d is None:
-                    if len(self._idle_cache) > 4000:
-                        self._idle_cache.clear()
+                    _trim(self._idle_cache, 4000)
                     d = self._idle_cache[k] = self._idle_shift_parts(k * g)
                 sd, sf, sw = sd + w * d[0], sf + w * d[1], sw + w
         dx = sd / sw if sw else 0.0
@@ -2988,8 +2997,7 @@ class HandAnimator:
         """The other hand's wrist x at tick i (IDLE_TICK_T), in this hand's frame."""
         x = self._path_cache.get(i)
         if x is None:
-            if len(self._path_cache) > 20000:
-                self._path_cache.clear()
+            _trim(self._path_cache, 20000)
             p = self.partner
             x = self._path_cache[i] = self._mx(p._mx(p._grid_pose(int(round(i * IDLE_TICK_T / HAND_GRID_T)))[0]))
         return x
@@ -3005,8 +3013,7 @@ class HandAnimator:
         cache, p, g = self._clear_cache, self.partner, IDLE_GRID_T
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000)
         at, tick = self._partner_x, IDLE_TICK_T
 
         def ahead(j):
@@ -3028,8 +3035,7 @@ class HandAnimator:
         cache = self._cache
         pose = cache.get(k)
         if pose is None:
-            if len(cache) > 4000:
-                cache.clear()
+            _trim(cache, 4000)
             t = k * HAND_GRID_T
             pose = cache[k] = self._solve_hand(self._items_at(t), self._run_w(t), self._low(t))
         return pose
@@ -3441,6 +3447,18 @@ class HandAnimator:
         while self._warm_k < k_end:
             if time.perf_counter() > end:
                 return
+            if self.smooth_t > 0:
+                # a resting hand's place looks to its next notes (_placed_at, _idle_shift_parts: _hand_at
+                # there, averaged over ~20 hand solves all new at once - one step of 40 ms): those solves
+                # first, one at a time
+                nxt = self._next_strike((self._warm_k + 1) * g + IDLE_SMOOTH_T + WARM_NEXT_STEPS * g)
+                if nxt < math.inf:
+                    G = HAND_GRID_T
+                    for kk in range(math.ceil((nxt - self.smooth_t) / G), math.floor((nxt + self.smooth_t) / G) + 1):
+                        if kk not in self._cache:
+                            if time.perf_counter() > end:
+                                return
+                            self._grid_pose(kk)
             self._warm_k += 1
             self._smooth_tip_grid(self._warm_k)      # (and the hand's grid under it)
         if not self.gliss_eps:
@@ -4440,8 +4458,7 @@ def contact_overlap(right, left, k):
     cache = right.__dict__.setdefault("_contact_cache", {})
     v = cache.get(k)
     if v is None:
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000)
         t = k * CONTACT_GRID
         fr, fl = right.footprint(t), left.footprint(t)
         v = cache[k] = -1.0 if fr is None or fl is None else min(fr[1], fl[1]) - max(fr[0], fl[0])
@@ -4478,8 +4495,7 @@ def _layer_top(right, left, episodes, t):
         b = k
         while b < k + n and touching(b + 1):
             b += 1
-        if len(spans) > 20000:
-            spans.clear()
+        _trim(spans, 20000)
         for j in range(a, b + 1):
             spans[j] = (a, b)
         ab = (a, b)

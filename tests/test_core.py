@@ -1452,3 +1452,13 @@ def test_settle_heap_keeps_the_song_out_of_gc_passes_and_frees_the_last_one():
         assert ref() is None
     finally:
         gc.unfreeze()
+
+
+def test_a_full_cache_drops_its_older_half_not_the_step_before():
+    # the speed limit's chains go on from the step before: a full cache keeps the steps stored last
+    cache = {k: k for k in range(10)}
+    hands._trim(cache, 10)
+    assert len(cache) == 10
+    cache[10] = 10
+    hands._trim(cache, 10)
+    assert sorted(cache) == list(range(5, 11))
