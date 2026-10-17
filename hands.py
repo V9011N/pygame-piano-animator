@@ -803,18 +803,30 @@ def _drawn_reach(geo, lift_in, fa, fb):
 # --------------------------------------------------------------------------- #
 def _trim(cache, cap, near):
     """
-    A cache past `cap` entries (int keys: grid steps) keeps the half nearest
-    `near` (the key being worked out), the rest dropped. Not all of it: the
-    speed limit's chains go on from the step before (a cleared cache restarted
-    them every 20,000 steps - 5.5 min - a burst of work and a restarted motion);
-    and by distance, not by when stored - a jump ahead earlier (a seek) stores
-    steps far ahead first, and the oldest half then held the very steps
-    playback was about to reach (two frames of 40-50 ms there).
+    A cache past `cap` entries (int keys: grid steps) lets go of a few far from
+    `near` (the key being worked out: further than cap/4), oldest stored first -
+    TRIM_BATCH for each entry added past the cap, so it shrinks back a little at
+    a time. Not all at once: a cleared cache restarted the speed limit's chains
+    (every 20,000 steps - 5.5 min - a burst of work and a restarted motion), and
+    dropping thousands of entries in one go took 26-54 ms itself. Not the
+    oldest regardless: a jump ahead earlier (a seek) stores steps far ahead
+    first, the very steps playback reaches later - one near is moved to the
+    back of the line instead.
     """
-    if len(cache) > cap:
-        r = cap // 4
-        for key in [key for key in cache if abs(key - near) > r]:
+    if len(cache) <= cap:
+        return
+    r, n = cap // 4, 0
+    for key in list(itertools.islice(cache, 4 * TRIM_BATCH)):
+        if abs(key - near) > r:
             del cache[key]
+            n += 1
+            if n >= TRIM_BATCH:
+                return
+        else:
+            cache[key] = cache.pop(key)
+
+
+TRIM_BATCH = 8
 
 
 def _clamp(x, lo, hi):

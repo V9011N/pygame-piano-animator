@@ -387,11 +387,19 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   (and some at twice that): two frames ~0.5 s apart in the frame itself (`_placed_at` / `_key_fix`, then
   `_tips_at`) - the caches trimmed at 20,000 by insertion order, and perf_check's seeks (as a user's jump ahead)
   had stored steps far ahead first: the "oldest" half held the steps playback was about to reach. `_trim` now
-  keeps the steps within cap/4 of the key being worked out. Reproduced (40-54 ms at 5:28) and gone.
+  keeps the steps within cap/4 of the key being worked out (since: a few at a time, the third run). Reproduced (40-54 ms at 5:28) and gone.
 - The rest: single 30-60 ms work-ahead steps, at most a few a file, not reproducible here (the slowest step in
   the same files, with the same seeks first, 18 ms): on Windows `time.thread_time` counts in 15.6 ms ticks, so a
   frame waiting part of its time can pass as running. First frames: median 142 ms; the slowest (900 ms) were
   the same few files, 166-199 ms here.
+
+### The third full run (4 workers on 16 logical CPUs)
+- 275 stalls while the code ran (93 waiting): 243 of them work-ahead steps in `_smooth_tip_grid` /
+  `_limited_tip_grid` themselves, at ~5:25 and every ~250 s after - the trims: dropping ~15,000 entries from each
+  of four caches in consecutive steps (2.7 ms a cache here, 26-54 ms a step there). `_trim` now lets go of
+  `TRIM_BATCH` 8 far entries (further than cap/4 from the key being worked out) for each one added past the cap,
+  oldest stored first, one near moved to the back of the line: the worst call 0.03 ms. (Fewer workers took the
+  waiting stalls 471 -> 93; the stalls that ran rose with the trims and with the run seeing more of them.)
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
