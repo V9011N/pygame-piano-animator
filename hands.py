@@ -2892,17 +2892,35 @@ class HandAnimator:
 
     def _hand_avg(self, t, span, lo=-math.inf, hi=math.inf):
         """The solved hand averaged over t +- span (triangular), only from poses within lo..hi."""
-        g = HAND_GRID_T
-        k0 = math.ceil((t - span) / g)
-        k1 = math.floor((t + span) / g)
         sx = sy = sp = sw = 0.0
-        for k in range(k0, k1 + 1):
-            w = 1.0 - abs(k * g - t) / span
-            if w <= 0 or not lo <= k * g <= hi:
-                continue
+        for k, w in self._avg_weights(t, span, lo, hi):
             x, y, p = self._grid_pose(k)
             sx, sy, sp, sw = sx + w * x, sy + w * y, sp + w * p, sw + w
         return sx / sw, sy / sw, sp / sw
+
+    @staticmethod
+    def _avg_weights(t, span, lo=-math.inf, hi=math.inf):
+        """[(grid step, weight)] _hand_avg averages."""
+        g = HAND_GRID_T
+        out = []
+        for k in range(math.ceil((t - span) / g), math.floor((t + span) / g) + 1):
+            w = 1.0 - abs(k * g - t) / span
+            if w > 0 and lo <= k * g <= hi:
+                out.append((k, w))
+        return out
+
+    def _hand_at_steps(self, t):
+        """The grid steps _hand_at(t) solves (_grid_pose) - for prepare() to solve them ahead, one at a time."""
+        if self.smooth_t <= 0:
+            return []
+        ks = [k for k, _ in self._avg_weights(t, self.smooth_t)]
+        if self._run_w(t) > 0:
+            a, b = self._run_span(t)
+            ks += [k for k, _ in self._avg_weights(t, RUN_GLIDE_T, a - RUN_RAMP_T, b + RUN_RAMP_T)]
+        w, r = self._trem_w(t)
+        if r is not None:
+            ks += [k for k, _ in self._avg_weights(t, TREM_HOLD_T, r[0], r[1])]
+        return ks
 
     def idle_at(self, t):
         """0..1 how idle this hand is at t (see idle_weight)."""
@@ -3477,18 +3495,19 @@ class HandAnimator:
         while self._warm_k < k_end:
             if time.perf_counter() > end:
                 return
-            if self.smooth_t > 0:
-                # a resting hand's place looks to its next notes (_placed_at, _idle_shift_parts: _hand_at
-                # there, averaged over ~20 hand solves all new at once - one step of 40 ms): those solves
-                # first, one at a time
-                nxt = self._next_strike((self._warm_k + 1) * g + IDLE_SMOOTH_T + WARM_NEXT_STEPS * g)
-                if nxt < math.inf:
-                    G = HAND_GRID_T
-                    for kk in range(math.ceil((nxt - self.smooth_t) / G), math.floor((nxt + self.smooth_t) / G) + 1):
-                        if kk not in self._cache:
-                            if time.perf_counter() > end:
-                                return
-                            self._grid_pose(kk)
+            # a resting hand's place looks to its next notes (_placed_at, _idle_shift_parts: _hand_at there,
+            # averaged over ~20 hand solves all new at once - more in a run or a tremolo, its glide or hold
+            # window too: one step of 40-100 ms): those solves first, one at a time
+            # - and its own place there (_idle_shift_parts: _hand_at up to IDLE_SMOOTH_T ahead of the step, as
+            # the rest begins ~25 solves at once)
+            probe = (self._warm_k + 1) * g + IDLE_SMOOTH_T + WARM_NEXT_STEPS * g
+            nxt = self._next_strike(probe)
+            for at in (probe, nxt) if nxt < math.inf else (probe,):
+                for kk in self._hand_at_steps(at):
+                    if kk not in self._cache:
+                        if time.perf_counter() > end:
+                            return
+                        self._grid_pose(kk)
             self._warm_k += 1
             self._smooth_tip_grid(self._warm_k)      # (and the hand's grid under it)
         if not self.gliss_eps:

@@ -400,6 +400,14 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   `TRIM_BATCH` 8 far entries (further than cap/4 from the key being worked out) for each one added past the cap,
   oldest stored first, one near moved to the back of the line: the worst call 0.03 ms. (Fewer workers took the
   waiting stalls 471 -> 93; the stalls that ran rose with the trims and with the run seeing more of them.)
+- The other 32: single work-ahead steps of 27-96 ms in `_placed_at`, real (CPU time = time passed). Reproduced on a
+  Schubert finale (22 slow steps or frames in 9.5 min): `_idle_shift_parts` asks for the resting hand's own place
+  IDLE_SMOOTH_T (+ the smoothing steps) ahead of the work-ahead's step - as a rest begins, ~25 solves at once - and
+  `_hand_at` at the next notes also averages a run's glide window (RUN_GLIDE_T, ~60 solves) or a tremolo's hold
+  (TREM_HOLD_T, ~120). `prepare` now solves `_hand_at_steps` (every grid step `_hand_at` will average: smoothing,
+  glide, hold - `_avg_weights`, shared with `_hand_avg`) at the probe (`WARM_NEXT_STEPS` past the step +
+  IDLE_SMOOTH_T) and at the next strike after it, one per budget check. `_hand_at` calls with 15+ new solves 178 ->
+  10 (all in the first seconds); slow steps or frames in that file 22 -> 1 (22 ms). Identical poses.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
