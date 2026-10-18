@@ -415,6 +415,19 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   run's 108,614. Seeks (cold, the bar clicked): median 212 ms, 90% under 294, worst 767; scrubbing draws quick
   poses. First frames: median 148 ms, worst 346 (in the lead-in).
 
+### Drawn frames (perf_check --draw, 30 files, 4 workers)
+- Median drawn frame 7.5-9 ms there (10.5 here); 703 stalls (2.8 a minute), led by `draw_poses` (401) and the frame's
+  own `_placed_at` (265) - in dense passages, every part of the frame two to three times its usual cost at once
+  (drawing, the keyboard, the scene): frames past 16.7 ms leave the work ahead no spare time, so the frames work
+  the motion out themselves. Four workers drawing 1080p frames at once share memory bandwidth, which the CPU-time
+  test can't see; one worker here: see below.
+- The shadow layer (skins: shadows, the skeleton's thumb webs) was a 1920x1080 SRCALPHA surface filled and blended
+  whole every frame (~2 ms). `_TrackPen` keeps the box it drew in; `_shadow_blit` blends only that and
+  `_shadow_surface` clears only what was drawn last (`_shadow_dirty`). Frames pixel-identical (8 frames, cartoon
+  and skeleton; test: one pose then another = the other alone). Render in a dense passage: median 10.5 -> 9.1 ms.
+- Left in a frame (profiled): the skin's polygons and circles (gfxdraw, anti-aliased: ~3 ms), the falling notes and
+  keyboard rects (~1.7 ms), blits (~1.4 ms), the screen fill (~0.7 ms).
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

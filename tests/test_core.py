@@ -1468,3 +1468,28 @@ def test_a_full_cache_lets_go_of_far_steps_a_few_at_a_time():
         assert all(j in cache for j in range(max(0, k - cap // 4), k + 1))
         if k == 47:
             assert all(j in cache for j in range(44, 48))
+
+
+def test_the_shadow_layer_is_cleared_where_it_was_drawn():
+    # shadows go through a window-sized translucent layer, cleared and blitted only where they were drawn
+    # (skins._TrackPen): drawing one pose and then another leaves the second exactly as it is drawn alone
+    import pygame
+    import skins
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    ns = [Note(p, i * 0.3, i * 0.3 + 0.25, 80, 0, RIGHT) for i, p in enumerate((48, 72, 55, 84, 60))]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    cartoon = skins.normalize({"style": "cartoon", "shadow": True})
+    first, second = (dict(a.pose(t, kb), skin=cartoon) for t in (0.3, 0.9))
+
+    def shot(poses):
+        surf = pygame.Surface((1600, 900))
+        surf.fill((40, 120, 40))
+        for p in poses:
+            surf.fill((40, 120, 40))
+            skins.draw_poses(surf, [p])
+        return pygame.image.tostring(surf, "RGB")
+    after = shot([first, second])
+    skins._shadow_cache.clear()
+    skins._shadow_dirty.clear()
+    assert after == shot([second])
