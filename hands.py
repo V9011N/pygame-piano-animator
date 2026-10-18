@@ -291,6 +291,8 @@ WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out th
 WARM_NEXT_STEPS = 8          # prepare(): the next notes after this many limit-grid steps past the one it works on
 WARM_LOW_T = 1.0            # s, the work ahead less than this far ahead of the song...
 WARM_MIN_BUDGET = 0.002     # ...gets at least this much of each frame (prepare_hands)
+SEED_RESTART_STEPS = 120    # limit-grid steps: the exact pose's groundwork after a jump starts over if t is this far off
+QUICK_BLEND_T = 0.12        # s, live_poses blends from the quick pose into the exact one over this
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
@@ -444,6 +446,28 @@ def prepare_hands(animators, t, kb, budget):
         a.prepare(t, kb, left / (len(anims) - i))
 
 
+def live_poses(animators, t, kb, scrubbing, state):
+    """
+    The hands to draw on screen at t: HandAnimator.pose - quick while the song is scrubbed, or while the exact
+    pose isn't worked out yet (after a click to jump, or as the player opens: exact_ready; the work ahead does it,
+    a little each frame), then blended into the exact one over QUICK_BLEND_T. `state`: a dict the view keeps
+    for it. (A video's frames are exact: render them with HandAnimator.pose.)
+    """
+    anims = list(animators)
+    now = time.perf_counter()
+    if scrubbing or not all(a.exact_ready(t, kb) for a in anims):
+        state["blend_from"] = None
+        return [a.pose(t, kb, quick=True) for a in anims]
+    if state.get("blend_from", 0.0) is None:
+        state["blend_from"] = now
+    w = (now - state.get("blend_from", 0.0)) / QUICK_BLEND_T
+    exact = [a.pose(t, kb) for a in anims]
+    if w >= 1.0:
+        return exact
+    w = _smooth(w)
+    return [_blend_pose(a.pose(t, kb, quick=True), e, w) for a, e in zip(anims, exact)]
+
+
 def build_hands(song, **kw):
     """{hand: HandAnimator} for each hand that has notes, paired (pair_hands); `kw` goes to each animator."""
     counts = {h: sum(1 for n in song.notes if n.hand == h) for h in (RIGHT, LEFT)}
@@ -498,6 +522,7 @@ def pair_hands(animators):
         a._idle_cache, a._clear_cache, a._path_cache = {}, {}, {}
         a._limit_cache, a._tip_limit_cache = {}, {}
         a._smooth_hand_cache, a._smooth_tip_cache = {}, {}
+        a._seed_job = None
 
 
 def _blend_pose(a, b, w):
@@ -1067,6 +1092,7 @@ class HandAnimator:
         self._gliss_follow_cache = {}
         self._follow_jobs = {}
         self._warm_k = None
+        self._seed_job = self._seed_at = None
         self._strike_list = None
         self._prep_cache = {}                    # _blocked_until
         self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
@@ -1753,52 +1779,133 @@ class HandAnimator:
         cache = self._tip_limit_cache
         if k in cache:
             return cache[k]
-        _trim(cache, 20000, k)
-        g = LIMIT_GRID_T
-        step = self.max_speed / 0.0254 * self.ppi * g
         j, todo = k, []
-        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / LIMIT_GRID_T):
             todo.append(j)
             j -= 1
-        prev = cache.get(j)
         for j in reversed(todo):
-            tips = self._tips_at(j * g, self._smooth_hand_grid(j))
-            q = {}
-            for f, (x, y, z) in tips.items():
-                if prev is not None:
-                    px, py, _ = prev[f]
-                    d = math.hypot(x - px, y - py)
-                    if d > step:
-                        x, y = px + (x - px) * step / d, py + (y - py) * step / d
-                q[f] = (x, y, z)
-            prev = cache[j] = q
-        return prev
+            q = self._tip_step(j)
+        return q
+
+    def _tip_step(self, j):
+        """One step of the fingertips' speed-limited chain: on from step j-1 if it's worked out, else starting at j."""
+        cache = self._tip_limit_cache
+        _trim(cache, 20000, j)
+        g = LIMIT_GRID_T
+        step = self.max_speed / 0.0254 * self.ppi * g
+        prev = cache.get(j - 1)
+        tips = self._tips_at(j * g, self._smooth_hand_grid(j))
+        q = {}
+        for f, (x, y, z) in tips.items():
+            if prev is not None:
+                px, py, _ = prev[f]
+                d = math.hypot(x - px, y - py)
+                if d > step:
+                    x, y = px + (x - px) * step / d, py + (y - py) * step / d
+            q[f] = (x, y, z)
+        cache[j] = q
+        return q
 
     def _limited_grid(self, k):
         cache = self._limit_cache
         if k in cache:
             return cache[k]
-        _trim(cache, 20000, k)
+        j, todo = k, []
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / LIMIT_GRID_T):
+            todo.append(j)
+            j -= 1
+        for j in reversed(todo):
+            q = self._limit_step(j)
+        return q
+
+    def _limit_step(self, j):
+        """One step of the hand's speed-limited chain: on from step j-1 if it's worked out, else starting at j."""
+        cache = self._limit_cache
+        _trim(cache, 20000, j)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g           # pixels per grid step
         arm = TIP_ARM_IN * self.ppi
-        j = k
-        todo = []
-        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
-            todo.append(j)
-            j -= 1
-        prev = cache.get(j)
-        for j in reversed(todo):
-            tt = j * g
-            q = self._key_fix(tt, *self._placed_at(tt))
-            if prev is not None:
-                dx, dy, dp = q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]
-                move = math.hypot(dx, dy) + abs(dp) * arm
-                if move > step:
-                    k_ = step / move
-                    q = (prev[0] + dx * k_, prev[1] + dy * k_, prev[2] + dp * k_)
-            prev = cache[j] = q
-        return prev
+        prev = cache.get(j - 1)
+        tt = j * g
+        q = self._key_fix(tt, *self._placed_at(tt))
+        if prev is not None:
+            dx, dy, dp = q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]
+            move = math.hypot(dx, dy) + abs(dp) * arm
+            if move > step:
+                k_ = step / move
+                q = (prev[0] + dx * k_, prev[1] + dy * k_, prev[2] + dp * k_)
+        cache[j] = q
+        return q
+
+    # ----- after a jump: the exact pose worked out a step at a time -------------------
+    def exact_ready(self, t, kb):
+        """
+        Is everything the exact pose at t needs (pose) worked out - the speed-limited chains around t
+        (_limited_at, _limited_tips and their smoothing) and the ways to and from a glissando near? After a
+        jump they aren't: they start LIMIT_RESTART_T back, 200-500 ms of work in one frame; live_poses draws
+        the quick pose until prepare (_seed_steps) has done it in the frames' spare time.
+        """
+        self._ensure_layout(kb)
+        k = math.floor(t / LIMIT_GRID_T)
+        lc, tc = self._limit_cache, self._tip_limit_cache
+        if any(j not in lc for j in range(k - 6, k + 9)) or any(j not in tc for j in range(k - 3, k + 6)):
+            return False
+        return all(key in self._gliss_follow_cache for key in self._gliss_needed(t))
+
+    def _gliss_needed(self, t):
+        """The glissando ways (_gliss_follow keys) the pose at t looks at (as _gliss_neighbours)."""
+        if not self.gliss_eps:
+            return []
+        paths = self._gliss_paths()
+        k = bisect.bisect_right(self._gliss_starts, t) - 1
+        reach = GLISS_TRAVEL_MAX_T + GLISS_RAMP_T + 0.1
+        out = []
+        if k >= 0 and paths[k][1] <= t <= paths[k][1] + reach:
+            out.append((k, True))
+        if k + 1 < len(paths) and t >= paths[k + 1][0] - reach:
+            out.append((k + 1, False))
+        return out
+
+    def _seed_steps(self, k):
+        """
+        What exact_ready needs as a job that yields after each unit of work (prepare runs it in the frames' spare
+        time): the hand's chain from where a cold call would start it (LIMIT_RESTART_T back of the first step the
+        pose at step k needs), each step's hand solves first (its place, a rest's look ahead), the fingertips'
+        chain alongside as far as the hand's allows - both on to where the song is now (_seed_t: it may be
+        playing) - then the glissando ways near.
+        """
+        g, N = LIMIT_GRID_T, int(LIMIT_RESTART_T / LIMIT_GRID_T)
+        j, jt = k - 6 - N + 1, k - 3 - N + 1
+        while True:
+            kt = math.floor(self._seed_t / g)
+            if jt <= kt + 5 and jt + 3 < j:          # (a fingertip step looks at the hand's 3 steps either side)
+                if jt not in self._tip_limit_cache:
+                    self._tip_step(jt)
+                    yield
+                jt += 1
+            elif j <= kt + 8:
+                if j not in self._limit_cache:
+                    tt = j * g
+                    nxt = self._next_strike(tt + IDLE_SMOOTH_T)
+                    for at in (tt, tt + IDLE_SMOOTH_T) + ((nxt,) if nxt < math.inf else ()):
+                        for kk in self._hand_at_steps(at):
+                            if kk not in self._cache:
+                                self._grid_pose(kk)
+                                yield
+                    self._limit_step(j)
+                    yield
+                j += 1
+            else:
+                break
+        for key in self._gliss_needed(self._seed_t):
+            if key in self._gliss_follow_cache:
+                continue
+            job = self._follow_jobs.get(key)
+            if job is None:
+                job = self._follow_jobs[key] = self._gliss_follow_steps(key[0], self.kb, key[1])
+            for _ in job:
+                yield
+            self._follow_jobs.pop(key, None)
 
     def _key_fix(self, t, wx, wy, psi):
         """
@@ -2466,6 +2573,7 @@ class HandAnimator:
         self._gliss_follow_cache = {}
         self._follow_jobs = {}
         self._warm_k = None
+        self._seed_job = self._seed_at = None
         self._strike_list = None
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
@@ -3501,6 +3609,18 @@ class HandAnimator:
         end = time.perf_counter() + budget
         g = LIMIT_GRID_T
         k_now = math.floor(t / g)
+        # after a jump (or as the player opens): first what the exact pose at t needs, a step at a time
+        # (_seed_steps) - live_poses draws the quick one meanwhile; a jump elsewhere starts it over
+        if not self.exact_ready(t, kb):
+            self._seed_t = t
+            if self._seed_job is None or abs(self._seed_at - k_now) > SEED_RESTART_STEPS:
+                self._seed_job, self._seed_at = self._seed_steps(k_now), k_now
+            for _ in self._seed_job:
+                if time.perf_counter() > end:
+                    return
+            self._seed_job = None
+            if not self.exact_ready(t, kb):
+                return
         if self._warm_k is None or self._warm_k < k_now or self._warm_k > k_now + 4 * WARM_AHEAD_T / g:
             self._warm_k = k_now                     # (after a seek: from here)
         k_end = math.floor((t + WARM_AHEAD_T) / g)

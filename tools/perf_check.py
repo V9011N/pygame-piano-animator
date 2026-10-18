@@ -61,9 +61,10 @@ for p in (ROOT, TOOLS):
         sys.path.insert(0, p)
 import maestro_check as mc                           # noqa: E402  (files, names, pianists, the progress block)
 
-RESULTS_FORMAT = 4
+RESULTS_FORMAT = 5
 STALL_GAP_T = 0.1           # s of song, hitches this close are one stall
 WAITED_CPU = 0.5            # a stall whose thread got less CPU time than this share of the time passed was waiting
+SEEK_SETTLE_MAX = 120       # frames played on after a seek, at most, waiting for the exact pose
 LIST_STALLS = 30            # the report lists each file's this many worst stalls (stalls.csv has them all)
 CULPRITS = [                # (module, class or None, function): timed in every frame, by their own time
     ("hands", "HandAnimator", "pose"),
@@ -220,22 +221,38 @@ def check_file(path, key=None):
             _NOW["phase"] = "seeking"
             rng = random.Random(zlib.crc32((key or path).encode("utf-8")))     # (the same places every run)
             _TIMER.take()
+            state = {}
+
+            def frame():
+                v.update(dt)
+                if _OPTS["draw"]:
+                    v.render()
+                else:                                 # (as the player draws them: hands.live_poses)
+                    hands.live_poses(an.values(), v.t, v.keyboard, False, state)
             for _ in range(_OPTS["seeks"]):
                 ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
                 v.seek(ts)
                 v.paused = False
                 c0, f0 = time.thread_time(), time.perf_counter()
-                v.update(dt)
-                if _OPTS["draw"]:
-                    v.render()
-                else:
-                    for a in an.values():
-                        a.pose(v.t, v.keyboard)
+                frame()
                 ms = 1000.0 * (time.perf_counter() - f0)
                 cpu = 1000.0 * (time.thread_time() - c0)
                 spent = _TIMER.take()
+                # then played on (the work ahead in each frame's spare time) until the exact pose is worked out:
+                # how long that took, and the worst frame meanwhile
+                v.idle(dt - ms / 1000.0 - main.IDLE_MARGIN_T)
+                n_settle, worst = 0, ms
+                while n_settle < SEEK_SETTLE_MAX and not all(a.exact_ready(v.t, v.keyboard) for a in an.values()):
+                    f1 = time.perf_counter()
+                    frame()
+                    w = time.perf_counter() - f1
+                    i1 = time.perf_counter()
+                    v.idle(dt - w - main.IDLE_MARGIN_T)
+                    worst = max(worst, 1000.0 * (w + max(0.0, time.perf_counter() - i1 - max(0.0, dt - w - main.IDLE_MARGIN_T))))
+                    n_settle += 1
+                _TIMER.take()
                 out["seeks"].append((round(ts, 2), round(ms, 1), [(n, round(1000 * v_, 1)) for n, v_ in spent.most_common(3)],
-                                     round(cpu, 1)))
+                                     round(cpu, 1), n_settle, round(worst, 1)))
             t_end = song.duration                     # (the player pauses at the end)
             v.seek(v.start_time())
             v.paused = False
@@ -251,8 +268,7 @@ def check_file(path, key=None):
                 if _OPTS["draw"]:
                     v.render()
                 else:
-                    for a in an.values():
-                        a.pose(v.t, v.keyboard)
+                    hands.live_poses(an.values(), v.t, v.keyboard, False, state)
                 work = time.perf_counter() - f0
                 spent = _TIMER.take()
                 # the rest of the frame's time goes to the hands' work ahead, as in App.run:
@@ -394,7 +410,7 @@ def run(args, meta):
                     state = (f"FAILED: {r['error']}" if r.get("error") else
                              f"load {r.get('load_s', 0):5.1f} s  frame median {r.get('median_ms', 0):5.1f} ms  "
                              f"max {r.get('max_ms', 0):6.1f}  {sum(1 for s in r['stalls'] if not s.get('waited')):>3} stalls  "
-                             f"worst seek {max((s[1] for s in r['seeks']), default=0):6.1f} ms")
+                             f"worst seek {max((s[5] if len(s) > 5 else s[1] for s in r['seeks']), default=0):6.1f} ms")
                     view.log(f"[{n_done:>{w}}/{len(todo)}] {mc.fmt_dur(r.get('seconds', 0)):>7}  "
                              f"{mc.label(keys[f], meta)}\n{'':>{2 * w + 12}}{state}")
                 try:
@@ -459,7 +475,7 @@ def report(args, meta):
     whole = collections.Counter()
     for r in ok:
         whole.update(r.get("spent_s", {}))
-    seeks = sorted(((s[1], r, s) for r in ok for s in r.get("seeks", [])
+    seeks = sorted(((s[5] if len(s) > 5 else s[1], r, s) for r in ok for s in r.get("seeks", [])
                     if len(s) < 4 or s[3] >= WAITED_CPU * s[1]), key=lambda x: -x[0])
     firsts = sorted(r["first_ms"] for r in ok if r.get("first_ms") is not None)
     frames = sum(r.get("frames", 0) for r in ok)
@@ -504,12 +520,17 @@ def report(args, meta):
               for r in slow]
     if seeks:
         ms_all = sorted(x[0] for x in seeks)
-        lines += ["", "## Slowest seeks (the first frame after a jump)", "",
-                  f"{len(ms_all):,} seeks: median {ms_all[len(ms_all) // 2]:.0f} ms, 90% under "
-                  f"{ms_all[int(0.9 * (len(ms_all) - 1))]:.0f} ms.", "",
-                  "| piece | to | ms | spent on | file |", "|---|---:|---:|---|---|"]
-        lines += [f"| {mc.label(r['key'], meta)} | {mc.fmt_t(s[0])} | {ms:.0f} | "
-                  f"{', '.join(f'{n} {v:.0f}' for n, v in s[2])} | `{r['key']}` |" for ms, r, s in seeks[:15]]
+        settle = sorted(s[4] for _, _, s in seeks if len(s) > 4)
+        lines += ["", "## Slowest seeks (a jump, then played on until the exact pose is worked out)", "",
+                  f"{len(ms_all):,} seeks: the worst frame (the first, or one while the exact pose is worked out) "
+                  f"median {ms_all[len(ms_all) // 2]:.0f} ms, 90% under {ms_all[int(0.9 * (len(ms_all) - 1))]:.0f} ms"
+                  + (f"; the quick pose shown for median {settle[len(settle) // 2]} frames, at most {settle[-1]}"
+                     if settle else "") + ".", "",
+                  "| piece | to | worst frame (ms) | first frame (ms) | frames to exact | first frame spent on | file |",
+                  "|---|---:|---:|---:|---:|---|---|"]
+        lines += [f"| {mc.label(r['key'], meta)} | {mc.fmt_t(s[0])} | {ms:.0f} | {s[1]:.0f} | "
+                  f"{s[4] if len(s) > 4 else '-'} | {', '.join(f'{n} {v:.0f}' for n, v in s[2])} | `{r['key']}` |"
+                  for ms, r, s in seeks[:15]]
     if bad:
         lines += ["", "## Failed", ""] + [f"- `{r['key']}`: {r['error']}" for r in bad]
     lines += ["", f"## The worst files' stalls", "",

@@ -437,6 +437,22 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   waiting); median drawn frame 6.4-7.3 ms there. The 8: single 25-40 ms frames, mostly `draw_poses` at 22-34 ms
   against its usual ~4, scattered (about one an hour of music) - nothing that repeats.
 
+### Jumps without the pause (hands.live_poses)
+- A click to jump (and the player opening) drew the exact pose at once: the speed-limited chains from
+  LIMIT_RESTART_T back, ~37 hand steps and as many fingertip steps, 200-500 ms in one frame. Now the player and the
+  editor draw `hands.live_poses`: the quick pose (`pose(quick=True)`) while scrubbed or until `exact_ready(t)` (the
+  chains around t, `k-6..k+8` and `k-3..k+5`, and the glissando ways near, `_gliss_needed`), then blended into the
+  exact one over `QUICK_BLEND_T` 0.12 s (`_blend_pose`). `prepare` first runs `_seed_steps` (a job, a unit of work
+  between budget checks): the hand's chain from where a cold call would start it, each step's hand solves first,
+  the fingertips' chain alongside, both on to where the song is now (`_seed_t`: it may be playing), then the
+  glissando ways. The chains are one step at a time (`_limit_step`, `_tip_step`; `_limited_grid` and
+  `_limited_tip_grid` use them, results unchanged). The seeded chain doesn't restart where a cold call's second
+  walk would, so its exact pose can differ a little from a cold one (test: scrubbed then settled = fresh hands
+  settled). Videos and `--screenshot` (which idles first) are exact.
+- perf_check draws hands-only frames through `live_poses` too, and after each seek plays on until the exact pose is
+  worked out (`SEEK_SETTLE_MAX`): seeks' worst frame median 5 ms, 90% under 7 (was 220 / 290); the quick pose
+  for median 25 frames, at most 38; first frames ~2 ms (was ~150).
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

@@ -58,7 +58,7 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
 import paths
 import pianist as pianists
 import recent
-from hands import build_hands, draw_hands, load_with_hands, prepare_hands, settle_heap
+from hands import build_hands, draw_hands, live_poses, load_with_hands, prepare_hands, settle_heap
 from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
@@ -124,6 +124,7 @@ class Visualizer(Transport):
         self._wave_cache = (None, None)
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
+        self._pose_state = {}             # (hands.live_poses: when the quick pose last gave way to the exact one)
         self._glow_cache = {}
         self._finger_cache = {}          # (text, colour, size) -> rendered finger number
         self._finger_fonts = {}
@@ -644,8 +645,11 @@ class Visualizer(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            quick = self.dragging_bar and video is None   # (scrubbed: a quick pose each jump, HandAnimator.pose)
-            draw_hands(s, [a.pose(self.t, kb, quick=quick) for a in self.hands.values()])
+            if video is None:                   # (quick while scrubbed or until the exact pose is worked out after a jump)
+                poses = live_poses(self.hands.values(), self.t, kb, self.dragging_bar, self._pose_state)
+            else:
+                poses = [a.pose(self.t, kb) for a in self.hands.values()]
+            draw_hands(s, poses)
             s.set_clip(None)
         pedals = video is None or video.get("pedals")
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
@@ -1657,6 +1661,8 @@ def main():
         if hasattr(app.mode, "seek"):
             app.mode.seek(args.at)
             app.mode.paused = True
+        if hasattr(app.mode, "idle"):
+            app.mode.idle(2.0)                  # (the hands' exact pose worked out first, not the quick one)
         app.mode.render()
         app.draw_version()
         pygame.image.save(app.screen, args.screenshot)

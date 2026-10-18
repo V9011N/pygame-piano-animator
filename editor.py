@@ -59,7 +59,7 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_with_slips, score_fingering
-from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands, settle_heap
+from hands import HandAnimator, build_hands, draw_hands, live_poses, load_with_hands, pair_hands, settle_heap
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, note_name, save_fingered_midi,
@@ -269,6 +269,7 @@ class FingeringEditor(Transport):
         self.dialog = None
         self._after_dialog = None
         self.press = None                  # what the left/middle button is doing
+        self._pose_state = {}              # (hands.live_poses)
         self.hover = None
         self.message, self.message_age = "", 0.0
         self._drawn = []                   # [(rect, note index)] from the last frame
@@ -1128,8 +1129,8 @@ class FingeringEditor(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            quick = self._scrubbing()           # (a quick pose each jump: HandAnimator.pose)
-            draw_hands(s, [a.pose(self.t, self.keyboard, quick=quick) for a in self.hands.values()])
+            # (quick while scrubbed or until the exact pose is worked out after a jump: hands.live_poses)
+            draw_hands(s, live_poses(self.hands.values(), self.t, self.keyboard, self._scrubbing(), self._pose_state))
             s.set_clip(None)
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
                            self.song.control_state(self.t))

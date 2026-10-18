@@ -526,10 +526,31 @@ def test_scrubbing_the_bar_draws_quick_poses_and_lets_go_to_the_exact_ones(scree
         seen.clear()
         app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4 + 100, y)))
         v.render()
-        assert seen and not any(seen)
+        assert seen and all(seen)                   # let go: quick until the exact pose is worked out...
+        settle(v.hands.values(), v)
+        seen.clear()
+        v.render()
+        assert False in seen                        # ...then blended into it
+        v._pose_state["blend_from"] -= 1.0
+        seen.clear()
+        v.render()
+        assert seen and not any(seen)               # ...and exact
     finally:
         hands.HandAnimator.pose = real
+    # the quick poses left nothing behind: the exact pose is a fresh pair of hands' worked out the same way
     t = v.t
     fresh = hands.build_hands(v.song)
+    settle(fresh.values(), v)
     for h, a in v.hands.items():
         assert real(a, t, v.keyboard)["struct"]["chains"] == real(fresh[h], t, v.keyboard)["struct"]["chains"]
+
+
+def settle(anims, v):
+    """The work ahead run (as each frame's spare time does) until the exact pose at v.t is worked out."""
+    import hands
+    anims = list(anims)
+    for _ in range(500):
+        if all(a.exact_ready(v.t, v.keyboard) for a in anims):
+            return
+        hands.prepare_hands(anims, v.t, v.keyboard, 0.01)
+    raise AssertionError("the exact pose never got worked out")
