@@ -221,14 +221,12 @@ def check_file(path, key=None):
             _NOW["phase"] = "seeking"
             rng = random.Random(zlib.crc32((key or path).encode("utf-8")))     # (the same places every run)
             _TIMER.take()
-            state = {}
-
             def frame():
                 v.update(dt)
                 if _OPTS["draw"]:
                     v.render()
                 else:                                 # (as the player draws them: hands.live_poses)
-                    hands.live_poses(an.values(), v.t, v.keyboard, False, state)
+                    hands.live_poses(an.values(), v.t, v.keyboard, False, v._pose_state)
             for _ in range(_OPTS["seeks"]):
                 ts = rng.uniform(0.0, max(0.1, song.duration - 1.0))
                 v.seek(ts)
@@ -268,7 +266,7 @@ def check_file(path, key=None):
                 if _OPTS["draw"]:
                     v.render()
                 else:
-                    hands.live_poses(an.values(), v.t, v.keyboard, False, state)
+                    hands.live_poses(an.values(), v.t, v.keyboard, False, v._pose_state)
                 work = time.perf_counter() - f0
                 spent = _TIMER.take()
                 # the rest of the frame's time goes to the hands' work ahead, as in App.run:

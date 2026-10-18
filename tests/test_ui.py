@@ -554,3 +554,58 @@ def settle(anims, v):
             return
         hands.prepare_hands(anims, v.t, v.keyboard, 0.01)
     raise AssertionError("the exact pose never got worked out")
+
+
+def test_after_a_jump_the_song_waits_for_the_hands_then_stays_exact(screen):
+    # a click to jump while playing: the song holds (and the quick pose stands in) until the exact pose is worked
+    # out in the frames' spare time; from then on it's exact every frame as the song plays on, whatever the work
+    # ahead gets done - no flicker between the two (the quick one has no speed limit: the hands jumped)
+    import hands
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.paused = False
+    r = v.bar_rect
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 2, r.centery)))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 2, r.centery)))
+    t0 = v.t
+    v.update(1 / 60)
+    assert v._waiting and v.t == t0                  # held
+    for _ in range(300):
+        if not v._waiting:
+            break
+        v.idle(0.01)
+        v.update(1 / 60)
+    assert not v._waiting
+    seen = []
+    real = hands.HandAnimator.pose
+
+    def spy(self, t, kb, quick=False):
+        seen.append(quick)
+        return real(self, t, kb, quick=quick)
+    hands.HandAnimator.pose = spy
+    try:
+        v._pose_state["blend_from"] -= 1.0
+        for _ in range(60):                          # played on, no spare time for the work ahead at all
+            v.update(1 / 60)
+            v.render()
+        assert v.t > t0 + 0.5
+        assert seen and not any(seen)
+    finally:
+        hands.HandAnimator.pose = real
+
+
+def test_a_second_jump_before_the_first_settles_waits_afresh(screen):
+    # the wait after a jump is timed from the last jump: a second click before the first one's exact pose was
+    # shown doesn't inherit its time (it would give up waiting at once and work the pose out in one frame)
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.paused = False
+    v.seek(5.0)
+    v.update(1 / 60)
+    assert v._waiting
+    v._pose_state["since"] -= 5.0                    # (as if that jump had been long ago, never settled)
+    v.seek(12.0)
+    v.update(1 / 60)
+    assert v._waiting and v.t == 12.0

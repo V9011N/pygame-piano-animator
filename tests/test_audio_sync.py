@@ -93,6 +93,7 @@ def test_the_song_follows_the_recordings_clock(screen, tmp_path):
     app.play(song_of(10.0), audio=audio, speed=0.5)
     v = app.mode
     v.seek(2.0)
+    v.idle(5.0)                                             # (the hands' exact pose worked out while paused)
     v.toggle_pause()                                        # play: the recording starts at 0.5 + 2 / 0.5
     assert not v.paused and audio.channel is not None
     time.sleep(0.2)
@@ -165,6 +166,7 @@ def test_the_recording_plays_to_its_end_after_the_last_note(screen, tmp_path):
     app = main.App(screen, sound=False)
     app.play(song_of(10.0), audio=SyncAudio(write_wav(tmp_path / "a.wav", 14.0)), speed=1.0)
     v = app.mode
+    v.show_hands = False                                 # (the clock jumps seconds a frame here: no waiting for them)
     v.toggle_pause()
     assert not v.paused
 
@@ -181,7 +183,30 @@ def test_the_recording_plays_to_its_end_after_the_last_note(screen, tmp_path):
     # without a recording, playback stops at the song's end as before
     app.play(song_of(10.0), speed=1.0)
     w = app.mode
+    w.show_hands = False
     w.paused = False
     for _ in range(14):                                  # (from the 2 s lead-in)
         w.update(1.0)
     assert w.paused and abs(w.t - 10.0) < 1e-6
+
+
+def test_after_a_jump_the_recording_waits_for_the_hands_too(screen, tmp_path):
+    # the song holds after a jump until the hands' exact pose is worked out - the recording stopped meanwhile,
+    # started again from the song's place when it goes on
+    import main
+    from audio_sync import SyncAudio
+    app = main.App(screen, sound=False)
+    audio = SyncAudio(write_wav(tmp_path / "a.wav", 14.0))
+    app.play(song_of(10.0), audio=audio, speed=1.0)
+    v = app.mode
+    v.toggle_pause()
+    v.seek(5.0)                                             # a click on the bar while playing
+    v.update(0.0)
+    assert v._waiting and audio.channel is None and v.t == 5.0
+    for _ in range(300):
+        if not v._waiting:
+            break
+        v.idle(0.01)
+        v.update(0.0)
+    assert not v._waiting and audio.channel is not None
+    assert abs(v.audio_pos() - v.t) < 0.05

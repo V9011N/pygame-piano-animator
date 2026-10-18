@@ -59,7 +59,8 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
 from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_with_slips, score_fingering
-from hands import HandAnimator, build_hands, draw_hands, live_poses, load_with_hands, pair_hands, settle_heap
+from hands import (HandAnimator, build_hands, draw_hands, hands_waiting, live_poses, load_with_hands, pair_hands,
+                   settle_heap)
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, note_name, save_fingered_midi,
@@ -270,6 +271,7 @@ class FingeringEditor(Transport):
         self._after_dialog = None
         self.press = None                  # what the left/middle button is doing
         self._pose_state = {}              # (hands.live_poses)
+        self._waiting = False              # (hands.hands_waiting)
         self.hover = None
         self.message, self.message_age = "", 0.0
         self._drawn = []                   # [(rect, note index)] from the last frame
@@ -655,7 +657,9 @@ class FingeringEditor(Transport):
         """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while
         scrubbed (each jump would start the motion's chain over, the stall the quick pose avoids)."""
         if self.hands and not self._rebuild_due and not self._scrubbing():
-            from hands import prepare_hands
+            from hands import HOLD_BUDGET, prepare_hands
+            if self._waiting:
+                budget = max(budget, HOLD_BUDGET)
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
@@ -1086,7 +1090,10 @@ class FingeringEditor(Transport):
             self._rebuild_due -= dt
             if self._rebuild_due <= 0:
                 self._rebuild()
-        Transport.update(self, dt)
+        # after a jump (or a rebuild) the song waits for the hands' exact pose (hands.hands_waiting)
+        self._waiting = bool(self.hands and not self.paused and not self._scrubbing() and self._rebuild_due is None
+                             and hands_waiting(self.hands.values(), self.t, self.keyboard, self._pose_state))
+        Transport.update(self, 0.0 if self._waiting else dt)
         self.message_age += dt
         p = self.press
         if p and p["kind"] == "band" and p["moved"]:

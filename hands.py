@@ -291,7 +291,10 @@ WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out th
 WARM_NEXT_STEPS = 8          # prepare(): the next notes after this many limit-grid steps past the one it works on
 WARM_LOW_T = 1.0            # s, the work ahead less than this far ahead of the song...
 WARM_MIN_BUDGET = 0.002     # ...gets at least this much of each frame (prepare_hands)
-SEED_RESTART_STEPS = 120    # limit-grid steps: the exact pose's groundwork after a jump starts over if t is this far off
+SEED_JUMP_STEPS = 30        # limit-grid steps: t this far from the last prepare's is a jump (the groundwork starts over)
+JUMP_T = 0.5                # s, the song's time moving this much between frames is a jump (live_poses)
+HOLD_MAX_T = 1.0            # s, the song waits at most this long for the hands' exact pose after a jump...
+HOLD_BUDGET = 0.012         # ...and the work ahead gets at least this much of each frame meanwhile
 QUICK_BLEND_T = 0.12        # s, live_poses blends from the quick pose into the exact one over this
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
@@ -446,21 +449,47 @@ def prepare_hands(animators, t, kb, budget):
         a.prepare(t, kb, left / (len(anims) - i))
 
 
+def _exact_due(anims, t, kb, scrubbing, state):
+    """
+    Is it the exact pose's turn (the views' hands: live_poses, hands_waiting)? Not while scrubbed, nor after a jump
+    (t moved more than JUMP_T since the last frame, or the view's first) until exact_ready - or HOLD_MAX_T has
+    passed, when it's worked out in the frame. From then on it stays exact while the song plays on: the frames
+    work out what the work ahead hasn't yet, a step at a time (a strict exact_ready, 8 steps ahead, would flicker
+    between the two as the work ahead fell a step behind). `state`: a dict the view keeps for it.
+    """
+    now = time.perf_counter()
+    last = state.get("t")
+    state["t"] = t
+    if scrubbing or last is None or abs(t - last) > JUMP_T:
+        state["since"], state["exact"] = now, False       # (every jump: the wait is timed from the last one)
+    if not state["exact"] and not scrubbing:
+        if all(a.exact_ready(t, kb) for a in anims) or now - state.get("since", now) > HOLD_MAX_T:
+            state["exact"], state["blend_from"] = True, now
+    return state["exact"]
+
+
+def hands_waiting(animators, t, kb, state):
+    """
+    Should the song wait at t for the hands (the player's and the editor's clock, playing)? After a jump (and as
+    the view opens) until their exact pose is worked out (exact_ready: prepare builds it, HOLD_BUDGET of each
+    frame), at most HOLD_MAX_T: played on meanwhile, the quick pose (no speed limit, no smoothing) would stand in
+    for whole seconds of motion in a dense piece - the work behind it ~150 ms a hand, and the song adding
+    1.5-2 ms a hand each frame - jittering and snapping to the keys. `state`: the view's (shared with live_poses).
+    """
+    return not _exact_due(list(animators), t, kb, False, state)
+
+
 def live_poses(animators, t, kb, scrubbing, state):
     """
-    The hands to draw on screen at t: HandAnimator.pose - quick while the song is scrubbed, or while the exact
-    pose isn't worked out yet (after a click to jump, or as the player opens: exact_ready; the work ahead does it,
-    a little each frame), then blended into the exact one over QUICK_BLEND_T. `state`: a dict the view keeps
-    for it. (A video's frames are exact: render them with HandAnimator.pose.)
+    The hands to draw on screen at t: HandAnimator.pose - quick while the song is scrubbed, or after a jump until
+    the exact pose is worked out (_exact_due; the work ahead does it, a little each frame, the song waiting:
+    hands_waiting), then blended into the exact one over QUICK_BLEND_T. `state`: a dict the view keeps for it.
+    (A video's frames are exact: render them with HandAnimator.pose.)
     """
     anims = list(animators)
-    now = time.perf_counter()
-    if scrubbing or not all(a.exact_ready(t, kb) for a in anims):
-        state["blend_from"] = None
+    if not _exact_due(anims, t, kb, scrubbing, state):
         return [a.pose(t, kb, quick=True) for a in anims]
-    if state.get("blend_from", 0.0) is None:
-        state["blend_from"] = now
-    w = (now - state.get("blend_from", 0.0)) / QUICK_BLEND_T
+    w = (time.perf_counter() - state.get("blend_from", 0.0)) / QUICK_BLEND_T
     exact = [a.pose(t, kb) for a in anims]
     if w >= 1.0:
         return exact
@@ -3611,10 +3640,12 @@ class HandAnimator:
         k_now = math.floor(t / g)
         # after a jump (or as the player opens): first what the exact pose at t needs, a step at a time
         # (_seed_steps) - live_poses draws the quick one meanwhile; a jump elsewhere starts it over
+        jumped = self._seed_at is not None and abs(k_now - self._seed_at) > SEED_JUMP_STEPS
+        self._seed_at = k_now
         if not self.exact_ready(t, kb):
             self._seed_t = t
-            if self._seed_job is None or abs(self._seed_at - k_now) > SEED_RESTART_STEPS:
-                self._seed_job, self._seed_at = self._seed_steps(k_now), k_now
+            if self._seed_job is None or jumped:        # (a jump since the last call: start over there)
+                self._seed_job = self._seed_steps(k_now)
             for _ in self._seed_job:
                 if time.perf_counter() > end:
                     return

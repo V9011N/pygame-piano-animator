@@ -453,6 +453,25 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   worked out (`SEEK_SETTLE_MAX`): seeks' worst frame median 5 ms, 90% under 7 (was 220 / 290); the quick pose
   for median 25 frames, at most 38; first frames ~2 ms (was ~150).
 
+### The song waits for the hands after a jump
+- Reported: after scrubbing the hands jittered and jumped straight to their notes, more in some pieces than others.
+  Reproduced (a dense sonata, released while playing): the exact pose never got worked out - 240 frames of 240 drawn
+  quick (no smoothing, no speed limit). The groundwork is ~150 ms a hand, the song adds 1.5-2 ms a hand each frame
+  it plays on, and a busy frame left 2-4 ms: it never caught up, and `SEED_RESTART_STEPS` started it over every 2 s
+  as the song drifted from where it began. And once exact, the strict `exact_ready` (8 steps ahead) failed whenever
+  the work ahead fell a step behind: the drawing flickered between the two.
+- Now (`hands._exact_due`, one state the view keeps for `hands_waiting` and `live_poses`): after a jump (t moving
+  more than `JUMP_T` 0.5 s between frames, or the view's first frame) the song waits - the player's clock (and a
+  synced recording, stopped and started again from the song's place) and the editor's - while `prepare` builds
+  the groundwork with at least `HOLD_BUDGET` 12 ms of each frame, the quick pose standing still; ready (or
+  `HOLD_MAX_T` 1 s on), it goes on, blending into the exact pose, and stays exact as it plays (the frames work out
+  what the work ahead hasn't, a step at a time). The groundwork starts over only on a jump between two prepare
+  calls (`SEED_JUMP_STEPS`), not as the song plays. The wait is timed from the last jump (a second click before
+  the first settled inherited the old start: given up at once, the pose worked out in one frame, 288-750 ms).
+- Measured (the dense sonata, released while playing): the song waits 21-29 frames (~0.4 s), one switch to exact,
+  then the same motion as played straight through (frame-to-frame wrist steps over 25 px: 13 / 27 against 18 / 28
+  without scrubbing). perf_check: seeks' worst frame median 5 ms, all under 17.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's

@@ -58,7 +58,8 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
 import paths
 import pianist as pianists
 import recent
-from hands import build_hands, draw_hands, live_poses, load_with_hands, prepare_hands, settle_heap
+from hands import (HOLD_BUDGET, build_hands, draw_hands, hands_waiting, live_poses, load_with_hands, prepare_hands,
+                   settle_heap)
 from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
@@ -125,6 +126,8 @@ class Visualizer(Transport):
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
         self._pose_state = {}             # (hands.live_poses: when the quick pose last gave way to the exact one)
+        self._waiting = False             # the song waiting for the hands after a jump (hands.hands_waiting)...
+        self._audio_resume = False        # ...the recording stopped meanwhile, to start again with it
         self._glow_cache = {}
         self._finger_cache = {}          # (text, colour, size) -> rendered finger number
         self._finger_fonts = {}
@@ -460,6 +463,19 @@ class Visualizer(Transport):
                 self._end_export()
             return
         held = self.dragging_wave is not None or self.dragging_bar
+        # after a jump (and as the player opens) the song waits for the hands' exact pose, worked out in
+        # each frame's spare time (hands.hands_waiting) - the recording with it
+        self._waiting = bool(self.song and self.hands and self.show_hands and not self.paused and not held
+                             and hands_waiting(self.hands.values(), self.t, self.keyboard, self._pose_state))
+        if self._waiting:
+            if self.audio and not self._audio_resume:
+                self.audio.stop()
+                self._audio_resume = True
+            return
+        if self._audio_resume:
+            self._audio_resume = False
+            if self.audio and not self.paused:
+                self._start_audio()
         if self.audio and self.song and not self.paused and not held:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
@@ -484,6 +500,8 @@ class Visualizer(Transport):
         """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while the
         bar is dragged (each jump would start the motion's chain over, the stall the quick pose avoids)."""
         if self.song and self.hands and self.export is None and not self.dragging_bar:
+            if self._waiting:
+                budget = max(budget, HOLD_BUDGET)
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):

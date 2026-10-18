@@ -97,9 +97,10 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
   not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
 - On screen the hands are drawn through `hands.live_poses`: quick (`HandAnimator.pose(quick=True)`) while the song
-  is scrubbed (the work ahead, `idle`, pauses) or until the exact pose is worked out after a jump (`exact_ready`;
-  `prepare` builds it a step at a time), then blended in - an exact pose straight after a jump costs 200+ ms.
-  Videos (and checks like `anim_check`) call `pose` directly: always exact.
+  is scrubbed (the work ahead, `idle`, pauses) or after a jump until the exact pose is worked out (`exact_ready`;
+  `prepare` builds it a step at a time), then blended in and exact from then on - an exact pose straight after a
+  jump costs 200+ ms. Meanwhile the song waits (`hands_waiting`: the player's and editor's clocks, a synced
+  recording): played on, the quick pose would stand in for the motion. Videos and `anim_check` call `pose`: exact.
 - What a video records is `Visualizer._draw_scene` - draw anything new for the screen only (controls, hints)
   in `render`, not there.
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
