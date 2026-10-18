@@ -3,6 +3,26 @@
 Versions are vYY.MAJOR.MINOR from v26.1.0 (before that, the UTC date and time of the commit,
 v20YY.MM.DD.HHMM). Newest first.
 
+## v26.1.21 - Fingertips on their keys, smooth playback
+- Every finger holding a key now has its fingertip on it: when a finger can't reach, the whole hand shifts to
+  put it there, and what still can't be reached is noted in the log with its time in the MIDI file.
+- One finger can play neighbouring keys together: a white key and the black beside it, two neighbouring white
+  keys, or white-black-white (two neighbouring black keys with the thumb). A smudged note - a quiet or short
+  neighbour caught along with the intended one - is played by that note's finger, which slides over to touch
+  both, instead of getting a finger of its own.
+- Held keys stay down while the hand moves on toward the next chord; keys it can't hold together with the next
+  chord are let go just before it, and rolled chords keep their pace and finish in time.
+- Tremolos and repeated figures are played with a still hand only when it can really reach every key; otherwise
+  the hand rocks or sways to each note instead of leaving a finger short.
+- Much smoother playback: no more hitches every so often in long pieces, the hands are ready sooner after
+  opening a song, and drawing the hands takes less time each frame.
+- Scrubbing along the progress bar (in the player and the editor) is smooth, the hands following at once; after
+  a jump the music waits a moment while the hands' motion is worked out, so they move naturally from the start.
+  Opening a song no longer freezes on its first frame.
+- Developed and checked against the MAESTRO dataset of piano performances: every performance played through the
+  hands and the player, checking that fingertips reach their keys and that frames come on time. The checking
+  tools are in the tools folder.
+
 ## v26.1.20 - Video export, hands on top of each other
 - Export a performance to an .mp4 from the button under the player's progress bar: choose whether the progress
   bar, pedals and pianist badge are in it; it's rendered at the window's size and 60 fps with its sound (the
