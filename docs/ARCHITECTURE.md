@@ -433,6 +433,9 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   ms while either hand is under `WARM_LOW_T` 1 s ahead, and `App.run` (and perf_check) calls `idle` even with no
   spare time. Overloaded (+9 ms of busy work a drawn frame, the Dante's first 2 min): frames median 21.9 -> 18.9
   ms, p99 32.6 -> 26.4, over 30 ms 152 -> 41; the lead stays near 0 instead of falling ever further behind.
+- Drawn again (30 files, 2 workers, after 4df0438): 703 -> 8 stalls while the code ran (0.03 a minute; 21 more
+  waiting); median drawn frame 6.4-7.3 ms there. The 8: single 25-40 ms frames, mostly `draw_poses` at 22-34 ms
+  against its usual ~4, scattered (about one an hour of music) - nothing that repeats.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
