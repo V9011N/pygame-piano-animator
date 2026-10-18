@@ -409,6 +409,12 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   IDLE_SMOOTH_T) and at the next strike after it, one per budget check. `_hand_at` calls with 15+ new solves 178 ->
   10 (all in the first seconds); slow steps or frames in that file 22 -> 1 (22 ms). Identical poses.
 
+### The fourth full run (perf_check_round3: 4 workers on 16 logical CPUs, after e6b3012)
+- 4 stalls while the code ran in 43.1M frames (26-31 ms, one each in four files); 119 counted waiting (CPU time
+  0 or one 15.6 ms tick: the machine busy - clustered in the files of two years, run together). From the first
+  run's 108,614. Seeks (cold, the bar clicked): median 212 ms, 90% under 294, worst 767; scrubbing draws quick
+  poses. First frames: median 148 ms, worst 346 (in the lead-in).
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
