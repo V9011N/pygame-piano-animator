@@ -289,6 +289,8 @@ GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
 GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
 WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out this far ahead of the song
 WARM_NEXT_STEPS = 8          # prepare(): the next notes after this many limit-grid steps past the one it works on
+WARM_LOW_T = 1.0            # s, the work ahead less than this far ahead of the song...
+WARM_MIN_BUDGET = 0.002     # ...gets at least this much of each frame (prepare_hands)
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
@@ -414,9 +416,19 @@ def idle_weight(spans, starts, t):
 
 
 def prepare_hands(animators, t, kb, budget):
-    """Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare)."""
+    """
+    Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare) - at
+    least WARM_MIN_BUDGET while either hand is less than WARM_LOW_T ahead, even when the frame left none:
+    frames over their time (dense passages, a busy machine) otherwise left it none at all, its lead ran out,
+    and what it spreads out (a rest's look ahead, a tremolo's window: 20-120 solves) landed in one frame.
+    """
     global _frozen_at
     anims = list(animators)
+    lead = min(((a._warm_k * LIMIT_GRID_T - t) if a._warm_k is not None else 0.0) for a in anims) if anims else 1e9
+    if lead < WARM_LOW_T:
+        budget = max(budget, WARM_MIN_BUDGET)
+    if budget <= 0:
+        return
     end = time.perf_counter() + budget
     if end - budget - _frozen_at > FREEZE_EVERY_T:
         # what playback has built up (the hands' caches, ~20,000 entries each) out of the garbage collector's

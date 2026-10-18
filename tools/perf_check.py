@@ -258,14 +258,12 @@ def check_file(path, key=None):
                 # the rest of the frame's time goes to the hands' work ahead, as in App.run:
                 # what it runs over its budget delays the next frame
                 spare = dt - work - main.IDLE_MARGIN_T
-                over = 0.0
-                if spare > 0:
-                    i0 = time.perf_counter()
-                    v.idle(spare)
-                    over = max(0.0, time.perf_counter() - i0 - spare)
-                    ahead = _TIMER.take()
-                    if over > 0.0005:                 # (named "ahead: ...": what that work was spent on)
-                        spent.update({"ahead: " + n: v_ for n, v_ in ahead.items()})
+                i0 = time.perf_counter()
+                v.idle(spare)                         # (called with none left too, as App.run)
+                over = max(0.0, time.perf_counter() - i0 - max(0.0, spare))
+                ahead = _TIMER.take()
+                if over > 0.0005:                     # (named "ahead: ...": what that work was spent on)
+                    spent.update({"ahead: " + n: v_ for n, v_ in ahead.items()})
                 ms = 1000.0 * (work + over)
                 # the CPU time this thread got over the whole frame (work ahead included) against the
                 # time that passed: well under it, the process was waiting (other work on the machine)

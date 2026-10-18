@@ -1474,7 +1474,8 @@ class App:
             pygame.display.flip()
             # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
             spare = 1.0 / (self.fps_cap or UNCAPPED_IDLE_HZ) - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
-            if spare > 0 and hasattr(self.mode, "idle"):
+            # (none left: still called - the hands' work ahead takes a little when it has fallen behind)
+            if hasattr(self.mode, "idle"):
                 self.mode.idle(spare)
         self.close()
 

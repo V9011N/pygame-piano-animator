@@ -427,6 +427,12 @@ fast removes about a third of them: most are leaps of a few tens of milliseconds
   and skeleton; test: one pose then another = the other alone). Render in a dense passage: median 10.5 -> 9.1 ms.
 - Left in a frame (profiled): the skin's polygons and circles (gfxdraw, anti-aliased: ~3 ms), the falling notes and
   keyboard rects (~1.7 ms), blits (~1.4 ms), the screen fill (~0.7 ms).
+- One worker here, the drawn Dante: 22 stalls (87 with 4 workers there), the frame's own `_placed_at` leading 14 - the
+  work ahead's lead run out (here: other jobs on the machine during the run; the same stretch alone, after a seek:
+  none). Frames past their time left it no time at all: `prepare_hands` now gives it at least `WARM_MIN_BUDGET` 2
+  ms while either hand is under `WARM_LOW_T` 1 s ahead, and `App.run` (and perf_check) calls `idle` even with no
+  spare time. Overloaded (+9 ms of busy work a drawn frame, the Dante's first 2 min): frames median 21.9 -> 18.9
+  ms, p99 32.6 -> 26.4, over 30 ms 152 -> 41; the lead stays near 0 instead of falling ever further behind.
 
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
