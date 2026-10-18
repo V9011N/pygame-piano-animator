@@ -201,6 +201,42 @@ class _Pen:
         self.poly(pts, color)
 
 
+class _TrackPen(_Pen):
+    """A _Pen that keeps the box of everything it draws (drawn): the part of its surface to clear and blit."""
+
+    def __init__(self, surf, origin=(0, 0)):
+        super().__init__(surf, origin)
+        self.box = None
+
+    def _grow(self, xs, ys, pad):
+        x0, y0, x1, y1 = min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad
+        b = self.box
+        self.box = (x0, y0, x1, y1) if b is None else (min(b[0], x0), min(b[1], y0), max(b[2], x1), max(b[3], y1))
+
+    def circle(self, c, r, color):
+        self._grow((c[0],), (c[1],), r + 2)
+        super().circle(c, r, color)
+
+    def poly(self, pts, color):
+        if len(pts) >= 3:
+            self._grow([p[0] for p in pts], [p[1] for p in pts], 2)
+        super().poly(pts, color)
+
+    def line(self, a, b, color, w=1):
+        self._grow((a[0], b[0]), (a[1], b[1]), w + 2)
+        super().line(a, b, color, w)
+
+    def drawn(self, surf):
+        """The box drawn in (a Rect within surf), or None."""
+        if self.box is None:
+            return None
+        x0, y0, x1, y1 = self.box
+        r = self.pg.Rect(int(math.floor(x0 - self.ox)), int(math.floor(y0 - self.oy)), 0, 0)
+        r.width, r.height = int(math.ceil(x1 - self.ox)) - r.x + 1, int(math.ceil(y1 - self.oy)) - r.y + 1
+        r = r.clip(surf.get_rect())
+        return r if r.width > 0 and r.height > 0 else None
+
+
 # --------------------------------------------------------------------------- #
 # A hand in screen space
 # --------------------------------------------------------------------------- #
@@ -839,16 +875,38 @@ def _palm_seams(pen, h, edge):
 
 _STYLES = {"cartoon": _draw_cartoon, "gloves": _draw_gloves, "robot": _draw_robot}
 _shadow_cache = {}
+_shadow_dirty = {}                  # size: the area last drawn on the layer
 
 
 def _shadow_surface(size):
+    """
+    The window-sized translucent layer (shadows, the skeleton's webs), clear -
+    of what was drawn on it last (_shadow_blit's area), not all of it: filling
+    and blending the whole 1920x1080 layer took ~2 ms a frame, for the few
+    hundred pixels the hands' shadows cover.
+    """
     import pygame
     s = _shadow_cache.get(size)
     if s is None:
         _shadow_cache.clear()
         s = _shadow_cache[size] = pygame.Surface(size, pygame.SRCALPHA)
-    s.fill((0, 0, 0, 0))
+        s.fill((0, 0, 0, 0))
+    else:
+        dirty = _shadow_dirty.pop(size, None)
+        if dirty is not None:
+            s.fill((0, 0, 0, 0), dirty)
     return s
+
+
+def _shadow_blit(surf, sh, pen):
+    """The translucent layer onto surf, the area pen (a _TrackPen on it) drew on only; remembered to clear."""
+    r = pen.drawn(sh)
+    if r is None:
+        return
+    _shadow_dirty[sh.get_size()] = r
+    clip = surf.get_clip()
+    surf.blit(sh, r.topleft, r)
+    surf.set_clip(clip)
 
 
 def _inside(pt, poly):
@@ -938,16 +996,14 @@ def draw_skinned(surf, items):
         group = [h for h in hands if h.layer == layer]
         if any(h.skin["shadow"] for h in group):
             sh = _shadow_surface(surf.get_size())
-            spen = _Pen(sh)
+            spen = _TrackPen(sh)
             for h in group:
                 if h.skin["shadow"]:
                     was = h.hide_thumb
                     h.hide_thumb = was or h.tuck is not None    # (in the hand's own shadow)
                     h.shadow(spen, (0, 0, 0, 70))
                     h.hide_thumb = was
-            clip = surf.get_clip()
-            surf.blit(sh, (0, 0))
-            surf.set_clip(clip)
+            _shadow_blit(surf, sh, spen)
         for h in sorted(group, key=lambda h: h.palm_z):
             if h.tuck is not None:
                 _draw_tucked(surf, h, h.tuck)
@@ -965,7 +1021,7 @@ def draw_webs(surf, items):
         return
     geo_skin = normalize({"style": "cartoon"})
     sh = _shadow_surface(surf.get_size())
-    pen = _Pen(sh)
+    pen = _TrackPen(sh)
     for st, pr, ppi, color in items:
         try:
             h = _Hand(st, pr, ppi, geo_skin)
@@ -979,9 +1035,7 @@ def draw_webs(surf, items):
         pen.poly(h.web, c + (48,))
         for p_, q in zip(h.web_edge, h.web_edge[1:]):
             pen.line(p_, q, c + (130,), max(1.0, 0.018 * ppi))
-    clip = surf.get_clip()
-    surf.blit(sh, (0, 0))
-    surf.set_clip(clip)
+    _shadow_blit(surf, sh, pen)
 
 
 def draw_poses(surf, poses):

@@ -1109,6 +1109,20 @@ def test_a_chord_past_the_drawn_hands_reach_on_black_keys_is_rolled():
         assert a.rolled == 0, ps
 
 
+def test_chord_fits_is_kept_by_shape():
+    # _chord_fits is searched once per shape (fingers and keys): a finger on a pair of keys and the same
+    # finger on one key are told apart, and the answer is the search's
+    ns = [Note(61, 1.0, 1.3, 80, 0, RIGHT), Note(63, 1.0, 1.3, 80, 0, RIGHT), Note(67, 1.0, 1.3, 80, 0, RIGHT),
+          Note(60, 2.0, 2.3, 80, 0, RIGHT), Note(67, 2.0, 2.3, 80, 0, RIGHT)]
+    a = hands.HandAnimator(song_of(ns, 3.0), RIGHT, fingering={id(n): f for n, f in zip(ns, (1, 1, 2, 1, 2))})
+    assert isinstance(a._pk(ns[0]), tuple) and not isinstance(a._pk(ns[3]), tuple)
+    for chord in ([ns[0], ns[3]], [ns[0], ns[2]], [ns[3], ns[4]], [ns[0], ns[2]]):
+        got = a._chord_fits(chord)
+        assert got == a._chord_fits_search(chord, 0.0, __import__("numpy"))
+    geo = a.geo
+    assert hands.drawn_reach(geo, 0.0, 1, 5) == hands._drawn_reach(geo, 0.0, 1, 5)
+
+
 def test_a_finger_reaching_straight_down_curls_forward_not_sideways():
     # a target nearly under the knuckle: without the hand's forward, the chain's plane follows the target's
     # slightest sideways offset (the finger folded out sideways for a frame); with it, the finger curls forward
@@ -1204,3 +1218,278 @@ def test_the_hands_never_swap_layers_while_they_overlap(screen):
         prev = top
     assert touched and not swaps, swaps
     assert top == RIGHT
+
+
+def test_a_repeated_figure_wider_than_the_still_hand_is_played_swaying(screen):
+    # a LH figure A#2-F3-(A#3+C#4)-F3 over and over: periodic like a tremolo and within the planner's stretch
+    # plus a tremolo's extra, but a tenth the drawn hand can't hold still - held still, the little finger
+    # missed A#2 and the thumb C#4. Played swaying, every finger lands on its key.
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    ns, fs = [], []
+    for c in range(6):
+        t = 1.0 + 0.44 * c
+        for dt, ps, f in ((0.0, (46,), (5,)), (0.11, (53,), (3,)), (0.22, (58, 61), (2, 1)), (0.33, (53,), (3,))):
+            for p, fi in zip(ps, f):
+                ns.append(Note(p, t + dt, t + dt + 0.08, 80, 1, LEFT))
+                fs.append(fi)
+    a = hands.HandAnimator(song_of(ns, 4.5), LEFT, fingering={id(n): f for n, f in zip(ns, fs)})
+    assert a.trems == []
+    a._ensure_layout(kb)
+    for n in ns[8:-4]:
+        f = a.finger_for(n)
+        tip = a.pose(n.start + 0.04, kb)["struct"]["chains"][f][-1]
+        r = kb.key_rects[n.pitch]
+        assert r.left - 3 <= tip[0] <= r.right + 3, (n.pitch, f, tip[0], r)
+
+
+def test_every_held_key_has_its_fingertip_on_it(screen):
+    # strict: whatever the solver did, a finger holding a key is drawn on it (the hand shifted if need be),
+    # and what had to be done is on the pose for checking (anim_check)
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    an = hands.build_hands(s)
+    checked = 0
+    for a in an.values():
+        a._ensure_layout(kb)
+        for st, en, n in a.performance[:300]:
+            if en - st < 0.02 or a.is_gliss(n):
+                continue
+            t = st + min(0.03, (en - st) / 2)
+            p = a.pose(t, kb)
+            assert "key_check" in p and "key_pulled" in p
+            f = a.finger_for(n)
+            if f is None or a._held_note(f, t) is not n or a._is_bridge(f, n):
+                continue
+            off = {g: after for g, m, _, after in p["key_check"] if m is n}
+            r = kb.key_rects[n.pitch]
+            x = p["struct"]["chains"][f][-1][0]
+            assert r.left - 0.5 <= x <= r.right + 0.5 or off.get(f, 0) > 0, (n.pitch, f, x, r)
+            checked += 1
+    assert checked > 100
+
+
+def test_notes_with_no_finger_are_logged_with_their_times(capsys):
+    # seven notes at once in one hand: some can't be given a finger - they're said, with their time
+    ns = [Note(p, 1.25, 1.75, 80, 0, RIGHT) for p in (60, 62, 64, 65, 67, 69, 71)]
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT)
+    if not a.unplaced:
+        return                                       # (the planner found fingers for all after all)
+    out = capsys.readouterr().out
+    assert "no finger" in out and "0:01.250" in out
+
+
+def test_anim_check_reports_in_the_files_time(screen):
+    import anim_check
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    s = midi_loader.load_song(midi_path("demo_song.mid"))
+    res = anim_check.check_song(s, hands.build_hands(s), kb)
+    assert res["notes"] > 0 and res["samples"] > 0 and not res["timed_out"]
+    for i in res["incidents"]:
+        assert i["cat"] in ("solver", "speed", "anatomy", "fingering", "timing")
+        assert anim_check.describe(i)
+    # incidents put problems together by hand, kind, being seen or not, and nearness; how far off is a
+    # share of the key's width
+    probs = [{"hand": "R", "t": t, "kind": "off", "cat": "solver", "notes": [("C4", t)], "off": 0.3}
+             for t in (1.0, 1.2, 1.5, 4.0)]
+    probs.append({"hand": "R", "t": 1.3, "kind": "aimed off", "cat": "solver", "notes": [("D4", 1.3)], "off": 0.7})
+    incs = anim_check.incidents(probs)
+    assert [(i["t0"], i["t1"], i["count"], i["visible"]) for i in incs] == \
+        [(1.0, 1.5, 3, True), (1.3, 1.3, 1, False), (4.0, 4.0, 1, True)]
+    assert "0:01.000 - 0:01.500" in anim_check.describe(incs[0]) and "drawn off by 30%" in anim_check.describe(incs[0])
+    assert "aimed off by 70%" in anim_check.describe(incs[1])
+
+
+def test_maestro_check_names_renamed_files_from_the_rename_map(tmp_path):
+    # files renamed to their piece, "YYYY/MAESTRO - YYYY - Composer Piece.midi", with a map back to the originals
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "maestro_check.py")
+    spec = importlib.util.spec_from_file_location("maestro_check", path)
+    mc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mc)
+    renamed = "2004/MAESTRO - 2004 - Claude Debussy Image (Book II).midi"
+    (tmp_path / "2004").mkdir()
+    (tmp_path / renamed).write_bytes(b"")
+    (tmp_path / "rename_map.csv").write_text(
+        "﻿original,renamed\n2004/MIDI-Unprocessed_XP_08.midi,"
+        "\"2004/MAESTRO - 2004 - Claude Debussy Image (Book II).midi\"\n", encoding="utf-8")
+    root = str(tmp_path)
+    found = mc.find_midis(root)
+    assert [mc.file_key(f, root) for f in found] == [renamed]
+    meta, info = mc.dataset_meta(root, mc.find_rename_map(root))
+    assert meta[renamed]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
+    assert mc.label(renamed, meta) == "Claude Debussy Image (Book II) (2004)"
+    assert info["exact"] == 1 and not info["not_in_map"] and not info["not_on_disk"]
+    # named a little differently on disk (accents, case, spacing, another folder): still found, by name
+    (tmp_path / renamed).unlink()
+    other = "Debussy/maestro - 2004 - claude debussy  image (book ii).MIDI"
+    (tmp_path / "Debussy").mkdir()
+    (tmp_path / other).write_bytes(b"")
+    meta, info = mc.dataset_meta(root, mc.find_rename_map(root))
+    assert info["loose"] == 1 and meta[other]["original"] == "2004/MIDI-Unprocessed_XP_08.midi"
+    assert mc._loose("Frédéric Chopin Étude, Op. 10.midi") == mc._loose("frederic chopin etude op 10.mid")
+    assert mc.piece_of("2011/MAESTRO - 2011 - J. S. Bach Fugue - 02.midi") == ("J. S. Bach Fugue - 02", "2011")
+
+
+def test_any_finger_may_cover_a_semitone_neighbouring_whites_or_white_black_white():
+    assert F.cluster_shape([60, 61]) == "pair" and F.cluster_shape([61, 62]) == "pair"     # C-C#, C#-D
+    assert F.cluster_shape([64, 65]) == "pair" and F.cluster_shape([60, 62]) == "pair"     # E-F, C-D
+    assert F.cluster_shape([60, 61, 62]) == "triple"                                      # C-C#-D
+    assert F.cluster_shape([61, 62, 63]) is None and F.cluster_shape([64, 65, 66]) is None
+    assert F.cluster_shape([60, 64]) is None
+    for f in range(1, 6):
+        assert F.cluster_ok([60, 61], f) and F.cluster_ok([60, 61, 62], f)
+    assert F.cluster_ok([61, 63], 1) and not F.cluster_ok([61, 63], 3)                    # two blacks: the thumb only
+    assert F.min_fingers([60, 61, 62, 64, 65, 67, 69]) == 3              # C-C#-D, E-F, G-A
+    assert F.min_fingers([60, 64, 67, 71, 74, 77]) == 6
+
+
+def _smudged_melody(smudge_vel):
+    # a melody E4 G4 E4 C4 at 80; with the second E4, F4 caught 20 ms later
+    ns = [Note(p, t, t + 0.4, 80, 0, RIGHT) for p, t in ((64, 0.0), (67, 0.5), (64, 1.0), (60, 1.5))]
+    ns.append(Note(65, 1.02, 1.02 + (0.06 if smudge_vel < 60 else 0.38), smudge_vel, 0, RIGHT))
+    return ns
+
+
+def test_a_smudge_is_played_by_the_finger_of_its_note():
+    ns = _smudged_melody(30)
+    groups = F.group_notes(ns)
+    assert any({n.pitch for n in g} == {64, 65} for _, g in groups)      # (struck 20 ms apart: one chord)
+    fing = F.plan_fingering(groups)
+    e4, f4 = ns[2], ns[4]
+    assert fing[id(e4)] == fing[id(f4)]
+    # struck as loud and as long, it's a real second: a finger each
+    ns = _smudged_melody(80)
+    fing = F.plan_fingering(F.group_notes(ns))
+    assert fing[id(ns[2])] != fing[id(ns[4])]
+
+
+def test_a_finger_on_a_smudge_holds_its_note_and_touches_both_keys(screen):
+    from common import Keyboard, bottom_layout
+    ns = _smudged_melody(30)
+    a = hands.HandAnimator(song_of(ns, 2.0), RIGHT)
+    e4, f4 = ns[2], ns[4]
+    f = a.finger_for(e4)
+    assert a.finger_for(f4) == f and a._pk(e4) == a._pk(f4) == (64, 65)   # (caught 20 ms in: both keys from the start)
+    perf = {id(n): (s, e) for s, e, n in a.performance}
+    assert perf[id(f4)][1] - perf[id(f4)][0] < 0.1               # the smudge sounds its own (short) length...
+    assert perf[id(e4)][1] > 1.3                                  # ...its note its own
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    for t in (1.05, 1.2, 1.35):                                   # after the smudge is let go, still on E4
+        assert a._held_note(f, t) in (e4, f4)
+        p = a.pose(t, kb)
+        x = p["struct"]["chains"][f][-1][0]
+        r = kb.key_rects[64]
+        assert r.left - 1 <= x <= r.right + 1 and abs(x - r.right) < 0.35 * r.w     # at E-F's boundary
+
+
+def test_one_finger_on_white_black_white_aims_at_the_black_keys_front(screen):
+    from common import Keyboard, bottom_layout
+    ns = [Note(p, 0.5, 0.9, v, 0, RIGHT) for p, v in ((60, 30), (61, 80), (62, 30))]
+    ns.append(Note(67, 0.5, 0.9, 80, 0, RIGHT))
+    a = hands.HandAnimator(song_of(ns, 1.5), RIGHT)
+    f = a.finger_for(ns[1])
+    assert a.finger_for(ns[0]) == a.finger_for(ns[2]) == f and a._pk(ns[1]) == (60, 61, 62)
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    x, y = a.key_target((60, 61, 62), f, ns[1])
+    r = kb.key_rects[61]
+    assert abs(x - r.centerx) < 1e-6
+    assert abs(y - (kb.rect.h - kb.black_h)) < 0.3 * a.ppi                # (world y of the black keys' front)
+
+
+def test_a_finger_slips_onto_the_neighbouring_key_after_pressing_its_note(screen):
+    from common import Keyboard, bottom_layout
+    # E4 held; F4 caught quietly and briefly 0.25 s later, let go before E4: the same finger slips onto it
+    ns = [Note(p, t, t + 0.4, 80, 0, RIGHT) for p, t in ((60, 0.0), (62, 0.5))]
+    e4 = Note(64, 1.0, 1.8, 80, 0, RIGHT)
+    f4 = Note(65, 1.25, 1.35, 35, 0, RIGHT)
+    ns += [e4, f4, Note(67, 2.0, 2.4, 80, 0, RIGHT)]
+    assert F.find_slips(ns) == {id(f4): e4}
+    a = hands.HandAnimator(song_of(ns, 2.5), RIGHT)
+    f = a.finger_for(e4)
+    assert a.finger_for(f4) == f
+    kb = Keyboard(bottom_layout((1400, 860))[0])
+    a._ensure_layout(kb)
+    r = kb.key_rects[64]
+
+    def tip(t):
+        return a.pose(t, kb)["struct"]["chains"][f][-1][0]
+    assert abs(tip(1.1) - r.centerx) < 0.3 * r.w                  # firmly on E4 first...
+    assert abs(tip(1.3) - r.right) < 0.35 * r.w                   # ...then at E-F's boundary, touching both
+    perf = {id(n): (st, en) for st, en, n in a.performance}
+    assert perf[id(e4)][1] > 1.7 and perf[id(f4)][1] - perf[id(f4)][0] < 0.15
+
+
+def test_an_inner_voice_or_a_trill_is_not_a_slip():
+    # a held melody note with a moving voice a second below, as loud: its own finger
+    e5 = Note(76, 0.0, 2.0, 80, 0, RIGHT)
+    d5 = Note(74, 0.3, 0.9, 70, 0, RIGHT)
+    assert F.find_slips([e5, d5]) == {}
+    # a trill: each note let go before the next - nothing is held across another
+    tr = [Note(72 + (k % 2) * 2, 0.1 * k, 0.1 * k + 0.09, 70 if k % 2 else 80, 0, RIGHT) for k in range(10)]
+    assert F.find_slips(tr) == {}
+
+
+def test_settle_heap_keeps_the_song_out_of_gc_passes_and_frees_the_last_one():
+    # a song's hands are frozen out of the garbage collector's full passes, and the next settle frees them
+    # once nothing refers to them (two paired animators refer to each other: only the collector frees them)
+    import gc
+    import weakref
+    ns = [Note(60 + i, 0.2 * i, 0.2 * i + 0.15, 80, 0, RIGHT if i % 2 else LEFT) for i in range(8)]
+    an = hands.build_hands(song_of(ns, 2.0))
+    ref = weakref.ref(an[RIGHT])
+    hands.settle_heap()
+    try:
+        assert gc.get_freeze_count() > 0
+        del an
+        assert ref() is not None                    # (a cycle, frozen: waits for the next settle)
+        hands.settle_heap()
+        assert ref() is None
+    finally:
+        gc.unfreeze()
+
+
+def test_a_full_cache_lets_go_of_far_steps_a_few_at_a_time():
+    # the speed limit's chains go on from the step before; a full cache lets go of a few steps far from the one
+    # being worked out (further than cap / 4), oldest stored first - but not of steps stored early near it (a
+    # jump just ahead, then played on to it)
+    cap = 40
+    cache = {k: k for k in list(range(44, 48)) + list(range(0, 37))}        # (44-47: a jump ahead, stored first)
+    for k in range(37, 100):
+        if k not in cache:
+            cache[k] = k
+        hands._trim(cache, cap, k)
+        assert len(cache) <= cap + 1
+        assert all(j in cache for j in range(max(0, k - cap // 4), k + 1))
+        if k == 47:
+            assert all(j in cache for j in range(44, 48))
+
+
+def test_the_shadow_layer_is_cleared_where_it_was_drawn():
+    # shadows go through a window-sized translucent layer, cleared and blitted only where they were drawn
+    # (skins._TrackPen): drawing one pose and then another leaves the second exactly as it is drawn alone
+    import pygame
+    import skins
+    from common import Keyboard, bottom_layout
+    kb = Keyboard(bottom_layout((1600, 900))[0])
+    ns = [Note(p, i * 0.3, i * 0.3 + 0.25, 80, 0, RIGHT) for i, p in enumerate((48, 72, 55, 84, 60))]
+    a = hands.HandAnimator(song_of(ns), RIGHT)
+    cartoon = skins.normalize({"style": "cartoon", "shadow": True})
+    first, second = (dict(a.pose(t, kb), skin=cartoon) for t in (0.3, 0.9))
+
+    def shot(poses):
+        surf = pygame.Surface((1600, 900))
+        surf.fill((40, 120, 40))
+        for p in poses:
+            surf.fill((40, 120, 40))
+            skins.draw_poses(surf, [p])
+        return pygame.image.tostring(surf, "RGB")
+    after = shot([first, second])
+    skins._shadow_cache.clear()
+    skins._shadow_dirty.clear()
+    assert after == shot([second])

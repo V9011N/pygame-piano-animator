@@ -58,8 +58,9 @@ from common import (blit_shadowed, ACCENT, BAR_BG, BG, FELT_H, FINGER_NAMES, HAN
                     draw_felt, draw_hand_area, draw_pianist_badge, fmt_time, mix, pick_file,
                     VolumeSlider, draw_tooltip, run_busy, save_file_dialog)
 import pianist as pianists
-from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_fingering, score_fingering
-from hands import HandAnimator, build_hands, draw_hands, load_with_hands, pair_hands
+from fingering import CHORD_TOL, group_notes, mirror_pitch, plan_with_slips, score_fingering
+from hands import (HandAnimator, build_hands, draw_hands, hands_waiting, live_poses, load_with_hands, pair_hands,
+                   settle_heap)
 from version import VERSION
 from midi_loader import (HIGHEST_PIANO_KEY, LEFT, LOWEST_PIANO_KEY, RIGHT, MidiSong,
                          is_black_key, is_pig, note_name, save_fingered_midi,
@@ -269,6 +270,8 @@ class FingeringEditor(Transport):
         self.dialog = None
         self._after_dialog = None
         self.press = None                  # what the left/middle button is doing
+        self._pose_state = {}              # (hands.live_poses)
+        self._waiting = False              # (hands.hands_waiting)
         self.hover = None
         self.message, self.message_age = "", 0.0
         self._drawn = []                   # [(rect, note index)] from the last frame
@@ -326,6 +329,7 @@ class FingeringEditor(Transport):
         self.hands = {h: HandAnimator(self.song, h, fingering=fing) for h in (RIGHT, LEFT)
                       if any(n.hand == h for n in self.notes)}
         pair_hands(self.hands.values())
+        settle_heap()                           # (the old animators collected, the new ones kept out of gc passes)
         self.perf = Performance.from_animators(self.hands.values()) if self.hands else None
         self.difficulty = None
         self.seek(self.t)
@@ -468,7 +472,7 @@ class FingeringEditor(Transport):
             tmp.append(m)
             back[id(m)] = i
         vp = mirror_pitch if hand == LEFT else None
-        result = plan_fingering(group_notes(tmp, vpitch=vp), vp, hand=hand, context=self.notes)
+        result = plan_with_slips(tmp, vp, hand=hand, context=self.notes)
         for m in tmp:
             i = back[id(m)]
             if i in free:
@@ -624,6 +628,7 @@ class FingeringEditor(Transport):
             song, hands = run_busy(self.screen, self.fonts, f"Loading {os.path.basename(path)}…",
                                    lambda: load_with_hands(path, repair=False))
             self.load_song(song, hands)
+            settle_heap()
             self.app.last_dir = os.path.dirname(os.path.abspath(path))
         except Exception as exc:
             self.say(f"Could not open {os.path.basename(path)}: {exc}")
@@ -643,10 +648,18 @@ class FingeringEditor(Transport):
     def say(self, text):
         self.message, self.message_age = text, 0.0
 
+    def _scrubbing(self):
+        """Is the song being scrubbed (the ruler, or the roll across time, dragged)? Each frame a jump."""
+        p = self.press
+        return bool(p and p["moved"] and (p["kind"] == "ruler" or (p["kind"] == "pan" and p["time"])))
+
     def idle(self, budget):
-        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
-        if self.hands and not self._rebuild_due:
-            from hands import prepare_hands
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while
+        scrubbed (each jump would start the motion's chain over, the stall the quick pose avoids)."""
+        if self.hands and not self._rebuild_due and not self._scrubbing():
+            from hands import HOLD_BUDGET, prepare_hands
+            if self._waiting:
+                budget = max(budget, HOLD_BUDGET)
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
@@ -1077,7 +1090,10 @@ class FingeringEditor(Transport):
             self._rebuild_due -= dt
             if self._rebuild_due <= 0:
                 self._rebuild()
-        Transport.update(self, dt)
+        # after a jump (or a rebuild) the song waits for the hands' exact pose (hands.hands_waiting)
+        self._waiting = bool(self.hands and not self.paused and not self._scrubbing() and self._rebuild_due is None
+                             and hands_waiting(self.hands.values(), self.t, self.keyboard, self._pose_state))
+        Transport.update(self, 0.0 if self._waiting else dt)
         self.message_age += dt
         p = self.press
         if p and p["kind"] == "band" and p["moved"]:
@@ -1120,7 +1136,8 @@ class FingeringEditor(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            draw_hands(s, [a.pose(self.t, self.keyboard) for a in self.hands.values()])
+            # (quick while scrubbed or until the exact pose is worked out after a jump: hands.live_poses)
+            draw_hands(s, live_poses(self.hands.values(), self.t, self.keyboard, self._scrubbing(), self._pose_state))
             s.set_clip(None)
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
                            self.song.control_state(self.t))

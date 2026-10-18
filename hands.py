@@ -41,6 +41,7 @@ an octave up); that makes it about 7.6 in from wrist to middle fingertip.
 from __future__ import annotations
 
 import bisect
+import itertools
 import math
 import time
 from operator import mul
@@ -48,7 +49,7 @@ from operator import mul
 import midi_loader
 import progress
 from fingering import group_notes, is_crossing, key_pos, mirror_pitch, plan_fingering
-from midi_loader import LEFT, RIGHT, is_black_key
+from midi_loader import LEFT, RIGHT, is_black_key, note_name
 
 # --------------------------------------------------------------------------- #
 # Real-world sizes
@@ -67,6 +68,9 @@ GESTURE_REPEAT_T = 0.45                  # repeated chords closer than this boun
 GESTURE_KEY_UP_T = 0.04                  # keys springing back as the hand lifts off them
 GESTURE_TREMOLO_T = 0.3                  # alternations quicker than this rotate the forearm
 BLACK_DEPTH_IN = 0.35                    # distance in from the black key's front edge
+CLUSTER_DEPTH_IN = 0.15                  # one finger on a white key and the black beside it (or both whites): this far in
+                                         # from the black key's front, touching them all (key_target)
+CLUSTER_FRONT_GAP_IN = 0.1               # two whites with a black between (C-D): the tip this far in front of it
 # How far along a key a fingertip may slide from those spots when the hand
 # can't reach them (a white key between black ones is played further in):
 WHITE_SPAN_IN = (0.3, 0.45)              # from the front edge / past the black keys' front
@@ -133,6 +137,9 @@ FINGER_LIFT_MAX = math.radians(40)   # a playing finger's first bone rises at mo
 STEEP_FORWARD = (0.5, 0.85, 2.0, 0.12)   # solve_chain: from a target this steeply below (sine, eased in up
                             # to the second) the finger's joints bow forward (up to the third) and its plane turns
                             # the hand's way as if the target were up to the fourth share of its length further on
+STRICT_KEY_MARGIN = 0.2     # a held fingertip is at least this share of its key's width in from its sides...
+STRICT_KEY_MARGIN_PX = 3.0  # ...at most this many pixels
+STRICT_LOG_KEY = 0.05       # a held tip still off its key after everything by more than this share of the key's width is logged (once per note)
 TIP_BELOW_KNUCKLE = 0.12    # a fingertip stays at least this share of the finger's length below its knuckle
 THUMB_COUPLING = 0.85
 THUMB_BEND_MAX = 1.2
@@ -213,6 +220,8 @@ ROLL_TURN_DEG = (-40, 20)    # drawn_reach: the hand's turn (the wrist's range a
 ROLL_DEPTH_IN = 1.6         # ...and how far apart along the keys two fingertips of one chord can be
 ROLL_PLAN_SLACK_WK = 0.75  # a chord past the planner's span for a pair by more than this (white keys) is rolled
                             # unchecked; less, it's rolled only if the drawn hand can't hold it (_chord_fits)
+ROLL_MAX_T = 0.12           # s, a rolled chord (its top's wait for the stretch too) takes at most this long
+ROLL_LET_GO_T = 0.02        # s, a rolled key the next can't be held with is let go this long before it
 ROLL_SUSPECT_WK = 0.4       # a chord within this of drawn_reach (white keys) is checked by _chord_fits
 ROLL_MISS_WK = {False: 0.45, True: 0.22}  # _chord_fits: how far (white keys) a held fingertip may land from its
                                           # key's aim and still be on it - white key / black key (about half its width)
@@ -222,6 +231,12 @@ THUMB_BRIDGE_FIX_K = 0.15  # ...and a bridging thumb lying flat across its keys,
 KEY_FIX_MARGIN_DEG = 1.0    # stay this far inside the splay limits...
 KEY_FIX_MARGIN = 0.02       # ...and this share of the finger's length inside its reach range
 KEY_FIX_ITERS = 6
+KEY_FIX_STEP_PX = 40.0      # the key fit's steps: at most this far...
+KEY_FIX_STEP_RAD = 0.25     # ...and this much turn each
+KEY_FIX_HELD_K = 20.0       # a held key weighs this many times a finger's getting ready for its next one
+KEY_FIX_SETTLED = 0.005     # a key-fit step bettering its cost by less than this share ends the fit...
+KEY_FIX_RETRY_ITERS = 3     # ...and a retry's fit takes at most this many steps a pass
+KEY_FIX_RETRY_PX = 3.0      # a fit leaving its keys further off than this (px, all told) tries other starts
 # the choice of spot along a key: (out-of-reach weight, softness in inches),
 # firm on the key and soft while a finger travels there (blended by how far
 # it still has to go)
@@ -244,6 +259,11 @@ TREM_PERIOD = 4             # strikes back (up to this many) - the same key or c
 TREM_GAP_T = 0.3            # s, ...none further apart than this
 TREM_JUMP = 4               # semitones: a tremolo whose lowest or highest key jumps further starts again there
 TREM_REACH_EXTRA = 1.25     # white keys: a tremolo's cycle may span this much more than the thumb-little finger stretch
+TREM_SLACK_WK = 0.35        # ...and the drawn hand, held still, reach each key of it within this much more than a
+                            # chord's (_chord_fits: rocking the forearm reaches a little further)
+TREM_ROCK_STRICT_WK = 0.22  # a tremolo is held still only if it fits with this much less than a chord's misses allowed
+TREM_OFF_KEY_W = 0.3        # in a tremolo the still hand can't quite span, a finger in the air keeps the hand by its
+                            # key this share as firmly as one down on its key (_key_fix): the hand rocks
 TREM_HOLD_T = 0.5           # s, in a tremolo the wrist is averaged over +-this: it stays put, each finger on its key
 RUN_COMPRESS_DEG = {1: (0, 0), 2: (0, 10), 3: (6, 6), 4: (8, 0), 5: (10, 0)}   # extra splay toward the hand's middle
 # Glissandos (glissando.py): the hand slides the backs of its fingers along the keys
@@ -268,6 +288,14 @@ GLISS_TRAVEL_ACC = 40.0     # m/s^2, to and from a glissando the hand speeds up 
 GLISS_TRAVEL_DT = 1 / 120   # s, ...worked out in steps this long...
 GLISS_TRAVEL_MAX_T = 3.0    # s, ...for at most this long
 WARM_AHEAD_T = 3.5          # s, prepare() keeps the hand's motion worked out this far ahead of the song
+WARM_NEXT_STEPS = 8          # prepare(): the next notes after this many limit-grid steps past the one it works on
+WARM_LOW_T = 1.0            # s, the work ahead less than this far ahead of the song...
+WARM_MIN_BUDGET = 0.002     # ...gets at least this much of each frame (prepare_hands)
+SEED_JUMP_STEPS = 30        # limit-grid steps: t this far from the last prepare's is a jump (the groundwork starts over)
+JUMP_T = 0.5                # s, the song's time moving this much between frames is a jump (live_poses)
+HOLD_MAX_T = 1.0            # s, the song waits at most this long for the hands' exact pose after a jump...
+HOLD_BUDGET = 0.012         # ...and the work ahead gets at least this much of each frame meanwhile
+QUICK_BLEND_T = 0.12        # s, live_poses blends from the quick pose into the exact one over this
 GLISS_ARRIVE_T = 0.03       # s, rushing to a key after a glissando, the hand is there this long before the strike
 GLISS_THUMB_ARM_DEG = 18.0  # with the thumb, the forearm angled this far toward the way it slides (elbow trailing)
 GLISS_THUMB_IN = 2.0        # in, with the thumb: its nail up to this far up the white keys, the fist's knuckles over them...
@@ -321,6 +349,20 @@ def _clamp_apply(prep, x, y):
     h = hmin if h < hmin else hmax if h > hmax else h
     ux, uy = h * math.sin(a), h * math.cos(a)
     return bx + (ux * cp - uy * sp), by + (ux * sp + uy * cp)
+
+
+def fmt_song_time(t):
+    """A time in the MIDI file as m:ss.sss."""
+    m, s = divmod(max(0.0, t), 60.0)
+    return f"{int(m)}:{s:06.3f}"
+
+
+def log_unplaced(song, hand, notes):
+    """Say (the log) which notes a hand couldn't be given a finger for, and when."""
+    title = getattr(song, "title", "") or "song"
+    times = ", ".join(f"{note_name(n.pitch)} {fmt_song_time(n.start)}" for n in notes[:12])
+    more = f" (+{len(notes) - 12} more)" if len(notes) > 12 else ""
+    print(f"[hands] {title}: {hand} hand - {len(notes)} note(s) with no finger, not played: {times}{more}")
 
 
 def _shift_pose(p, dx, dy, mirror):
@@ -379,14 +421,80 @@ def idle_weight(spans, starts, t):
 
 
 def prepare_hands(animators, t, kb, budget):
-    """Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare)."""
+    """
+    Share `budget` seconds of a frame's spare time among the hands' work ahead (HandAnimator.prepare) - at
+    least WARM_MIN_BUDGET while either hand is less than WARM_LOW_T ahead, even when the frame left none:
+    frames over their time (dense passages, a busy machine) otherwise left it none at all, its lead ran out,
+    and what it spreads out (a rest's look ahead, a tremolo's window: 20-120 solves) landed in one frame.
+    """
+    global _frozen_at
     anims = list(animators)
+    lead = min(((a._warm_k * LIMIT_GRID_T - t) if a._warm_k is not None else 0.0) for a in anims) if anims else 1e9
+    if lead < WARM_LOW_T:
+        budget = max(budget, WARM_MIN_BUDGET)
+    if budget <= 0:
+        return
     end = time.perf_counter() + budget
+    if end - budget - _frozen_at > FREEZE_EVERY_T:
+        # what playback has built up (the hands' caches, ~20,000 entries each) out of the garbage collector's
+        # full passes too, as settle_heap does for the song: each pass otherwise walks all of it, longer the
+        # further into the song (16 ms five minutes in). Playback makes no reference cycles to collect.
+        import gc
+        gc.freeze()
+        _frozen_at = end - budget
     for i, a in enumerate(anims):
         left = end - time.perf_counter()
         if left <= 0:
             break
         a.prepare(t, kb, left / (len(anims) - i))
+
+
+def _exact_due(anims, t, kb, scrubbing, state):
+    """
+    Is it the exact pose's turn (the views' hands: live_poses, hands_waiting)? Not while scrubbed, nor after a jump
+    (t moved more than JUMP_T since the last frame, or the view's first) until exact_ready - or HOLD_MAX_T has
+    passed, when it's worked out in the frame. From then on it stays exact while the song plays on: the frames
+    work out what the work ahead hasn't yet, a step at a time (a strict exact_ready, 8 steps ahead, would flicker
+    between the two as the work ahead fell a step behind). `state`: a dict the view keeps for it.
+    """
+    now = time.perf_counter()
+    last = state.get("t")
+    state["t"] = t
+    if scrubbing or last is None or abs(t - last) > JUMP_T:
+        state["since"], state["exact"] = now, False       # (every jump: the wait is timed from the last one)
+    if not state["exact"] and not scrubbing:
+        if all(a.exact_ready(t, kb) for a in anims) or now - state.get("since", now) > HOLD_MAX_T:
+            state["exact"], state["blend_from"] = True, now
+    return state["exact"]
+
+
+def hands_waiting(animators, t, kb, state):
+    """
+    Should the song wait at t for the hands (the player's and the editor's clock, playing)? After a jump (and as
+    the view opens) until their exact pose is worked out (exact_ready: prepare builds it, HOLD_BUDGET of each
+    frame), at most HOLD_MAX_T: played on meanwhile, the quick pose (no speed limit, no smoothing) would stand in
+    for whole seconds of motion in a dense piece - the work behind it ~150 ms a hand, and the song adding
+    1.5-2 ms a hand each frame - jittering and snapping to the keys. `state`: the view's (shared with live_poses).
+    """
+    return not _exact_due(list(animators), t, kb, False, state)
+
+
+def live_poses(animators, t, kb, scrubbing, state):
+    """
+    The hands to draw on screen at t: HandAnimator.pose - quick while the song is scrubbed, or after a jump until
+    the exact pose is worked out (_exact_due; the work ahead does it, a little each frame, the song waiting:
+    hands_waiting), then blended into the exact one over QUICK_BLEND_T. `state`: a dict the view keeps for it.
+    (A video's frames are exact: render them with HandAnimator.pose.)
+    """
+    anims = list(animators)
+    if not _exact_due(anims, t, kb, scrubbing, state):
+        return [a.pose(t, kb, quick=True) for a in anims]
+    w = (time.perf_counter() - state.get("blend_from", 0.0)) / QUICK_BLEND_T
+    exact = [a.pose(t, kb) for a in anims]
+    if w >= 1.0:
+        return exact
+    w = _smooth(w)
+    return [_blend_pose(a.pose(t, kb, quick=True), e, w) for a, e in zip(anims, exact)]
 
 
 def build_hands(song, **kw):
@@ -413,6 +521,28 @@ def load_with_hands(path_or_song, **kw):
         return song, build_hands(song, **kw)
 
 
+
+FREEZE_EVERY_T = 2.0        # s, prepare_hands keeps what playback builds out of gc passes this often
+_frozen_at = -math.inf
+
+
+def settle_heap():
+    """
+    Once a song's hands are built (a new mode, an editor's rebuild - never in a
+    playing frame): what's left of the last song is collected, and everything
+    alive now is kept out of the garbage collector's full passes (gc.freeze).
+    Those passes walk every object: with a song's notes and plans (~100,000
+    objects for a long one) each took 40-65 ms, a dropped frame every half
+    minute or so; now they walk only what playback adds. Objects frozen are
+    still freed when nothing refers to them - only cycles wait for the next
+    call (which unfreezes first).
+    """
+    import gc
+    gc.unfreeze()
+    gc.collect()
+    gc.freeze()
+
+
 def pair_hands(animators):
     """Let two hands (HandAnimators) know about each other, so an idle one keeps out of the other's way."""
     anims = list(animators)
@@ -421,6 +551,7 @@ def pair_hands(animators):
         a._idle_cache, a._clear_cache, a._path_cache = {}, {}, {}
         a._limit_cache, a._tip_limit_cache = {}, {}
         a._smooth_hand_cache, a._smooth_tip_cache = {}, {}
+        a._seed_job = None
 
 
 def _blend_pose(a, b, w):
@@ -696,6 +827,18 @@ def drawn_reach(geo, lift_in, fa, fb):
     flattening over wide chords): a chord near or past it for some pair is
     checked properly by HandAnimator._chord_fits.
     """
+    key = (lift_in, fa, fb) + tuple(tuple(geo.base(f)) + tuple(geo.bones[f]) for f in (fa, fb))
+    got = _DRAWN_REACH.get(key)
+    if got is None:
+        got = _DRAWN_REACH[key] = _drawn_reach(geo, lift_in, fa, fb)
+    return got
+
+
+_DRAWN_REACH = {}                 # drawn_reach by the two fingers' bones (the same for every chord, hand and song)
+
+
+def _drawn_reach(geo, lift_in, fa, fb):
+    import numpy as np
     u = INCHES_PER_UNIT
     pts = {}
     for f in (fa, fb):
@@ -709,21 +852,49 @@ def drawn_reach(geo, lift_in, fa, fb):
         pts[f] = [(bx + h * math.sin(lo + (hi - lo) * i / 16), by + h * math.cos(lo + (hi - lo) * i / 16))
                   for i in range(17) for h in (hmin + (hmax - hmin) * j / 6 for j in range(7))]
     best = 0.0
+    (ax, ay), (bx_, by_) = (np.array(pts[f]).T for f in (fa, fb))
     for k in range(25):
         psi = math.radians(ROLL_TURN_DEG[0] + (ROLL_TURN_DEG[1] - ROLL_TURN_DEG[0]) * k / 24)
         c, s = math.cos(psi), math.sin(psi)
-        A = [(x * c - y * s, x * s + y * c) for x, y in pts[fa]]
-        B = [(x * c - y * s, x * s + y * c) for x, y in pts[fb]]
-        for ax, ay in A:
-            for bx_, by_ in B:
-                if bx_ - ax > best and abs(by_ - ay) <= ROLL_DEPTH_IN:
-                    best = bx_ - ax
+        dx = (bx_ * c - by_ * s)[None, :] - (ax * c - ay * s)[:, None]
+        dy = (bx_ * s + by_ * c)[None, :] - (ax * s + ay * c)[:, None]
+        ok = dx[np.abs(dy) <= ROLL_DEPTH_IN]
+        if ok.size:
+            best = max(best, float(ok.max()))
     return best / WHITE_KEY_IN
 
 
 # --------------------------------------------------------------------------- #
 # Animation
 # --------------------------------------------------------------------------- #
+def _trim(cache, cap, near):
+    """
+    A cache past `cap` entries (int keys: grid steps) lets go of a few far from
+    `near` (the key being worked out: further than cap/4), oldest stored first -
+    TRIM_BATCH for each entry added past the cap, so it shrinks back a little at
+    a time. Not all at once: a cleared cache restarted the speed limit's chains
+    (every 20,000 steps - 5.5 min - a burst of work and a restarted motion), and
+    dropping thousands of entries in one go took 26-54 ms itself. Not the
+    oldest regardless: a jump ahead earlier (a seek) stores steps far ahead
+    first, the very steps playback reaches later - one near is moved to the
+    back of the line instead.
+    """
+    if len(cache) <= cap:
+        return
+    r, n = cap // 4, 0
+    for key in list(itertools.islice(cache, 4 * TRIM_BATCH)):
+        if abs(key - near) > r:
+            del cache[key]
+            n += 1
+            if n >= TRIM_BATCH:
+                return
+        else:
+            cache[key] = cache.pop(key)
+
+
+TRIM_BATCH = 8
+
+
 def _clamp(x, lo, hi):
     return lo if x < lo else hi if x > hi else x
 
@@ -791,6 +962,14 @@ class HandAnimator:
         self.gliss_eps = glissando.episodes(self.gliss_runs, notes, float(self.pianist.b("gliss_merge")))
         self.gliss_start = self._gliss_schedule()
         notes = [n for n in notes if id(n) not in self.gliss_ids]
+        # A finger slipping off its key onto the one beside it (fingering.find_slips): the slip isn't
+        # planned - it takes the finger of the note it slips from, which slides over to touch both keys
+        # when it sounds (pair_key).
+        from fingering import find_slips
+        given = (lambda n: fingering.get(id(n))) if fingering is not None else (lambda n: getattr(n, "finger", None))
+        self.slip_of = find_slips(notes, self.vp, given)
+        slips = [n for n in notes if id(n) in self.slip_of]
+        notes = [n for n in notes if id(n) not in self.slip_of]
         self.groups = group_notes(notes, vpitch=self.vp)
         # `fingering` ({id(note): finger}) skips the planner, e.g. when the
         # fingering editor already knows every finger
@@ -802,19 +981,56 @@ class HandAnimator:
                                        pianist=self.pianist, repair=repair, repaired=self.repaired)
         self.fingering = {id(n): fingering[id(n)] for _, ns in self.groups for n in ns
                           if fingering.get(id(n))}
-        # notes without a finger (a sixth note in one hand's chord) aren't animated
+        for n in slips:
+            f = self.fingering.get(id(self.slip_of[id(n)]))
+            if f:
+                self.fingering[id(n)] = f
+        # notes without a finger (a sixth note in one hand's chord) aren't animated - logged, with their times
+        self.unplaced = sorted([n for _, ns in self.groups for n in ns if id(n) not in self.fingering] +
+                               [n for n in slips if id(n) not in self.fingering], key=lambda n: n.start)
+        if self.unplaced:
+            log_unplaced(song, hand, self.unplaced)
         self.groups = [(t, [n for n in ns if id(n) in self.fingering]) for t, ns in self.groups]
         self.groups = [g for g in self.groups if g[1]]
-        # One finger on two neighbouring keys (the thumb, or the little finger
-        # on two white keys): its tip aims between them.
-        from fingering import double_ok
+        # each slip joins the chord of the note it slips from
+        where = {id(n): gi for gi, (_, ns) in enumerate(self.groups) for n in ns}
+        for n in slips:
+            gi = where.get(id(self.slip_of[id(n)]))
+            if gi is not None and id(n) in self.fingering:
+                self.groups[gi][1].append(n)
+                self.groups[gi][1].sort(key=lambda m: self.vp(m.pitch))
+        # One finger on two or three neighbouring keys (fingering.cluster_ok: a
+        # smudge, or a cluster struck with one finger): its tip aims where it
+        # touches them all (key_target), and the finger holds them as one key
+        # (_unify_clusters; each note still sounds its own length).
+        from fingering import cluster_ok, finger_runs
         self.pair_key = {}
         for _, ns in self.groups:
-            for a, b in zip(ns, ns[1:]):
-                f = self.fingering[id(a)]
-                if f == self.fingering[id(b)] and double_ok(self.vp(a.pitch), self.vp(b.pitch), f):
-                    pk = (min(a.pitch, b.pitch), max(a.pitch, b.pitch))
-                    self.pair_key[id(a)] = self.pair_key[id(b)] = pk
+            fs = [self.fingering[id(n)] for n in ns]
+            for i, j in finger_runs(fs):
+                if j - i > 1 and cluster_ok([self.vp(n.pitch) for n in ns[i:j]], fs[i]):
+                    pk = tuple(sorted(n.pitch for n in ns[i:j]))
+                    for n in ns[i:j]:
+                        self.pair_key[id(n)] = pk
+        # the keys one finger holds as one (_mates); a slip's note aims at its own key until the finger
+        # slips, each slip at the keys it has slipped across by then
+        self.cluster_key = dict(self.pair_key)
+        riders = {}
+        for n in slips:
+            m = self.slip_of[id(n)]
+            if id(n) in self.cluster_key and self.cluster_key.get(id(m)) is self.cluster_key[id(n)]:
+                riders.setdefault(id(m), (m, []))[1].append(n)
+        from fingering import SMUDGE_TOL
+        for m, rs in riders.values():
+            def caught(t):
+                """The keys the finger covers by t: its note's and every slip struck by then (SMUDGE_TOL)."""
+                return tuple(sorted([m.pitch] + [x.pitch for x in rs if x.start <= t + SMUDGE_TOL]))
+            if len(caught(m.start)) > 1:
+                self.pair_key[id(m)] = caught(m.start)      # (caught as it was struck: no slip to see)
+            else:
+                self.pair_key.pop(id(m), None)
+            for r in rs:
+                self.pair_key[id(r)] = caught(r.start)
 
         self.by_finger = {f: [] for f in range(1, 6)}
         for _, ns in self.groups:
@@ -826,6 +1042,7 @@ class HandAnimator:
         eo = self.end_of = {id(n): n.end for _, ns in self.groups for n in ns}
         self.rolled = 0
         self._ref_kb = None
+        self._fits_memo = {}             # _chord_fits by shape
         self._layout_sig = None
         self._roll_wide_chords()
         for f in self.by_finger:
@@ -839,7 +1056,7 @@ class HandAnimator:
             for i, n in enumerate(ns):
                 e, s0 = eo[id(n)], so[id(n)]
                 j = i + 1
-                while j < len(ns) and so[id(ns[j])] - s0 < 0.01:     # a thumb on two keys at once
+                while j < len(ns) and (so[id(ns[j])] - s0 < 0.01 or self._mates(n, ns[j])):   # one finger, keys at once
                     j += 1
                 if j < len(ns):
                     nx = ns[j]
@@ -849,6 +1066,7 @@ class HandAnimator:
                         e = min(e, max(s0 + 0.5 * (s1 - s0), s1 - self._jump_lift(n, nx)))
                 ends.append(max(e, s0 + 1e-3))
             self.finger_ends[f] = ends
+        self._unify_clusters()
         # A held key that the next chord's fingers have to cross (5 landing
         # left of a held 2, say - anything but the thumb passing under) is
         # let go early too, so the hand isn't asked to do both at once.
@@ -885,28 +1103,33 @@ class HandAnimator:
                         e = max(s0 + 0.5 * (sm - s0), sm - lift)
                         self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
                     gi += 1
+        self._release_unheld()
         # Nothing travels faster than the pianist's top speed: keys are let
         # go early enough to get to the next ones, or those are struck late.
         self._speed_schedule()
         self.white_up = self._white_up()
         # what this hand actually plays: [(press, release, note)]
-        self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
-                            for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+        self.performance = self._fingered_performance()
         self.performance += self._gliss_performance()
         self.spans = busy_spans((s0, e) for s0, e, _ in self.performance)
         self.span_starts = [a for a, _ in self.spans]
         self.partner = None                      # the other hand, see pair_hands
+        self.unreached_logged = set()            # id(note) of keys a finger couldn't be put on (logged once)
         self._idle_cache, self._clear_cache, self._path_cache = {}, {}, {}
         self._find_gestures()
         self._gliss_cache = None
         self._gliss_follow_cache = {}
         self._follow_jobs = {}
         self._warm_k = None
+        self._seed_job = self._seed_at = None
         self._strike_list = None
         self._prep_cache = {}                    # _blocked_until
         self._gliss_starts = [self.gliss_start[id(ep[0][0])] for ep in self.gliss_eps]
         self.runs = self._find_runs()
         self.run_starts = [a for a, _ in self.runs]
+        self.trem_rock = set()
+        self._group_of = None
+        self._kf_last = None                         # (_key_fix: when and where it last put the hand)
         self.trems = self._find_tremolos()
         self._group_ts = [t for t, _ in self.groups]
         self.trem_starts = [a for a, _ in self.trems]
@@ -1007,11 +1230,34 @@ class HandAnimator:
             if hi - lo + 1 < TREM_MIN_NOTES or len(set(sets[lo:hi + 1])) < 2:
                 continue
             kp = [[key_pos(self.vp(p)) for p in s_] for s_ in sets[lo:hi + 1]]
-            if any(max(max(c) for c in kp[i:i + TREM_PERIOD]) - min(min(c) for c in kp[i:i + TREM_PERIOD]) > reach
-                   for i in range(max(1, len(kp) - TREM_PERIOD + 1))):
+            widths = [max(max(c) for c in kp[i:i + TREM_PERIOD]) - min(min(c) for c in kp[i:i + TREM_PERIOD])
+                      for i in range(max(1, len(kp) - TREM_PERIOD + 1))]
+            if max(widths) > reach:
+                continue
+            # ...and the drawn hand, held still, must reach every key of its widest cycle (the planner's
+            # stretch is a real hand's: a tenth passed it, and the still hand missed both ends)
+            i = widths.index(max(widths))
+            cycle = [m for _, ns in groups[lo + i:lo + i + TREM_PERIOD] for m in ns]
+            several = len({(self.fingering[id(m)], m.pitch) for m in cycle}) > 1
+            if several and not self._chord_fits(cycle, TREM_SLACK_WK):
                 continue
             t1, ns = groups[hi]
-            out.append((groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T)))
+            span = (groups[lo][0], min(max(m.end for m in ns), t1 + TREM_GAP_T))
+            if several:
+                # played rocking (_key_fix) if any of its cycles fits only with the slack - or only allowing
+                # the misses a held chord may have, which added up over a whole figure leave the fit short;
+                # every distinct cycle, not only the widest: over a long span the figure follows the harmony
+                seen = set()
+                for j in range(max(1, len(kp) - TREM_PERIOD + 1)):
+                    cyc = [m for _, ns in groups[lo + j:lo + j + TREM_PERIOD] for m in ns]
+                    key = frozenset((self.fingering[id(m)], m.pitch) for m in cyc)
+                    if len(key) < 2 or key in seen:
+                        continue
+                    seen.add(key)
+                    if not self._chord_fits(cyc, -TREM_ROCK_STRICT_WK):
+                        self.trem_rock.add(span)
+                        break
+            out.append(span)
         return out
 
     def _trem_span(self, t):
@@ -1261,8 +1507,8 @@ class HandAnimator:
             runs.append((strikes, releases))
         self.bounce_runs = runs
         if runs:
-            self.performance = [(self.finger_starts[f][i], self.finger_ends[f][i], n)
-                                for f, ns in self.by_finger.items() for i, n in enumerate(ns)]
+            self._unify_clusters()
+            self.performance = self._fingered_performance()
             self.performance += self._gliss_performance()
         self._bounce_starts = [r[0][0] for r in self.bounce_runs]
         self._roll_starts = [r[0][0] for r in self.roll_runs]
@@ -1387,8 +1633,7 @@ class HandAnimator:
         cache = self._smooth_hand_cache
         q = cache.get(k)
         if q is None:
-            if len(cache) > 20000:
-                cache.clear()
+            _trim(cache, 20000, k)
             def avg(n):
                 acc, ws = [0.0, 0.0, 0.0], 0.0
                 for d in range(-n, n + 1):
@@ -1545,8 +1790,7 @@ class HandAnimator:
         cache = self._smooth_tip_cache
         q = cache.get(k)
         if q is None:
-            if len(cache) > 20000:
-                cache.clear()
+            _trim(cache, 20000, k)
             n = LIMIT_SMOOTH_TIPS
             grids = [(n + 1 - abs(d), self._limited_tip_grid(k + d)) for d in range(-n, n + 1)]
             ws = sum(w for w, _ in grids)
@@ -1564,54 +1808,133 @@ class HandAnimator:
         cache = self._tip_limit_cache
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
-        g = LIMIT_GRID_T
-        step = self.max_speed / 0.0254 * self.ppi * g
         j, todo = k, []
-        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / LIMIT_GRID_T):
             todo.append(j)
             j -= 1
-        prev = cache.get(j)
         for j in reversed(todo):
-            tips = self._tips_at(j * g, self._smooth_hand_grid(j))
-            q = {}
-            for f, (x, y, z) in tips.items():
-                if prev is not None:
-                    px, py, _ = prev[f]
-                    d = math.hypot(x - px, y - py)
-                    if d > step:
-                        x, y = px + (x - px) * step / d, py + (y - py) * step / d
-                q[f] = (x, y, z)
-            prev = cache[j] = q
-        return prev
+            q = self._tip_step(j)
+        return q
+
+    def _tip_step(self, j):
+        """One step of the fingertips' speed-limited chain: on from step j-1 if it's worked out, else starting at j."""
+        cache = self._tip_limit_cache
+        _trim(cache, 20000, j)
+        g = LIMIT_GRID_T
+        step = self.max_speed / 0.0254 * self.ppi * g
+        prev = cache.get(j - 1)
+        tips = self._tips_at(j * g, self._smooth_hand_grid(j))
+        q = {}
+        for f, (x, y, z) in tips.items():
+            if prev is not None:
+                px, py, _ = prev[f]
+                d = math.hypot(x - px, y - py)
+                if d > step:
+                    x, y = px + (x - px) * step / d, py + (y - py) * step / d
+            q[f] = (x, y, z)
+        cache[j] = q
+        return q
 
     def _limited_grid(self, k):
         cache = self._limit_cache
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
+        j, todo = k, []
+        while j not in cache and len(todo) < int(LIMIT_RESTART_T / LIMIT_GRID_T):
+            todo.append(j)
+            j -= 1
+        for j in reversed(todo):
+            q = self._limit_step(j)
+        return q
+
+    def _limit_step(self, j):
+        """One step of the hand's speed-limited chain: on from step j-1 if it's worked out, else starting at j."""
+        cache = self._limit_cache
+        _trim(cache, 20000, j)
         g = LIMIT_GRID_T
         step = self.max_speed / 0.0254 * self.ppi * g           # pixels per grid step
         arm = TIP_ARM_IN * self.ppi
-        j = k
-        todo = []
-        while j not in cache and len(todo) < int(LIMIT_RESTART_T / g):
-            todo.append(j)
-            j -= 1
-        prev = cache.get(j)
-        for j in reversed(todo):
-            tt = j * g
-            q = self._key_fix(tt, *self._placed_at(tt))
-            if prev is not None:
-                dx, dy, dp = q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]
-                move = math.hypot(dx, dy) + abs(dp) * arm
-                if move > step:
-                    k_ = step / move
-                    q = (prev[0] + dx * k_, prev[1] + dy * k_, prev[2] + dp * k_)
-            prev = cache[j] = q
-        return prev
+        prev = cache.get(j - 1)
+        tt = j * g
+        q = self._key_fix(tt, *self._placed_at(tt))
+        if prev is not None:
+            dx, dy, dp = q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]
+            move = math.hypot(dx, dy) + abs(dp) * arm
+            if move > step:
+                k_ = step / move
+                q = (prev[0] + dx * k_, prev[1] + dy * k_, prev[2] + dp * k_)
+        cache[j] = q
+        return q
+
+    # ----- after a jump: the exact pose worked out a step at a time -------------------
+    def exact_ready(self, t, kb):
+        """
+        Is everything the exact pose at t needs (pose) worked out - the speed-limited chains around t
+        (_limited_at, _limited_tips and their smoothing) and the ways to and from a glissando near? After a
+        jump they aren't: they start LIMIT_RESTART_T back, 200-500 ms of work in one frame; live_poses draws
+        the quick pose until prepare (_seed_steps) has done it in the frames' spare time.
+        """
+        self._ensure_layout(kb)
+        k = math.floor(t / LIMIT_GRID_T)
+        lc, tc = self._limit_cache, self._tip_limit_cache
+        if any(j not in lc for j in range(k - 6, k + 9)) or any(j not in tc for j in range(k - 3, k + 6)):
+            return False
+        return all(key in self._gliss_follow_cache for key in self._gliss_needed(t))
+
+    def _gliss_needed(self, t):
+        """The glissando ways (_gliss_follow keys) the pose at t looks at (as _gliss_neighbours)."""
+        if not self.gliss_eps:
+            return []
+        paths = self._gliss_paths()
+        k = bisect.bisect_right(self._gliss_starts, t) - 1
+        reach = GLISS_TRAVEL_MAX_T + GLISS_RAMP_T + 0.1
+        out = []
+        if k >= 0 and paths[k][1] <= t <= paths[k][1] + reach:
+            out.append((k, True))
+        if k + 1 < len(paths) and t >= paths[k + 1][0] - reach:
+            out.append((k + 1, False))
+        return out
+
+    def _seed_steps(self, k):
+        """
+        What exact_ready needs as a job that yields after each unit of work (prepare runs it in the frames' spare
+        time): the hand's chain from where a cold call would start it (LIMIT_RESTART_T back of the first step the
+        pose at step k needs), each step's hand solves first (its place, a rest's look ahead), the fingertips'
+        chain alongside as far as the hand's allows - both on to where the song is now (_seed_t: it may be
+        playing) - then the glissando ways near.
+        """
+        g, N = LIMIT_GRID_T, int(LIMIT_RESTART_T / LIMIT_GRID_T)
+        j, jt = k - 6 - N + 1, k - 3 - N + 1
+        while True:
+            kt = math.floor(self._seed_t / g)
+            if jt <= kt + 5 and jt + 3 < j:          # (a fingertip step looks at the hand's 3 steps either side)
+                if jt not in self._tip_limit_cache:
+                    self._tip_step(jt)
+                    yield
+                jt += 1
+            elif j <= kt + 8:
+                if j not in self._limit_cache:
+                    tt = j * g
+                    nxt = self._next_strike(tt + IDLE_SMOOTH_T)
+                    for at in (tt, tt + IDLE_SMOOTH_T) + ((nxt,) if nxt < math.inf else ()):
+                        for kk in self._hand_at_steps(at):
+                            if kk not in self._cache:
+                                self._grid_pose(kk)
+                                yield
+                    self._limit_step(j)
+                    yield
+                j += 1
+            else:
+                break
+        for key in self._gliss_needed(self._seed_t):
+            if key in self._gliss_follow_cache:
+                continue
+            job = self._follow_jobs.get(key)
+            if job is None:
+                job = self._follow_jobs[key] = self._gliss_follow_steps(key[0], self.kb, key[1])
+            for _ in job:
+                yield
+            self._follow_jobs.pop(key, None)
 
     def _key_fix(self, t, wx, wy, psi):
         """
@@ -1623,13 +1946,35 @@ class HandAnimator:
         cons = []
         comp, low = self._run_w(t), self._low(t)
         tw, tr = self._trem_w(t)
+        if self._group_of is None:
+            self._group_of = {id(m): gi for gi, (_, ns) in enumerate(self.groups) for m in ns}
+            self._end_of_f = {id(m): self.finger_ends[f][i] for f, ns in self.by_finger.items()
+                              for i, m in enumerate(ns)}
+        go = self._group_of
+        down = [m for m in (self._held_note(g, t) for g in range(1, 6)) if m is not None]
+        held = {go.get(id(m)) for m in down}
+        held_end = max((self._end_of_f.get(id(m), 0.0) for m in down), default=-math.inf)
+        trem = self._trem_keys(t, tr) if tw > 0.0 else {}
         for f in range(1, 6):
             w, n = self._key_weight(f, t)
+            boost = 1.0
+            if held and n is not None and (go.get(id(n)) in held or (
+                    self.start_of.get(id(n), math.inf) < held_end and self._in_shape(n, f, down))):
+                # keys down come first: a held key - or one of the chord being struck, or struck while the
+                # held keys are still down (a chord rolled across groups) - weighs KEY_FIX_HELD_K times as
+                # much, so a finger getting ready for a later chord moves the hand toward it only as far as
+                # the held keys let it (an octave held, its thumb's next note far off, struck after it's
+                # let go) - but that far, in good time. (Not in a tremolo: it has its own rule, below.)
+                boost = 1.0 + (KEY_FIX_HELD_K - 1.0) * (1.0 - tw)
             if tw > 0.0:
-                # in a tremolo every finger playing in it counts as on its key throughout
-                m = self._trem_note(f, t, tr)
-                if m is not None and (n is None or (n.pitch == m.pitch and w < tw)):
-                    w, n = tw if n is None else max(w, tw), m      # (a finger moving to a new key keeps to it)
+                # in a tremolo every finger playing in it counts as on its key throughout - but in one the
+                # still hand can't quite span (only with _tremolos' TREM_SLACK_WK, trem_rock) a finger in
+                # the air keeps the hand by its key only TREM_OFF_KEY_W as firmly as one down on its key:
+                # the hand rocks toward each finger as it strikes
+                m = trem.get(f)
+                ow = tw * (TREM_OFF_KEY_W if tr in self.trem_rock else 1.0)
+                if m is not None and (n is None or (n.pitch == m.pitch and w < ow)):
+                    w, n = ow if n is None else max(w, ow), m      # (a finger moving to a new key keeps to it)
             if n is None or not self._has_key(self._pk(n)):
                 continue
             kx, ky = self.key_target(self._pk(n), f, n)
@@ -1640,7 +1985,7 @@ class HandAnimator:
             m = math.radians(KEY_FIX_MARGIN_DEG) - (math.radians(PRESS_SLACK_DEG[f]) if self._pressing(f, t) else 0.0)
             hmin, hmax = self._reach_range(f, self.base_local[f][2] * low + self.travel, 0.99)
             dm = KEY_FIX_MARGIN * self.length[f]
-            cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w))
+            cons.append((kx, ys, self.base_local[f], lo + m, hi - m, hmin + dm, hmax - dm, KEY_FIX_K * w, boost))
             pk = self._pk(n)
             if f == 1 and self._bridge_pair(pk, 1):
                 # a thumb bridging two black keys lies straight across them (_thumb_bridge): from
@@ -1656,17 +2001,20 @@ class HandAnimator:
                 reach = math.sqrt(max(0.0, l1 * l1 - dz * dz))
                 # (a nicety, not a key: it gives way when it would keep another finger off its key)
                 cons.append((mx, [my], self.base_local[1], -math.pi, math.pi, 0.0, reach,
-                             THUMB_BRIDGE_FIX_K * KEY_FIX_K * w))
+                             THUMB_BRIDGE_FIX_K * KEY_FIX_K * w, 1.0))
         if not cons:
             return wx, wy, psi
         arm = 3.0 * self.S                             # turning counts as moving the knuckles this far
         arm *= 1.0 + (RUN_TURN_STIFF - 1.0) * comp     # (in a run the hand keeps its turn: chromatic octaves)
 
-        def residuals(q):
+        def residuals(q, boosted):
             x, y, p = q
             c, s_ = math.cos(p), math.sin(p)
-            out = [x - wx, y - wy, arm * (p - psi)]
-            for kx, ys, (blx, bly, _), lo, hi, hmin, hmax, k in cons:
+            # (with held keys weighing more, the hand's turn stiffens as much: it moves rather than turns)
+            out = [x - wx, y - wy, arm * (KEY_FIX_HELD_K if boosted else 1.0) * (p - psi)]
+            for kx, ys, (blx, bly, _), lo, hi, hmin, hmax, k, boost in cons:
+                if boosted:
+                    k *= boost
                 # anywhere along the key will do: the depth that needs the least
                 best = None
                 for ky in ys:
@@ -1680,35 +2028,107 @@ class HandAnimator:
                         best = (ea * ea + eh * eh, ea, eh)
                 out += [k * best[1], k * best[2]]
             return out
-        q = [wx, wy, psi]
-        r0 = residuals(q)
-        cost = sum(v * v for v in r0)
-        eps = (0.5, 0.5, 1e-3)
-        for _ in range(KEY_FIX_ITERS):
-            if sum(v * v for v in r0[3:]) < 1e-6:
-                break
-            cols = []
-            for j in range(3):
-                qq = list(q)
-                qq[j] += eps[j]
-                cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq), r0)])
-            A = _gram(cols)
-            g = [-sum(map(mul, cols[i], r0)) for i in range(3)]
-            for i in range(3):
-                A[i][i] *= 1.0 + GN_DAMPING
-            dq = _solve3(A, g)
-            # only ever downhill: halve a step that would overshoot
-            for _ in range(6):
-                qn = [q[i] + dq[i] for i in range(3)]
-                rn = residuals(qn)
-                cn = sum(v * v for v in rn)
-                if cn < cost:
-                    q, r0, cost = qn, rn, cn
+
+        def solve(q, boosted, iters=KEY_FIX_ITERS):
+            r0 = residuals(q, boosted)
+            cost = sum(v * v for v in r0)
+            eps = (0.5, 0.5, 1e-3)
+            for _ in range(iters):
+                if sum(v * v for v in r0[3:]) < 1e-6:
                     break
-                dq = [d * 0.5 for d in dq]
-            else:
-                break
+                cols = []
+                for j in range(3):
+                    qq = list(q)
+                    qq[j] += eps[j]
+                    cols.append([(a - b) / eps[j] for a, b in zip(residuals(qq, boosted), r0)])
+                A = _gram(cols)
+                g = [-sum(map(mul, cols[i], r0)) for i in range(3)]
+                for i in range(3):
+                    A[i][i] *= 1.0 + GN_DAMPING
+                dq = _solve3(A, g)
+                # within a trust region (a fit weighing its keys far above the hand's place can ask for a huge
+                # step), and only ever downhill: halve a step that would overshoot
+                big = max(abs(dq[0]) / KEY_FIX_STEP_PX, abs(dq[1]) / KEY_FIX_STEP_PX, abs(dq[2]) / KEY_FIX_STEP_RAD)
+                if big > 1.0:
+                    dq = [d / big for d in dq]
+                for _ in range(10):
+                    qn = [q[i] + dq[i] for i in range(3)]
+                    rn = residuals(qn, boosted)
+                    cn = sum(v * v for v in rn)
+                    if cn < cost:
+                        settled = cn > (1.0 - KEY_FIX_SETTLED) * cost
+                        q, r0, cost = qn, rn, cn
+                        break
+                    dq = [d * 0.5 for d in dq]
+                else:
+                    break
+                if settled:
+                    break                                 # (barely better: as good as it gets from here)
+            return q
+        # the fit with every key as it weighs (quick to settle), then - where held keys come first - again
+        # from there with them weighing KEY_FIX_HELD_K as much (alone, those steps crawl)
+        boosted = any(c[-1] > 1.0 for c in cons)
+
+        def fit(start, iters=KEY_FIX_ITERS):
+            q = solve(start, False, iters)
+            if boosted:
+                q = solve(q, True, iters)
+            r = residuals(q, boosted)
+            return q, sum(v * v for v in r[3:]), sum(v * v for v in r)
+        q, kc, tot = fit([wx, wy, psi])
+        last = self._kf_last
+        if kc > (KEY_FIX_RETRY_PX * KEY_FIX_K) ** 2 and last is not None and abs(last[0] - t) < 0.1 and (
+                math.hypot(last[1][0] - q[0], last[1][1] - q[1]) > 2.0 or abs(last[1][2] - q[2]) > 0.02):
+            # stuck short of the keys (a shape the hand can make, but not by moving a little from here: its
+            # fingers all strained): from where the last fit put the hand too, the better of the two. (A
+            # search from other places and turns in every such frame stalled playback - frames 4 times as
+            # slow at the 99th percentile - and found nothing the last fit's start doesn't)
+            q2, _, tot2 = fit(list(last[1]), KEY_FIX_RETRY_ITERS)
+            if tot2 < tot:
+                q = q2
+        self._kf_last = (t, tuple(q))
         return tuple(q)
+
+    def _trem_keys(self, t, tr):
+        """
+        {finger: its key in tremolo tr at t (_trem_note)} for _key_fix - only those that make one hand shape
+        (_in_shape) with the keys the fingers are on and with each other, nearest in time first: over a long
+        span a finger's last key may be a stray note (a thumb's D4 a twelfth above the little finger's G2), or
+        the figure's fingering changes (2 and 4 each last on one G#3) - held all at once, the hand can't.
+        """
+        own = {}
+        for f in range(1, 6):
+            w, n = self._key_weight(f, t)
+            if n is not None and w > 0.0:
+                own[f] = n
+        cands = []
+        for f in range(1, 6):
+            m = self._trem_note(f, t, tr)
+            if m is None or (f in own and own[f].pitch != m.pitch):
+                continue
+            cands.append((abs(self.start_of.get(id(m), m.start) - t), f, m))
+        kept = dict(own)
+        out = {}
+        for _, f, m in sorted(cands, key=lambda c: (c[0], c[1])):
+            if self._in_shape(m, f, [x for g, x in kept.items() if g != f]):
+                out[f] = kept[f] = m
+        return out
+
+    def _in_shape(self, n, f, down):
+        """
+        Can note n on finger f join the held notes `down` in one hand shape - no finger crossing another,
+        and each pair within its span (the planner's, fingering.MAX_SPAN: an octave on 1-4 with 3 by the thumb isn't)?
+        """
+        from fingering import MAX_SPAN
+        vn = self.vp(n.pitch)
+        for m in down:
+            g = self.fingering.get(id(m))
+            if g is None or g == f:
+                continue
+            vm = self.vp(m.pitch)
+            if vn == vm or (f > g) != (vn > vm) or abs(key_pos(vn) - key_pos(vm)) > MAX_SPAN[(min(f, g), max(f, g))]:
+                return False
+        return True
 
     def _pressing(self, f, t):
         starts = self.finger_starts[f]
@@ -1796,7 +2216,7 @@ class HandAnimator:
         for f, ns in self.by_finger.items():
             for i, n in enumerate(ns):
                 j = i - 1
-                while j >= 0 and so[id(n)] - so[id(ns[j])] < 0.01:      # a thumb on two keys at once
+                while j >= 0 and (so[id(n)] - so[id(ns[j])] < 0.01 or self._mates(n, ns[j])):  # one finger, keys at once
                     j -= 1
                 prev_of[id(n)] = ns[j] if j >= 0 else None
         self.lead = {}
@@ -1873,9 +2293,90 @@ class HandAnimator:
             self.finger_starts[f] = [so[id(n)] for n in ns]
             ends = [max(fe[id(n)], so[id(n)] + 1e-3) for n in ns]
             for i in range(len(ns) - 1):              # a finger lets go before it strikes again
-                if self.finger_starts[f][i + 1] - self.finger_starts[f][i] >= 0.01:
+                if self.finger_starts[f][i + 1] - self.finger_starts[f][i] >= 0.01 and not self._mates(ns[i], ns[i + 1]):
                     ends[i] = max(self.finger_starts[f][i] + 1e-3, min(ends[i], self.finger_starts[f][i + 1]))
             self.finger_ends[f] = ends
+        self._unify_clusters()
+
+    def _mates(self, a, b):
+        """Are notes a and b one finger's cluster (keys it holds as one, cluster_key)?"""
+        pa = self.cluster_key.get(id(a))
+        return pa is not None and pa is self.cluster_key.get(id(b))
+
+    def _unify_clusters(self):
+        """
+        One finger on neighbouring keys holds them as one: on its timeline
+        every note of the cluster lasts until the last of them is let go (a
+        smudge struck a little after its note, or let go first, doesn't lift
+        the finger). What each note sounds is still its own length
+        (_fingered_performance).
+        """
+        for f, ns in self.by_finger.items():
+            ends = self.finger_ends[f]
+            i = 0
+            while i < len(ns):
+                j = i + 1
+                while j < len(ns) and self._mates(ns[i], ns[j]):
+                    j += 1
+                if j - i > 1:
+                    e = max(ends[i:j])
+                    for k in range(i, j):
+                        ends[k] = e
+                i = j
+
+    def _fingered_performance(self):
+        """[(press, release, note)] of the fingered notes: a cluster's notes each sound their own length (at most the finger's)."""
+        out = []
+        for f, ns in self.by_finger.items():
+            for i, n in enumerate(ns):
+                s0, e = self.finger_starts[f][i], self.finger_ends[f][i]
+                if id(n) in self.cluster_key:
+                    e = max(s0 + 1e-3, min(e, s0 + (n.end - n.start)))
+                out.append((s0, e, n))
+        return out
+
+    def _release_unheld(self):
+        """
+        Keys still down from earlier chords that the drawn hand can't hold
+        together with a new chord (_chord_fits - the planner's span is a real
+        hand's, and a chord struck a little apart, top first, isn't one group
+        to be rolled) are let go just before it, as a rolled chord's are: the
+        hand moves on to the new keys. Only where some pair of them is near
+        the drawn hand's reach (ROLL_SUSPECT_WK), so the check stays rare.
+        """
+        drawn = {}
+
+        def near_reach(keys):
+            for i, (pa, fa) in enumerate(keys):
+                for pb, fb in keys[i + 1:]:
+                    if fa == fb:
+                        continue
+                    a, b = min(fa, fb), max(fa, fb)
+                    if (a, b) not in drawn:
+                        drawn[(a, b)] = drawn_reach(self.geo, self.curl_lift_in, a, b)
+                    if abs(pb - pa) > drawn[(a, b)] - ROLL_SUSPECT_WK:
+                        return True
+            return False
+        so = self.start_of
+        ends = {id(n): (f, i) for f, ns in self.by_finger.items() for i, n in enumerate(ns)}
+        recent = []                               # notes of earlier chords that may still be down
+        for gi, (_, ns) in enumerate(self.groups):
+            s1 = min(so[id(m)] for m in ns)
+            new_f = {self.fingering[id(m)] for m in ns}
+            recent = [n for n in recent if self.finger_ends[ends[id(n)][0]][ends[id(n)][1]] > s1 + 1e-3]
+            held = [n for n in recent if self.fingering[id(n)] not in new_f]
+            if held:
+                keys = [(key_pos(self.vp(n.pitch)), self.fingering[id(n)]) for n in held + ns]
+                if near_reach(keys) and not self._chord_fits(held + list(ns)):
+                    for n in held:
+                        f, i = ends[id(n)]
+                        s0 = so[id(n)]
+                        e = max(s0 + 0.5 * (s1 - s0), s1 - self.early_lift)
+                        self.finger_ends[f][i] = max(s0 + 1e-3, min(self.finger_ends[f][i], e))
+            recent += list(ns)
+            if len(recent) > 24:
+                recent = recent[-24:]
+        self._unify_clusters()
 
     def _roll_wide_chords(self):
         """
@@ -1907,10 +2408,10 @@ class HandAnimator:
             """Where the note's finger is: between the two keys it covers, if a pair - the far one for a thumb bridge."""
             pk = self.pair_key.get(id(n))
             if pk:
-                a, b = key_pos(self.vp(pk[0])), key_pos(self.vp(pk[1]))
+                ks = [key_pos(self.vp(p)) for p in pk]
                 if self._bridge_pair(pk, self.fingering[id(n)]):
-                    return min(a, b)
-                return (a + b) / 2
+                    return min(ks)
+                return sum(ks) / len(ks)
             return key_pos(self.vp(n.pitch))
 
         groups = self.groups
@@ -1930,11 +2431,33 @@ class HandAnimator:
                 continue
             self.rolled += 1
             order = sorted(ns, key=lambda n: n.pitch)            # bottom to top, both hands
+            # a roll of many keys quicker, the whole of it (the top's wait for the stretch too, below) within
+            # ROLL_MAX_T - else it ran on through the next chords (the timeline puts those after it)
+            first = min(n.start for n in order)
+            dt = min(self.roll_dt, ROLL_MAX_T / max(1, len(order) - 1))
             for k, n in enumerate(order):
-                so[id(n)] = n.start + k * self.roll_dt
+                so[id(n)] = n.start + k * dt
+            # each key let go before one the drawn hand can't hold it with is struck (a 2-5 octave under
+            # the thumb's note above: only the top note's reach was weighed)
+            for k, n in enumerate(order[1:], 1):
+                fn = self.fingering[id(n)]
+                for m in order[:k]:
+                    fm = self.fingering[id(m)]
+                    if fm == fn or eo[id(m)] <= so[id(n)]:
+                        continue
+                    d = abs(pos(n) - pos(m))
+                    if d > reach(fm, fn) or (suspect(fm, fn, d) and not self._chord_fits([m, n])):
+                        eo[id(m)] = min(eo[id(m)], max(so[id(m)] + 0.03, so[id(n)] - ROLL_LET_GO_T))
+                # ...and all of them together: the farthest let go until the rest fit with it
+                held = [m for m in order[:k] if self.fingering[id(m)] != fn and eo[id(m)] > so[id(n)]]
+                while len(held) >= 2 and not self._chord_fits(held + [n]):
+                    m = max(held, key=lambda m: abs(pos(m) - pos(n)))
+                    eo[id(m)] = min(eo[id(m)], max(so[id(m)] + 0.03, so[id(n)] - ROLL_LET_GO_T))
+                    held.remove(m)
             top = order[-1]
             ft, pt = self.fingering[id(top)], pos(top)
-            latest = max(so[id(top)], (groups[gi + 1][0] - 0.03) if gi + 1 < len(groups) else math.inf)
+            nxt = (groups[gi + 1][0] - 0.03) if gi + 1 < len(groups) else math.inf
+            latest = max(so[id(top)], min(nxt, first + ROLL_MAX_T))
             for n in order[:-1]:
                 f = self.fingering[id(n)]
                 if f == ft:                     # (one finger on two keys, a thumb on a pair: no stretch between them)
@@ -1947,7 +2470,7 @@ class HandAnimator:
             for n in order:
                 eo[id(n)] = max(eo[id(n)], so[id(n)] + 0.03)
 
-    def _chord_fits(self, ns):
+    def _chord_fits(self, ns, slack=0.0):
         """
         Can the drawn hand hold all of chord ns down at once? Searched over the
         hand's place and turn (a coarse grid, then twice finer about the best),
@@ -1958,11 +2481,21 @@ class HandAnimator:
         (ROLL_FIT_WW pixels per white key, the user's key style).
         """
         import numpy as np
+        # (music repeats its shapes: each is searched once - it depends only on the fingers and keys)
+        memo_key = (tuple(sorted(((self.fingering[id(n)], self._pk(n)) for n in ns), key=repr)), slack)
+        got = self._fits_memo.get(memo_key)
+        if got is not None:
+            return got
         if self._ref_kb is None:
             from common import KEY_LEN_WW, Keyboard
             import pygame
             self._ref_kb = Keyboard(pygame.Rect(0, 0, 52 * ROLL_FIT_WW, int(KEY_LEN_WW * ROLL_FIT_WW)))
         self._ensure_layout(self._ref_kb)
+        got = self._fits_memo[memo_key] = self._chord_fits_search(ns, slack, np)
+        return got
+
+    def _chord_fits_search(self, ns, slack, np):
+        """_chord_fits' search (its result kept by shape)."""
         wk = self.kb.white_w
         keys = [(n, self.fingering[id(n)], self._pk(n)) for n in ns]
         keys = [(n, f, pk, self.key_target(pk, f)[0]) for n, f, pk in keys if self._has_key(pk)]
@@ -1981,7 +2514,7 @@ class HandAnimator:
             hmin, hmax = self._reach_range(f, blz * low + self.travel, 0.99)
             ds = ROLL_DEPTH_SLACK_WK * wk
             items.append((kx, np.linspace(ylo - ds, yhi + ds, 9), blx, bly, lo - sl, hi + sl, hmin, hmax,
-                          ROLL_MISS_WK[black] * wk))
+                          (ROLL_MISS_WK[black] + slack) * wk))
 
         def worst(WX, WY, PSI):
             c, s = np.cos(PSI)[:, None], np.sin(PSI)[:, None]
@@ -2002,6 +2535,12 @@ class HandAnimator:
         cx = sum(it[0] for it in items) / len(items)
         axes = [np.linspace(cx - 3 * wk, cx + 3 * wk, 25), np.linspace(-5 * wk, 3 * wk, 17),
                 np.radians(np.linspace(-50, 30, 17))]
+        # most chords fit: every 4th, then every 2nd point of the coarse grid first
+        # (points of it, so the answer is the same - just found sooner)
+        for step in (4, 2):
+            g = np.meshgrid(*(ax[::step] for ax in axes), indexing="ij")
+            if worst(*(x.ravel() for x in g)).min() <= 0.0:
+                return True
         best = None
         for _ in range(3):
             g = np.meshgrid(*axes, indexing="ij")
@@ -2063,6 +2602,7 @@ class HandAnimator:
         self._gliss_follow_cache = {}
         self._follow_jobs = {}
         self._warm_k = None
+        self._seed_job = self._seed_at = None
         self._strike_list = None
         # mirror axis (centre of D4) and the shoulder, ~10 semitones from D4
         # toward the hand's own side (in the mirrored frame for the left hand)
@@ -2090,12 +2630,26 @@ class HandAnimator:
         black keys' front, so the hand needn't move in and out between them.
         """
         if isinstance(pitch, tuple):
-            (x1, y1), (x2, y2) = (self.key_target(p, f, note) for p in pitch)
             if self._bridge_pair(pitch, f):
                 # the far key, well in along it: the straight thumb lies across to it, over the near one
-                x = min(x1, x2)
+                x = min(self.key_target(p, f, note)[0] for p in pitch)
                 return x, self.kb.rect.h - self.kb.black_h + THUMB_BRIDGE_DEPTH_IN * self.ppi
-            return (x1 + x2) / 2, (y1 + y2) / 2
+            blacks = [p for p in pitch if is_black_key(p)]
+            lo, hi = self._key_depths(pitch, note, f)
+            if blacks and all(p in self.kb.key_rects for p in blacks):
+                # a white key and the black beside it, or white-black-white: the tip at the black key's
+                # front end - over its edge toward the white one (two keys), or its middle (three) -
+                # touching them all
+                r = self.kb.key_rects[blacks[0]]
+                whites = [p for p in pitch if not is_black_key(p)]
+                x = r.centerx if len(whites) != 1 else r.left if whites[0] < blacks[0] else r.right
+                y = self.kb.rect.h - self.kb.black_h + CLUSTER_DEPTH_IN * self.ppi
+                return self._mx(x), min(max(y, lo), hi)
+            pts = [self.key_target(p, f, note) for p in pitch]
+            # two neighbouring white keys: between them (in front of any black key, _key_depths)
+            x = sum(p[0] for p in pts) / len(pts)
+            y = sum(p[1] for p in pts) / len(pts)
+            return x, min(max(y, lo), hi)
         r = self.kb.key_rects[pitch]
         x = r.centerx
         front = self.kb.rect.h - self.kb.black_h
@@ -2136,7 +2690,12 @@ class HandAnimator:
         if isinstance(pk, tuple):
             spans = [self._key_depths(p, note, f) for p in pk]
             lo, hi = max(a for a, _ in spans), min(b for _, b in spans)
-            return (lo, hi) if lo <= hi else (hi, lo)
+            lo, hi = (lo, hi) if lo <= hi else (hi, lo)
+            if not any(is_black_key(p) for p in pk) and max(pk) - min(pk) == 2:
+                # two white keys with a black one between them (C-D): touched together only in front of it
+                hi = min(hi, self.kb.rect.h - self.kb.black_h - CLUSTER_FRONT_GAP_IN * self.ppi)
+                lo = min(lo, hi)
+            return lo, hi
         front = self.kb.rect.h - self.kb.black_h
         if is_black_key(pk):
             a, b = front + BLACK_SPAN_IN[0] * self.ppi, front + BLACK_SPAN_IN[1] * self.ppi
@@ -2482,17 +3041,35 @@ class HandAnimator:
 
     def _hand_avg(self, t, span, lo=-math.inf, hi=math.inf):
         """The solved hand averaged over t +- span (triangular), only from poses within lo..hi."""
-        g = HAND_GRID_T
-        k0 = math.ceil((t - span) / g)
-        k1 = math.floor((t + span) / g)
         sx = sy = sp = sw = 0.0
-        for k in range(k0, k1 + 1):
-            w = 1.0 - abs(k * g - t) / span
-            if w <= 0 or not lo <= k * g <= hi:
-                continue
+        for k, w in self._avg_weights(t, span, lo, hi):
             x, y, p = self._grid_pose(k)
             sx, sy, sp, sw = sx + w * x, sy + w * y, sp + w * p, sw + w
         return sx / sw, sy / sw, sp / sw
+
+    @staticmethod
+    def _avg_weights(t, span, lo=-math.inf, hi=math.inf):
+        """[(grid step, weight)] _hand_avg averages."""
+        g = HAND_GRID_T
+        out = []
+        for k in range(math.ceil((t - span) / g), math.floor((t + span) / g) + 1):
+            w = 1.0 - abs(k * g - t) / span
+            if w > 0 and lo <= k * g <= hi:
+                out.append((k, w))
+        return out
+
+    def _hand_at_steps(self, t):
+        """The grid steps _hand_at(t) solves (_grid_pose) - for prepare() to solve them ahead, one at a time."""
+        if self.smooth_t <= 0:
+            return []
+        ks = [k for k, _ in self._avg_weights(t, self.smooth_t)]
+        if self._run_w(t) > 0:
+            a, b = self._run_span(t)
+            ks += [k for k, _ in self._avg_weights(t, RUN_GLIDE_T, a - RUN_RAMP_T, b + RUN_RAMP_T)]
+        w, r = self._trem_w(t)
+        if r is not None:
+            ks += [k for k, _ in self._avg_weights(t, TREM_HOLD_T, r[0], r[1])]
+        return ks
 
     def idle_at(self, t):
         """0..1 how idle this hand is at t (see idle_weight)."""
@@ -2518,8 +3095,7 @@ class HandAnimator:
             if w > 0:
                 d = self._idle_cache.get(k)
                 if d is None:
-                    if len(self._idle_cache) > 4000:
-                        self._idle_cache.clear()
+                    _trim(self._idle_cache, 4000, k)
                     d = self._idle_cache[k] = self._idle_shift_parts(k * g)
                 sd, sf, sw = sd + w * d[0], sf + w * d[1], sw + w
         dx = sd / sw if sw else 0.0
@@ -2604,8 +3180,7 @@ class HandAnimator:
         """The other hand's wrist x at tick i (IDLE_TICK_T), in this hand's frame."""
         x = self._path_cache.get(i)
         if x is None:
-            if len(self._path_cache) > 20000:
-                self._path_cache.clear()
+            _trim(self._path_cache, 20000, i)
             p = self.partner
             x = self._path_cache[i] = self._mx(p._mx(p._grid_pose(int(round(i * IDLE_TICK_T / HAND_GRID_T)))[0]))
         return x
@@ -2621,8 +3196,7 @@ class HandAnimator:
         cache, p, g = self._clear_cache, self.partner, IDLE_GRID_T
         if k in cache:
             return cache[k]
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000, k)
         at, tick = self._partner_x, IDLE_TICK_T
 
         def ahead(j):
@@ -2644,8 +3218,7 @@ class HandAnimator:
         cache = self._cache
         pose = cache.get(k)
         if pose is None:
-            if len(cache) > 4000:
-                cache.clear()
+            _trim(cache, 4000, k)
             t = k * HAND_GRID_T
             pose = cache[k] = self._solve_hand(self._items_at(t), self._run_w(t), self._low(t))
         return pose
@@ -2836,15 +3409,29 @@ class HandAnimator:
         return (x, y, tip[2])
 
     # ----- full pose ------------------------------------------------------------
-    def pose(self, t, kb):
+    def pose(self, t, kb, quick=False):
         """
         Skeleton at time t (see _finger_pose), blended into the glissando
         pose (_gliss_pose) around this hand's glissandos.
+
+        quick: while the song is scrubbed - every frame a jump, and the exact
+        pose after one works out the hand's motion from LIMIT_RESTART_T back
+        (200-470 ms) - the hand solved at t alone and fitted to its keys, the
+        fingertips aimed straight at theirs (_quick_hand: no speed limit, no
+        smoothing, the idle hand not moved aside, glissandos without their
+        ways in and out); a few ms. Nothing it works out is kept where the
+        exact pose would differ for it: played on, the pose is the same.
         """
         self._ensure_layout(kb)
         g, ep = self._gliss_w(t)
         if g >= 1.0:
             return self._gliss_pose(t, ep, kb, g)
+        if quick:
+            fp = self._finger_pose(t, kb, quick=True)
+            p = fp if g <= 0.0 else _blend_pose(fp, self._gliss_pose(t, ep, kb, g), g)
+            if g <= 0.0:
+                p = self._settle_on_keys(p, t, log=False)
+            return dict(p, anim=self, quick=True)
         fp = self._finger_pose(t, kb)
         target = self._gliss_across(t, kb)
         if target is None:
@@ -2857,7 +3444,83 @@ class HandAnimator:
         if target is not None:
             px, py = self._pose_wrist(p)
             p = _shift_pose(p, target[0] - px, target[1] - py, self.mirror)
+        if g <= 0.0:
+            p = self._settle_on_keys(p, t)
         return dict(p, anim=self)
+
+    # ----- strict: every held key under its finger ---------------------------------
+    def _held_note(self, f, t):
+        """The note finger f holds down at t (its performance), or None."""
+        starts = self.finger_starts[f]
+        i = bisect.bisect_right(starts, t) - 1
+        if i >= 0 and t < self.finger_ends[f][i]:
+            return self.by_finger[f][i]
+        return None
+
+    def _is_bridge(self, f, n):
+        pk = self.pair_key.get(id(n))
+        return bool(pk) and self._bridge_pair(pk, f)
+
+    def _key_box(self, pk, inset=True):
+        """
+        ((x lo, x hi), (y lo, y hi)) a fingertip on key(s) pk may be at: working-frame x, world y, in from the
+        edges (STRICT_KEY_MARGIN; inset=False: the key's own edges), and the key's width.
+        """
+        ps = pk if isinstance(pk, tuple) else (pk,)
+        rs = [self.kb.key_rects[p] for p in ps if p in self.kb.key_rects]
+        if not rs:
+            return (-math.inf, math.inf), (-math.inf, math.inf), 1.0
+        xs = [self._mx(r.left) for r in rs] + [self._mx(r.right) for r in rs]
+        m = min(STRICT_KEY_MARGIN * min(r.w for r in rs), STRICT_KEY_MARGIN_PX) if inset else 0.0
+        front = self.kb.rect.bottom
+        ys = [front - r.bottom for r in rs] + [front - r.top for r in rs]
+        ylo, yhi = min(ys) + m, max(ys) - m
+        if len(ps) > 1 and not any(is_black_key(p) for p in ps) and max(ps) - min(ps) == 2:
+            yhi = min(yhi, self.kb.rect.h - self.kb.black_h)          # (C-D: in front of the black key between)
+        return (min(xs) + m, max(xs) - m), (ylo, yhi), min(r.w for r in rs)
+
+    def _settle_on_keys(self, p, t, log=True):
+        """
+        The last word on the pose: every finger holding a key has its tip on
+        it. Fingertips already go to their keys (_finger_pose); one that still
+        isn't there (out of its finger's reach) gets the whole hand shifted
+        across the keys as little as puts every held tip on its key. If no
+        shift can (the keys held are too far apart for this hand), the shift
+        that leaves the worst one least off - and that note is logged, once.
+        The pose carries what was done: "key_check" [(finger, note, off before
+        the shift, off after)], how far the tip is off the key itself as a share
+        of the key's width (0 = on its key), and "key_shift" (the shift, px).
+        """
+        st = p["struct"]
+        lims = []
+        for f, c in st["chains"].items():
+            n = self._held_note(f, t)
+            if n is None or self._is_bridge(f, n):
+                continue
+            ps = self._pk(n)
+            ps = ps if isinstance(ps, tuple) else (ps,)
+            rs = [self.kb.key_rects[q] for q in ps if q in self.kb.key_rects]
+            if not rs:
+                continue
+            w = min(r.w for r in rs)
+            m = min(STRICT_KEY_MARGIN * w, STRICT_KEY_MARGIN_PX)
+            klo, khi = min(r.left for r in rs), max(r.right for r in rs)
+            x = c[-1][0]
+            lims.append((f, n, klo + m - x, khi - m - x, klo - x, khi - x, w))
+        if not lims:
+            return dict(p, key_check=[], key_shift=0.0)
+        a, b = max(l[2] for l in lims), min(l[3] for l in lims)
+        dx = 0.0 if a <= 0.0 <= b else (a if a > 0 else b) if a <= b else (a + b) / 2
+        out = [(f, n, max(0.0, klo, -khi) / w, max(0.0, klo - dx, dx - khi) / w)
+               for f, n, _, _, klo, khi, w in lims]
+        if abs(dx) > 0.01:
+            p = _shift_pose(p, dx, 0.0, self.mirror)
+        for f, n, _, after in out:
+            if log and after > STRICT_LOG_KEY and id(n) not in self.unreached_logged:
+                self.unreached_logged.add(id(n))
+                print(f"[hands] {self.hand} hand, finger {f} can't reach {note_name(n.pitch)} at "
+                      f"{fmt_song_time(n.start)} (MIDI {n.start:.3f} s): {100 * after:.0f}% of the key's width off it")
+        return dict(p, key_check=out, key_shift=dx)
 
     def footprint(self, t):
         """
@@ -2975,12 +3638,39 @@ class HandAnimator:
         end = time.perf_counter() + budget
         g = LIMIT_GRID_T
         k_now = math.floor(t / g)
+        # after a jump (or as the player opens): first what the exact pose at t needs, a step at a time
+        # (_seed_steps) - live_poses draws the quick one meanwhile; a jump elsewhere starts it over
+        jumped = self._seed_at is not None and abs(k_now - self._seed_at) > SEED_JUMP_STEPS
+        self._seed_at = k_now
+        if not self.exact_ready(t, kb):
+            self._seed_t = t
+            if self._seed_job is None or jumped:        # (a jump since the last call: start over there)
+                self._seed_job = self._seed_steps(k_now)
+            for _ in self._seed_job:
+                if time.perf_counter() > end:
+                    return
+            self._seed_job = None
+            if not self.exact_ready(t, kb):
+                return
         if self._warm_k is None or self._warm_k < k_now or self._warm_k > k_now + 4 * WARM_AHEAD_T / g:
             self._warm_k = k_now                     # (after a seek: from here)
         k_end = math.floor((t + WARM_AHEAD_T) / g)
         while self._warm_k < k_end:
             if time.perf_counter() > end:
                 return
+            # a resting hand's place looks to its next notes (_placed_at, _idle_shift_parts: _hand_at there,
+            # averaged over ~20 hand solves all new at once - more in a run or a tremolo, its glide or hold
+            # window too: one step of 40-100 ms): those solves first, one at a time
+            # - and its own place there (_idle_shift_parts: _hand_at up to IDLE_SMOOTH_T ahead of the step, as
+            # the rest begins ~25 solves at once)
+            probe = (self._warm_k + 1) * g + IDLE_SMOOTH_T + WARM_NEXT_STEPS * g
+            nxt = self._next_strike(probe)
+            for at in (probe, nxt) if nxt < math.inf else (probe,):
+                for kk in self._hand_at_steps(at):
+                    if kk not in self._cache:
+                        if time.perf_counter() > end:
+                            return
+                        self._grid_pose(kk)
             self._warm_k += 1
             self._smooth_tip_grid(self._warm_k)      # (and the hand's grid under it)
         if not self.gliss_eps:
@@ -3406,7 +4096,16 @@ class HandAnimator:
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}
 
-    def _finger_pose(self, t, kb):
+    def _quick_hand(self, t):
+        """pose(quick=True)'s hand: the solve nearest t on the hand's grid (cached, as the exact pose's), fitted
+        to the keys held (_key_fix - whose memory of its last fit, for the exact chain, is left as it was)."""
+        last = self._kf_last
+        try:
+            return self._key_fix(t, *self._grid_pose(int(round(t / HAND_GRID_T))))
+        finally:
+            self._kf_last = last
+
+    def _finger_pose(self, t, kb, quick=False):
         """
         Skeleton at time t as a dict:
             'bones':  [(p, q, kind)]  3D world points, kind in
@@ -3416,7 +4115,7 @@ class HandAnimator:
         """
         self._ensure_layout(kb)
         S, rot = self.S, self._rot
-        wx, wy, psi = self._limited_at(t)
+        wx, wy, psi = self._quick_hand(t) if quick else self._limited_at(t)
         # The wrist playing (repeated chords, tremolos): the hand is a rigid
         # unit that takes the keys down itself - it drops by the key's depth
         # while a chord is held and springs up between chords (lift), and in
@@ -3440,7 +4139,7 @@ class HandAnimator:
         # fingertips, held to the top speed across the keys (_limited_tips)
         comp, low = self._run_w(t), self._low(t)
         tips = {f: self._limit_tip(f, p, wx, wy, psi, comp, self._key_weight(f, t)[0], low)
-                for f, p in self._limited_tips(t).items()}
+                for f, p in (self._tips_at(t, (wx, wy, psi)) if quick else self._limited_tips(t)).items()}
         tips = self._separate(tips, wx, wy, psi, t, comp)
         if gw > 0:
             travel = self.travel
@@ -3464,6 +4163,21 @@ class HandAnimator:
                 rigid = hb[0] + droll(lxs[f]) + own + spare
                 z = gw * rigid + (1.0 - gw) * z0
                 tips[f] = (tips[f][0], tips[f][1], max(min(z0, 0.0), z))
+
+        # strict: a finger holding a key has its tip on that key (STRICT_KEY_MARGIN in from its sides);
+        # how far off the key itself it was aimed (a share of the key's width) is kept for checking
+        # (anim_check: the aim was off, corrected here - the drawn tip is on its key)
+        pulled = {}
+        for f in tips:
+            n = self._held_note(f, t)
+            if n is None or self._is_bridge(f, n):
+                continue
+            pk = self._pk(n)
+            (xlo, xhi), (ylo, yhi), w = self._key_box(pk)
+            x, y, z = tips[f]
+            (klo, khi), (kylo, kyhi), _ = self._key_box(pk, inset=False)
+            pulled[f] = math.hypot(max(0.0, klo - x, x - khi), max(0.0, kylo - y, y - kyhi)) / max(1.0, w)
+            tips[f] = (min(max(x, xlo), xhi), min(max(y, ylo), yhi), z)
 
         bones, joints = [], []
         up = (0.0, 0.0, 1.0)
@@ -3522,7 +4236,7 @@ class HandAnimator:
             joints = [(fx(p), k) for p, k in joints]
             struct = {"chains": {f: [fx(p) for p in c] for f, c in chains.items()},
                       "wrist": (fx(wr), fx(wu)), "arm_end": fx(arm_end), "mirror": True}
-        return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi,
+        return {"bones": bones, "joints": joints, "front_y": kb.rect.bottom, "ppi": self.ppi, "key_pulled": pulled,
                 "wrist": (wx, wy, psi), "hand": self.hand, "color": self.color,
                 "struct": struct, "skin": self.skin, "t": t, "song": self.song}
 
@@ -3965,8 +4679,7 @@ def contact_overlap(right, left, k):
     cache = right.__dict__.setdefault("_contact_cache", {})
     v = cache.get(k)
     if v is None:
-        if len(cache) > 20000:
-            cache.clear()
+        _trim(cache, 20000, k)
         t = k * CONTACT_GRID
         fr, fl = right.footprint(t), left.footprint(t)
         v = cache[k] = -1.0 if fr is None or fl is None else min(fr[1], fl[1]) - max(fr[0], fl[0])
@@ -4003,8 +4716,7 @@ def _layer_top(right, left, episodes, t):
         b = k
         while b < k + n and touching(b + 1):
             b += 1
-        if len(spans) > 20000:
-            spans.clear()
+        _trim(spans, 20000, k)
         for j in range(a, b + 1):
             spans[j] = (a, b)
         ab = (a, b)

@@ -24,7 +24,8 @@ editable by hand.
   line the recording up by dragging its waveform across the top of the player.
 - **Automatic hand split** for single-track MIDI, and **fingering** from a beam-search planner
   with figure recognition (scales, arpeggios, chromatic runs, octaves, double notes, trills,
-  repeated notes), the thumb or little finger covering two keys when a chord needs it, and
+  repeated notes), one finger covering neighbouring keys when a chord needs it or a key is
+  smudged with its neighbour, and
   weights learned from the PIG fingering dataset.
 - **Procedural hands**: inverse kinematics per finger, crossings, thumb-unders, hand
   crossings (the crossing hand always goes over), wrist bounce on repeated chords and forearm
@@ -132,9 +133,19 @@ guide for working on the code with Claude Code.
 
 Benchmarks that need data you download yourself (not in the repository):
 
-- `python pig_eval.py path/to/FingeringFiles` - match rates against the
+- `python pig_eval.py path/to/FingeringFiles [--pianist path/to/pianist.json]` - match rates against the
   [PIG dataset](https://beam.kisarazu.ac.jp/research/PianoFingeringDataset/) annotators.
 - `python learn_weights.py path/to/FingeringFiles` - re-tune the planner weights on PIG pieces 031-150.
+- `python tools/maestro_check.py path/to/MAESTRO` - check the hand animation against every MIDI file of the
+  [MAESTRO dataset](https://magenta.tensorflow.org/datasets/maestro) (or any folder): where a fingertip
+  misses its key or a note gets no finger, with times in the file, and whether the cause is the pianist's
+  anatomy, their top speed or the hand solver. Runs in parallel with live progress and can be stopped and
+  resumed; `--pianist` (a pianist's name, e.g. `--pianist Ninthie`), `--map` (a rename map, original,renamed),
+  `--match`, `--workers` - see `--help`.
+- `python tools/maestro_diff.py OLD NEW` - compare two of those runs: incidents fixed, new and still there,
+  by pattern.
+- `python tools/regress.py --pianist ... --pig ... --hanon ... --bench ... --baseline ...` - one round of checks
+  (tests, PIG test split, Hanon, a MAESTRO sample against an earlier run), kept in a history.
 
 ## Data not included
 

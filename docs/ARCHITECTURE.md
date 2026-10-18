@@ -148,6 +148,330 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - `Hanon MIDI/` – the 60 exercises with the book's fingering embedded (tracks "Piano, upper/lower", each played twice). Also `hanon_midi_links.csv` and `fingering_report.csv`.
 - Score PDFs: Hanon 1–20 / 21–38 as MuseScore vector engravings; the IMSLP scan for 39–60.
 
+## Strict key contact and the MAESTRO check (anim_check.py, tools/maestro_check.py, v26.1.21.MAESTRO-TESTING)
+- What the hands are drawn doing must match what's played (the hands' performance, which the sound and the lit
+  keys follow). Two layers make sure of it, and log, with times in the MIDI file, wherever they can't:
+  - **No note without a finger.** `HandAnimator.unplaced` lists the notes the planner left without a finger (they
+    aren't played); `hands.log_unplaced` prints them once, as "note m:ss.sss", when the animator is built.
+  - **Every held fingertip on its key.** In `_finger_pose`, after the gestures, a finger holding a key
+    (`_held_note`; a thumb bridging under is left alone, `_is_bridge`) has its tip clamped into its key
+    (`_key_box`: `STRICT_KEY_MARGIN` of the key's width in from its sides, at most `STRICT_KEY_MARGIN_PX`,
+    and within its length); how far off the key itself it was aimed - from the key's own edges, as a share of
+    its width - is the pose's `key_pulled` {finger: share}. Then, once the bones
+    are solved, `_settle_on_keys` checks the drawn tips (the bones can fall short): if any is off, the whole
+    hand is shifted across (`_shift_pose`) to the x that puts as many held tips on their keys as can be - the
+    intersection of their allowed intervals, or nearest to it. A tip still off by more than `STRICT_LOG_KEY`
+    of its key's width is logged once per note ("finger f can't reach N at m:ss.sss (MIDI s): 40% of the key's
+    width off it"). The pose's `key_check` is [(finger, note, off before the shift, off after)], shares of the
+    key's width from its own edges; `key_shift` the shift (px).
+- `anim_check.check_song(song, hands, kb)` samples every played note `SAMPLE_AFTER_T` after it's struck (half
+  its length if shorter) and reports problems, how far off always a share of the key's width (resolution
+  independent; it was pixels at the checker's 1920x1080 at first, which read as misses where the drawn tip was
+  fine): *off* (drawn off its key by more than `OFF_KEY`), *shifted* (the hand moved across to put a tip more
+  than `SHIFT_KEY` off its key on it) - both seen ("visible") - and *aimed off* (the solver's tip more than
+  `AIM_KEY` off its key, pulled on before drawing: corrected, not seen; the report counts these as
+  "corrected" and lists them only with --show-corrected); each sorted into **anatomy** (the keys
+  held then don't fit the hand from any position, `_chord_fits`), **speed** (the top speed holds the hand back:
+  where the keys want it and where it's drawn differ by more than `SPEED_LAG_WK` white keys) or **solver**
+  (neither: the solver's mistake). Also **fingering** (unplaced notes) and **timing** (struck more than
+  `LATE_T` late). Problems of one category, seen or not, in one hand within `INCIDENT_GAP_T` are one incident. It reports its
+  progress through `progress.py`.
+- `tools/maestro_check.py PATH` runs that over every MIDI file in a folder (the MAESTRO dataset), in worker
+  processes (spawn, one per CPU less one), resumable (results.jsonl keyed by the path in the folder), with a
+  live progress block (each worker's file, planning/checking and %, the run's share of the work by file size,
+  time left); Ctrl+C stops it, a rerun carries on. `--pianist` takes one of the app's pianists by name, checked
+  before the workers start; if the pool breaks (a worker killed, e.g. out of memory) the run stops and the
+  files in progress aren't recorded, so a rerun checks them. Files renamed to their piece ("YYYY/MAESTRO - YYYY -
+  Composer Piece.midi") are named from that; a rename map (original,renamed) adds MAESTRO's own names (a file
+  is found in it by its path, or loosely by its name alone: case, accents, spacing, punctuation), and
+  MAESTRO's .csv the canonical composer/title/split. Output: report.md (totals, worst files by seen solver
+  incidents, then each file's incidents), incidents.csv (with a "seen" column and the offset in % of the key).
+  results.jsonl lines carry `RESULTS_FORMAT`; an older check's are done again.
+- First sample run (the user's, pixels): a corrected thumb aim on a black key - 18 px at 1920x1080, the tip
+  15 px past the key's edge, about 70% of its width, over the next white key - read as a solver miss though
+  the drawn thumb was on its key.
+- Smoke runs (realistic keys, 1920x1080): two short Bach preludes and fugues, 0 incidents; Chopin's Polonaise
+  Op. 53 with a large-handed pianist, 20 solver, 3 speed, 1 anatomy incidents in 108 s. The whole dataset (1276
+  files) is an estimated 20 hours on 4 workers.
+
+## Rounds against MAESTRO (tools/maestro_diff.py, tools/regress.py)
+- The loop: the author runs `tools/maestro_check.py` over the whole dataset (Ninthie, 1920x1080, realistic keys,
+  `--timeout 0` so every file is checked in full); the solver incidents are grouped by pattern, the largest
+  patterns' worst cases reproduced and fixed by a general rule; the next full run is compared with the last.
+  Progress is the patterns shrinking. The checker's thresholds stay fixed between rounds.
+- `maestro_diff.py OLD NEW`: files checked in both (none failed or timed out); an incident is the same when it's
+  in the same file, hand and category, spans within `MATCH_T` 0.3 s. Patterns: coarse - hand, category, what
+  happened; fine - + keys (black / white / both), register (bass below C3, treble from C5), one note or several,
+  the fingers (incidents carry `fingers` from this version; the counts are as before). Seen incidents only
+  unless `--all`. The plan is of a whole piece, so a fix moves incidents within a file: read new and fixed.
+- `regress.py`: before each push - pytest, PIG (`pig_eval.summary` on `pig_eval.TEST`, pieces 001-030, and all),
+  Hanon (notes fingered unlike the book, the files' fingering ignored; Hanon 60 alone: 2.37% with Ninthie), and a
+  MAESTRO bench sample checked and compared with the last round's (`--baseline`); each round appended to
+  runs/history.jsonl and the history printed.
+
+### Round 1 (from the full run of 97ed615, Ninthie: 1279 files, 7.05M notes, 3021 seen solver incidents)
+- Patterns: an outer finger (5, sometimes 4) on one black key at the hand's far end, the hand shifted (LH bass /
+  RH treble; ~60% of the seen solver incidents); octave-type chords (1-5, 1-4) on black keys drawn off, LH bass (~15%).
+- **Tremolos the still hand can't quite span.** Schubert D. 960 (2004, F# minor, 1:04 and 10:00): LH F#2-C#3-A#3
+  fingered 5-3-1-3-5, a tenth, taken for a tremolo (`_find_tremolos` accepts a cycle the drawn hand reaches within
+  `TREM_SLACK_WK` more than `_chord_fits` allows - the forearm rocks). But `_key_fix` held every tremolo finger on its
+  key at full weight, in the air or not: the still hand between F#2 and A#3, the little finger 27 px short of F#2 (85 px
+  from its knuckle, reach 58), `_settle_on_keys` jolting the hand 0.23-0.27 white keys at each strike. Now a tremolo
+  that fits only with the slack (`trem_rock`) has its fingers in the air keep the hand by their keys at
+  `TREM_OFF_KEY_W` 0.3 of a pressing finger's weight: it rocks toward each finger as it strikes; one that fits is held
+  still as before (Dante's opening tremolo, in the tests). That file: 20 seen incidents -> 0.
+- **Keys down come first.** Mephisto Waltz No. 1 (2008, 8:07.6): LH octave C#2-C#3 (1-5), finger 2's next key G4 two
+  octaves up 5 ms after it's let go; its anticipation weight in `_key_fix` turned the hand (psi 0.52) and dragged the
+  little finger 2.2 keys off C#2. Now held keys - and the keys of the chord being struck (its group: a rolled chord's
+  later notes are part of the shape) - weigh `KEY_FIX_HELD_K` 20 times as much in `_key_fix` (fading out in a
+  tremolo, which has its own rule): a finger getting ready for a later chord moves the hand toward it only as far as
+  the held keys let it, but that far in good time. (A first version weakened the getting-ready fingers to 0.05
+  instead: the canary's solver incidents fell as far, but the hand then waited for the keys to come up and arrived
+  late - speed incidents 3 -> 14, e.g. a rolled D#5-A5-F6 whose thumb came 26 ms after the 5.) That octave: on both
+  keys.
+- Also gone with these: Chopin Op. 25 (2004, 4:37.5) RH G#5 on 5 in a repeated figure (59% off).
+- Canary (30 MAESTRO files, 3 a year; Ninthie; tools/regress.py): seen incidents 72 -> 38 (-47%: solver 64 -> 28,
+  speed 3 -> 4, anatomy 5 -> 6; 49 fixed, 15 new). The weaker-getting-ready version: 72 -> 41 (solver 18, but speed 14).
+  PIG test split 65.51% / all 69.31% (Ninthie, unchanged: the fingering isn't touched), Hanon 60 2.37%.
+
+### Round 2 (from the full run of round 1: seen 3680 -> 1930, -47.6%; solver 3021 -> 1153; speed 148 -> 264)
+- **Keys held over a chord struck a little apart.** Chopin Polonaise Op. 26 (2008, 2:39 / 3:01 / 3:23): RH C#5 (5) and
+  E4 (2), then the thumb's A#3 42 ms later - a tenth, past the drawn hand with E4 between, but not one group (beyond
+  `CHORD_TOL`), so not rolled; and the early release across groups asked only for the planner's span. "Anatomy",
+  drawn off 14-21%. `_release_unheld`: where a new chord comes while keys of earlier chords are down, some pair of
+  them near the drawn hand's reach (`ROLL_SUSPECT_WK`), and `_chord_fits` says the hand can't hold them all, the held
+  keys are let go just before it (`early_lift`), as a rolled chord's are.
+- **The key fit stalled with held keys weighing 20 times.** Chopin Nocturne Op. 9 No. 2 (2011, 0:18.8): LH A#3-D#4-G#4
+  (4-2-1), three fingers out of range, and `_key_fit` didn't move the hand at all - with the held keys at
+  `KEY_FIX_HELD_K` the place term hardly counted, the Gauss-Newton step was huge and nearly singular and no halving
+  went downhill (round 1's regression: none of these in round 0). Now steps keep to a trust region
+  (`KEY_FIX_STEP_PX` 40, `KEY_FIX_STEP_RAD` 0.25, ten halvings), and the fit is solved twice: with every key as it
+  weighs (settles in a few steps), then from there with the held keys boosted - the hand's turn stiffened as much
+  (else chromatic octaves in a run turned for each octave again: 116 deg against 102).
+- **What counts as held.** A chord rolled down across groups (2009, 11:32.4: C5, E4, then A#3 57 ms later), or
+  arpeggiated (2014, 18:20.7): the boost demoted the later notes, so the hand reached them late ("speed"). Now a
+  note also counts with the held keys if it's struck before they come up, crosses no held finger and is within each
+  pair's span (`_in_shape`, `fingering.MAX_SPAN`); Mephisto's G4, struck after the octave is let go, still doesn't -
+  nor C#5 on 3 struck 6 ms before an octave A#4-A#5 on 1-4 comes up (2008, 2:59.5: counted in, it pulled 4 off A#5).
+- Left as it is: 2014, 18:20.7 - a descending arpeggio crossing over the thumb 3 ms after the keys come up; the drawn
+  hand runs a little ahead into the next notes (speed).
+- Canary: seen 38 -> 25 against round 1 (-34%; 16 fixed, 3 new), 72 -> 25 against round 0 (-65%; 50 fixed, 3 new).
+  Solver 28 -> 17, speed 4 -> 5, anatomy 6 -> 3, corrected 29 -> 25. (Before the span check in `_in_shape`: 38 -> 38,
+  17 new - mostly 4 and 5 shifted onto black keys by notes wrongly counted with an octave.) Hanon 60 2.37%.
+
+### Round 3 (from the full run of round 2: seen 1930 -> 1293, -33%; solver 1153 -> 880, anatomy 513 -> 242, speed 264 -> 171)
+- Still mostly the outer little finger (LH bass, RH treble) shifted. Six samples, all inside tremolos (repeated
+  broken-chord accompaniments, held still) - two causes:
+- **A tremolo's keys that don't make one shape.** `_trem_note` gives each finger its last (or next) key in the
+  tremolo, and `_key_fix` held them all: over a span of seconds that may be a stray note (Schubert, 2018, 6:10.5: the
+  thumb's D4 a twelfth above the little finger's G2) or the figure's fingering changing (a 2018 recital, 20:15.7: 2
+  and 4 each last on one G#3). `_trem_keys`: a finger's tremolo key counts only if it makes one hand shape with the
+  keys the fingers are on and the tremolo keys already taken, nearest in time first (`_in_shape`: no crossing, no two
+  fingers on one key, each pair within `MAX_SPAN`). Five of the six samples: on their keys.
+- **A tremolo held still that only fits allowing a chord's misses.** 2017, 2:52.2: LH G#2-C3-F3-G#3 (5-4-2-1),
+  `_chord_fits` true - each fingertip may land `ROLL_MISS_WK` off - but those misses add up over four fingers to more
+  than `_key_fix` can find (38 px all told, from any start). And only the widest cycle was tested, while the figure
+  follows the harmony. Now a tremolo rocks (`trem_rock`) if any of its distinct cycles fails `_chord_fits` with
+  `TREM_ROCK_STRICT_WK` 0.22 less allowed. Also: `_key_fix` tries other starts (a white key or two across, a turn of
+  0.3) when its fit stays more than `KEY_FIX_RETRY_PX` 3 off its keys - not what fixed this one (none was better), kept
+  for shapes a local fit can't reach from where the hand is. (SNAPSHOT-02: dropped - it stalled frames and the canary
+  found nothing it fixed; the retry from the last fit stays, see the performance check below.)
+- Canary: seen 25 -> 18 against round 2 (-28%; 7 fixed, none new), 72 -> 18 against round 0 (-75%). Solver 17 -> 10,
+  speed 5, anatomy 3, corrected 25 -> 19. Checking time about as before. Hanon 60 2.37%.
+
+### Round 4 (from the full run of round 3: seen 1293 -> 686, -47%; solver 880 -> 280, anatomy 242 -> 230, speed 171 -> 176;
+  -81% since round 0; checking time 64 -> 72.5 CPU-hours)
+- Anatomy, four samples, mostly rolled chords:
+  - **A roll running on through the next chords.** 2009, 8:15.3-8:15.5: a five-note LH chord rolled `roll_dt` a note,
+    its top waiting for the stretch on top of that, 0.25 s - through the next chord, the two chords' fingers tangled,
+    425% off. Now a roll of many keys is quicker, the whole of it (the top's wait too) within `ROLL_MAX_T` 0.12 s; the
+    timeline puts the next chords after it as before. (A first version ended every roll before the next chord: where
+    that came soon, the roll collapsed to all-at-once and the top couldn't wait for the stretch - 2006 recital, 0:01.6,
+    F4 and C#3 on 2-5 held together; the canary went 18 -> 24.)
+  - **Only the top's reach was weighed.** 2018, 3:34.99: F#2 on 5 still down under F#3 on 2 - an octave on 2-5 the drawn
+    hand can't hold. Now each rolled key is let go `ROLL_LET_GO_T` before one it can't be held with (past the planner's
+    span, or near the drawn reach and `_chord_fits` says no), and before each key the held ones are let go, farthest
+    first, until they fit with it.
+  - Not fixed: 2011, 0:04.6 - G#2-F#3-C4 on 5-2-1, every pair fits but not the three, and the next chord 36 ms later.
+    (Checking such chords whole - three or more keys over a sixth - changed nothing measured and cost 75% more
+    `_chord_fits` calls; dropped.)
+  - Left: a thumb holding C#2 while 3 crosses over to D2, 15 ms of overlap (short thumb crossings are let stay legato).
+- Speed, three samples: leaps faster than Ninthie's top speed (4 m/s) - F6 to F#5 in 19 ms, D2-F#3 alternating every
+  30 ms, an octave and a half in 60 ms. The limit working as set, not the solver.
+- Canary: seen 18 -> 17 against round 3 (1 fixed, none new), 72 -> 17 against round 0 (-76%); solver 9, speed 5,
+  anatomy 3, corrected 20. At 17 the canary says little more: the full run decides. Building the hands on the
+  2006 recital: 12.5 s (round 3: 13.5).
+
+### The curve (full runs, Ninthie, 1279 files, 7.05M notes)
+| round | seen | change | solver | anatomy | speed | corrected | files with any seen |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 3680 | | 3021 | 511 | 148 | 1471 | 744 |
+| 1 | 1930 | -48% | 1153 | 513 | 264 | 1232 | 642 |
+| 2 | 1293 | -33% | 880 | 242 | 171 | 1051 | 536 |
+| 3 | 686 | -47% | 280 | 230 | 176 | 785 | 350 |
+| 4 | 612 | -11% | 253 | 176 | 183 | 793 | 339 |
+
+Round 4: 101 fixed, 27 new. About one seen incident per 11,500 notes; 940 files clean.
+
+The top speed as a lever: the 12 files with the most speed incidents after round 4, Ninthie at 4 m/s against 6 m/s:
+speed incidents 37 -> 23 (-38%), all seen 73 -> 60 (-18%; 27 fixed, 14 new), late strikes 23 -> 15. Half again as
+fast removes about a third of them: most are leaps of a few tens of milliseconds that no plausible top speed covers.
+
+## Performance check over MAESTRO (tools/perf_check.py, v26.1.21.SNAPSHOT-02)
+- Each file loaded as the app does (timed), then played start to end through `main.Visualizer` offscreen at
+  `--fps`: per frame `update()` plus the hands' poses (default) or the whole `render()` (`--draw`, ~30x the work);
+  the rest of the frame's time goes to `Visualizer.idle` (the hands' work ahead, as `App.run`), and what that runs
+  over its budget counts to the frame. Without that step every frame did the work-ahead late: the first runs
+  reported ~100 stalls a file that the app doesn't have. A hitch: a frame over max(`--hitch-ms` 25, `--hitch-x` 3 x
+  the file's median); hitches within `STALL_GAP_T` 0.1 s of song are one stall, with its functions' own time
+  (`CULPRITS`, wrapped by `Timer`; work-ahead's as "ahead: ..."). `--seeks` random seeks (the same places every
+  run, `zlib.crc32` of the file) come first, the first frame after each timed - before the playthrough, so into
+  parts not worked out yet, as in the app (after it every cache was warm: ~1 ms).
+- Cold seeks: 200-470 ms on the Bach test files (97ed615: about the same, 300-360 at worst). The speed limit's
+  chain restarts `LIMIT_RESTART_T` 0.5 s back - ~37 steps a hand, each a `_placed_at` (hand solves, the partner's
+  path) and `_key_fix`, then the fingertips' chain the same; 0.25 s would make it ~185 ms. The first frame of
+  play (~180 ms) is the same cold start. Scrubbing (the player's bar dragged; the editor's ruler, or the roll
+  across time) draws `HandAnimator.pose(t, kb, quick=True)` instead: the hand's grid solve nearest t (`_grid_pose`,
+  cached as the exact pose's) fitted to its keys (`_key_fix`, its `_kf_last` restored), fingertips straight from
+  `_tips_at` - no speed limit, smoothing, idle placement or glissando ways in and out; `_settle_on_keys` without
+  logging. Both hands 3-4 ms a frame (worst 15) against 200-470; let go, the exact pose once (~200-250 ms). The
+  work ahead (`idle`) pauses while scrubbed: each jump would restart its chain. Nothing the quick pose works out
+  changes the exact one (test: scrubbed, then exact, equals a fresh animator's).
+- Workers (and the status manager) exit when the main process is gone (`multiprocessing.parent_process()`), in
+  maestro_check too: a killed run used to leave them playing on.
+- Fixed from it (the 114 s Bach test file, Ninthie): load 3.1 -> 1.3 s (97ed615: 1.6 s), all results identical:
+  - `_chord_fits` (61 searches a load, 52 from `_release_unheld`, ~30 ms each, all of them fitting) tries every
+    4th, then every 2nd point of its coarse grid first - points of the grid, so the same answer, sooner;
+    kept by shape too (`_fits_memo`: fingers and keys);
+  - `drawn_reach` (354k Python steps per finger pair, 1 s a load) is kept by the fingers' bones (`_DRAWN_REACH`)
+    and its pair search done in numpy - bit-identical.
+  - Frames: `_key_fix`'s retry (round 3: eight other starts - a white key or two across, a turn of 0.3 - in
+    every frame a fit stayed `KEY_FIX_RETRY_PX` off its keys) now starts only from where the last fit put the
+    hand (`_kf_last`, within 0.1 s), for at most `KEY_FIX_RETRY_ITERS` steps a pass; every fit stops once a step
+    betters its cost by less than `KEY_FIX_SETTLED`. Canary (30 files) without the eight starts: seen 17, none
+    fixed or new against round 4b, corrected 20 -> 19. Hands-only p99 47 -> 14-16 ms (97ed615: 13-14), without
+    work-ahead.
+
+### The first full run (1279 files) and the garbage collector
+- 108,614 stalls in 43.1M frames, single 25-70 ms frames, almost all "ahead: _placed_at"; the worst files the long
+  2004 recitals. Locally (one worker a core) the same files had a few dozen times fewer (Op. 54: 14 against 709),
+  and loads ran 3x slower in the full run: most were the processes taking turns (more workers than cores - the time
+  slice lands on whatever runs most, the work ahead). Now --workers defaults to half the logical CPUs less one, and a
+  stall whose thread got under `WAITED_CPU` 50% of the time that passed (`time.thread_time`) is counted as waiting.
+- What's real: Python's full garbage-collector passes. They walk every tracked object - the song's notes and plans
+  (~95,000 for a long piece: 30-40 ms a pass) and the hands' caches built during play (dicts of fingertips, up to
+  20,000 entries, re-tracked as they fill: the pass grows with the song, 2 ms at 5 s to 16 ms at 5 min) - 36-76 ms
+  each, every half minute or so. `hands.settle_heap` (`App._switch`, the editor's rebuild and its opening a song):
+  `gc.unfreeze`, `collect` (the last song's cycles - two paired animators refer to each other), `gc.freeze`; and
+  `prepare_hands` freezes again every `FREEZE_EVERY_T` 2 s. Full passes during play now 0.1-0.6 ms. Playback makes no
+  reference cycles (none found after 10 min of play, unfrozen), and memory is the same with or without (173 MB).
+- The five worst files of the full run, locally (2 workers, 4 CPUs), before / after the gc change: stalls 97 -> 37,
+  worst frame 139 -> 53 ms. What was left, two kinds:
+  - Bursts every 5.5 min (5:21, 10:54, 16:26, 21:56): the hands' caches were cleared whole at 20,000 entries
+    (20,000 limit-grid steps), so the speed limit's chains restarted - a burst of work, and a motion restarted
+    where uninterrupted play would have gone on. Now `_trim` drops part of a full cache instead
+    (what it keeps: the second full run, below), every cache that had a cap.
+  - Single 40 ms work-ahead steps: a resting hand's place looks to its next notes (`_placed_at`,
+    `_idle_shift_parts`: `_hand_at(next strike)`, averaged over ~20 grid poses, all new at once). `prepare` now
+    solves those poses first, one per budget check, for the next strike after `WARM_NEXT_STEPS` 8 steps past the
+    one it works on (a grid pose depends only on its step: identical results). Work-ahead steps over 20 ms in the
+    first 10 min of a long recital: 6 -> 0.
+  - The five files again (2 workers, 4 CPUs): stalls 97 (before the gc change) -> 37 -> 3 (26-32 ms, in 65 min of
+    music; 3 more counted waiting), worst frames 14-21 ms in three of them. Canary: seen 17, none fixed or new.
+- The report: the culprit tables count only stalls while the code ran; the first frame of each file (the player
+  opening, ~160-200 ms, in the lead-in) is counted apart; each file's listing is its 30 worst stalls, for the
+  `--top` files only (the first report was 19 MB) - stalls.csv has them all, with cpu_ms and waited.
+
+### The second full run (perf_check_round1: 7 workers on 16 logical CPUs)
+- 108,614 -> 104 stalls while the code ran (0.01 a minute of music), 471 more waiting. Of the 104, 38 at 5:20-5:40
+  (and some at twice that): two frames ~0.5 s apart in the frame itself (`_placed_at` / `_key_fix`, then
+  `_tips_at`) - the caches trimmed at 20,000 by insertion order, and perf_check's seeks (as a user's jump ahead)
+  had stored steps far ahead first: the "oldest" half held the steps playback was about to reach. `_trim` now
+  keeps the steps within cap/4 of the key being worked out (since: a few at a time, the third run). Reproduced (40-54 ms at 5:28) and gone.
+- The rest: single 30-60 ms work-ahead steps, at most a few a file, not reproducible here (the slowest step in
+  the same files, with the same seeks first, 18 ms): on Windows `time.thread_time` counts in 15.6 ms ticks, so a
+  frame waiting part of its time can pass as running. First frames: median 142 ms; the slowest (900 ms) were
+  the same few files, 166-199 ms here.
+
+### The third full run (4 workers on 16 logical CPUs)
+- 275 stalls while the code ran (93 waiting): 243 of them work-ahead steps in `_smooth_tip_grid` /
+  `_limited_tip_grid` themselves, at ~5:25 and every ~250 s after - the trims: dropping ~15,000 entries from each
+  of four caches in consecutive steps (2.7 ms a cache here, 26-54 ms a step there). `_trim` now lets go of
+  `TRIM_BATCH` 8 far entries (further than cap/4 from the key being worked out) for each one added past the cap,
+  oldest stored first, one near moved to the back of the line: the worst call 0.03 ms. (Fewer workers took the
+  waiting stalls 471 -> 93; the stalls that ran rose with the trims and with the run seeing more of them.)
+- The other 32: single work-ahead steps of 27-96 ms in `_placed_at`, real (CPU time = time passed). Reproduced on a
+  Schubert finale (22 slow steps or frames in 9.5 min): `_idle_shift_parts` asks for the resting hand's own place
+  IDLE_SMOOTH_T (+ the smoothing steps) ahead of the work-ahead's step - as a rest begins, ~25 solves at once - and
+  `_hand_at` at the next notes also averages a run's glide window (RUN_GLIDE_T, ~60 solves) or a tremolo's hold
+  (TREM_HOLD_T, ~120). `prepare` now solves `_hand_at_steps` (every grid step `_hand_at` will average: smoothing,
+  glide, hold - `_avg_weights`, shared with `_hand_avg`) at the probe (`WARM_NEXT_STEPS` past the step +
+  IDLE_SMOOTH_T) and at the next strike after it, one per budget check. `_hand_at` calls with 15+ new solves 178 ->
+  10 (all in the first seconds); slow steps or frames in that file 22 -> 1 (22 ms). Identical poses.
+
+### The fourth full run (perf_check_round3: 4 workers on 16 logical CPUs, after e6b3012)
+- 4 stalls while the code ran in 43.1M frames (26-31 ms, one each in four files); 119 counted waiting (CPU time
+  0 or one 15.6 ms tick: the machine busy - clustered in the files of two years, run together). From the first
+  run's 108,614. Seeks (cold, the bar clicked): median 212 ms, 90% under 294, worst 767; scrubbing draws quick
+  poses. First frames: median 148 ms, worst 346 (in the lead-in).
+
+### Drawn frames (perf_check --draw, 30 files, 4 workers)
+- Median drawn frame 7.5-9 ms there (10.5 here); 703 stalls (2.8 a minute), led by `draw_poses` (401) and the frame's
+  own `_placed_at` (265) - in dense passages, every part of the frame two to three times its usual cost at once
+  (drawing, the keyboard, the scene): frames past 16.7 ms leave the work ahead no spare time, so the frames work
+  the motion out themselves. Four workers drawing 1080p frames at once share memory bandwidth, which the CPU-time
+  test can't see; one worker here: see below.
+- The shadow layer (skins: shadows, the skeleton's thumb webs) was a 1920x1080 SRCALPHA surface filled and blended
+  whole every frame (~2 ms). `_TrackPen` keeps the box it drew in; `_shadow_blit` blends only that and
+  `_shadow_surface` clears only what was drawn last (`_shadow_dirty`). Frames pixel-identical (8 frames, cartoon
+  and skeleton; test: one pose then another = the other alone). Render in a dense passage: median 10.5 -> 9.1 ms.
+- Left in a frame (profiled): the skin's polygons and circles (gfxdraw, anti-aliased: ~3 ms), the falling notes and
+  keyboard rects (~1.7 ms), blits (~1.4 ms), the screen fill (~0.7 ms).
+- One worker here, the drawn Dante: 22 stalls (87 with 4 workers there), the frame's own `_placed_at` leading 14 - the
+  work ahead's lead run out (here: other jobs on the machine during the run; the same stretch alone, after a seek:
+  none). Frames past their time left it no time at all: `prepare_hands` now gives it at least `WARM_MIN_BUDGET` 2
+  ms while either hand is under `WARM_LOW_T` 1 s ahead, and `App.run` (and perf_check) calls `idle` even with no
+  spare time. Overloaded (+9 ms of busy work a drawn frame, the Dante's first 2 min): frames median 21.9 -> 18.9
+  ms, p99 32.6 -> 26.4, over 30 ms 152 -> 41; the lead stays near 0 instead of falling ever further behind.
+- Drawn again (30 files, 2 workers, after 4df0438): 703 -> 8 stalls while the code ran (0.03 a minute; 21 more
+  waiting); median drawn frame 6.4-7.3 ms there. The 8: single 25-40 ms frames, mostly `draw_poses` at 22-34 ms
+  against its usual ~4, scattered (about one an hour of music) - nothing that repeats.
+
+### Jumps without the pause (hands.live_poses)
+- A click to jump (and the player opening) drew the exact pose at once: the speed-limited chains from
+  LIMIT_RESTART_T back, ~37 hand steps and as many fingertip steps, 200-500 ms in one frame. Now the player and the
+  editor draw `hands.live_poses`: the quick pose (`pose(quick=True)`) while scrubbed or until `exact_ready(t)` (the
+  chains around t, `k-6..k+8` and `k-3..k+5`, and the glissando ways near, `_gliss_needed`), then blended into the
+  exact one over `QUICK_BLEND_T` 0.12 s (`_blend_pose`). `prepare` first runs `_seed_steps` (a job, a unit of work
+  between budget checks): the hand's chain from where a cold call would start it, each step's hand solves first,
+  the fingertips' chain alongside, both on to where the song is now (`_seed_t`: it may be playing), then the
+  glissando ways. The chains are one step at a time (`_limit_step`, `_tip_step`; `_limited_grid` and
+  `_limited_tip_grid` use them, results unchanged). The seeded chain doesn't restart where a cold call's second
+  walk would, so its exact pose can differ a little from a cold one (test: scrubbed then settled = fresh hands
+  settled). Videos and `--screenshot` (which idles first) are exact.
+- perf_check draws hands-only frames through `live_poses` too, and after each seek plays on until the exact pose is
+  worked out (`SEEK_SETTLE_MAX`): seeks' worst frame median 5 ms, 90% under 7 (was 220 / 290); the quick pose
+  for median 25 frames, at most 38; first frames ~2 ms (was ~150).
+
+### The song waits for the hands after a jump
+- Reported: after scrubbing the hands jittered and jumped straight to their notes, more in some pieces than others.
+  Reproduced (a dense sonata, released while playing): the exact pose never got worked out - 240 frames of 240 drawn
+  quick (no smoothing, no speed limit). The groundwork is ~150 ms a hand, the song adds 1.5-2 ms a hand each frame
+  it plays on, and a busy frame left 2-4 ms: it never caught up, and `SEED_RESTART_STEPS` started it over every 2 s
+  as the song drifted from where it began. And once exact, the strict `exact_ready` (8 steps ahead) failed whenever
+  the work ahead fell a step behind: the drawing flickered between the two.
+- Now (`hands._exact_due`, one state the view keeps for `hands_waiting` and `live_poses`): after a jump (t moving
+  more than `JUMP_T` 0.5 s between frames, or the view's first frame) the song waits - the player's clock (and a
+  synced recording, stopped and started again from the song's place) and the editor's - while `prepare` builds
+  the groundwork with at least `HOLD_BUDGET` 12 ms of each frame, the quick pose standing still; ready (or
+  `HOLD_MAX_T` 1 s on), it goes on, blending into the exact pose, and stays exact as it plays (the frames work out
+  what the work ahead hasn't, a step at a time). The groundwork starts over only on a jump between two prepare
+  calls (`SEED_JUMP_STEPS`), not as the song plays. The wait is timed from the last jump (a second click before
+  the first settled inherited the old start: given up at once, the pose worked out in one frame, 288-750 ms).
+- Measured (the dense sonata, released while playing): the song waits 21-29 frames (~0.4 s), one switch to exact,
+  then the same motion as played straight through (frame-to-frame wrist steps over 25 px: 13 / 27 against 18 / 28
+  without scrubbing). perf_check: seeks' worst frame median 5 ms, all under 17.
+
 ## Video export (video_export.py, v26.1.20.SNAPSHOT-07)
 - The player's "Export video" button (top-left under the progress bar / waveform, `Visualizer._draw_export_button`)
   opens a menu: checkboxes for what to record (`EXPORT_PARTS`: the progress bar, the pedals, the active pianist's
@@ -841,7 +1165,7 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - Broken octaves now skip notes that are part of a quick repeat. The outer note next to a repeated partner takes 5.
   - PIG test is unchanged (both-hands general 66.1%).
   - La Campanella 95–125 s: 25/25 pairs before an octave leap come out 2-1-5; the three followed by a fifth come out 2-1-4.
-- **One finger on two keys** (2026-09-27): `fingering.thumb_pair` covers two neighbouring white keys or two neighbouring black keys, including D#-F# and A#-C#. `pinky_pair` covers two neighbouring white keys. `double_ok(p1, p2, f)` checks either.
+- **One finger on two keys** (2026-09-27; any finger since v26.1.21.MAESTRO-TESTING, below): `fingering.thumb_pair` covers two neighbouring white keys or two neighbouring black keys, including D#-F# and A#-C#. `pinky_pair` covers two neighbouring white keys. `double_ok(p1, p2, f)` checks either.
   - Both are symmetric about D, so they hold in the LH's mirrored frame.
   - `_states(given, ps)` adds (1,1,…) when the two lowest keys in the hand's frame are a thumb pair, (…,5,5) when the two highest are a pinky pair, and both for chords of 5 or more.
   - `group_notes` keeps up to 5 + thumb pair + pinky pair notes, so 6- and 7-note chords are played rather than dropped.
@@ -867,6 +1191,57 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   - `HandAnimator.pair_key` holds {id(note): (lo, hi)}. `_pk(note)` returns the pair, and `key_target` of a pair aims between the two keys. `_roll_wide_chords` measures reach from the pair's centre; between two notes on one finger (the pair's own two keys) there is no reach to keep to (v26.1.16: it asked for `(1, 1)` and loading failed - Scriabin's Fantasy Op. 28, MAESTRO, LH thumb on two keys in chords wider than the hand).
   - Corpus: rolled chords went from 60 to 44, with 64 doubles.
   - PIG test 66.23% (up from 66.17%), Hanon unchanged.
+  - **Any finger on neighbouring keys; smudges** (v26.1.21.MAESTRO-TESTING). Performances (MAESTRO) are full of
+    smudges - a neighbouring key caught with a note, usually much quieter or shorter - and the planner gave each its
+    own finger, which bent the hand into odd shapes for a note nobody meant. Now `cluster_shape(ps)` (RH frame,
+    rising): "pair" - a white key and the black beside it, or two neighbouring whites (E-F, C-D) - and "triple" -
+    white-black-white (C-C#-D) - for any finger; "blacks" (two neighbouring black keys) still for the thumb only.
+    `cluster_ok(ps, f)`; `double_ok` is its two-key form.
+    - `_states` enumerates `_partitions` of the chord into runs one finger can cover, and rising fingers for the
+      runs (a "blacks" run only first, on the thumb). `min_fingers` (fewest fingers for a chord) decides which
+      notes `group_notes` drops (was 5 + thumb pair + pinky pair).
+    - `smudge_like(ns)`: every note but the loudest at most `SMUDGE_VEL` 0.7 of its velocity, or at most
+      `SMUDGE_LEN` 0.5 of its length and `SMUDGE_LEN_T` 0.15 s. `cluster_cost`: a smudge on one finger costs
+      `smudge_one` 0.3; anything else as before - `thumb_double` 15, `pinky_double` 16, the new `finger_double` 16
+      for 2-4 - plus `finger_triple` 4 for three keys, so a deliberate second still gets two fingers. A smudge-like
+      pair given two fingers costs `smudge_split` 3. In `plan_fingering`'s chord costs, runs are priced by
+      `cluster_cost` and `chord_pair_cost` only between different fingers; `shape_cost` checks each run with
+      `cluster_ok` (`finger_runs`).
+    - `group_notes`: a smudge struck up to `SMUDGE_TOL` 0.05 s from a neighbour in the chord joins it, though apart
+      from it (beyond `CHORD_TOL`, or split off as the next note of a run) - if `smudge_like(..., late=True)`:
+      quieter than `SMUDGE_LATE_VEL` 0.6 and no longer, or shorter than `SMUDGE_LATE_T` 0.08 s, so the uneven notes
+      of a fast run aren't merged.
+    - Hands: `pair_key` holds the run's keys (2 or 3, one tuple object per run: `_mates`). `key_target`: with a
+      black key, the tip `CLUSTER_DEPTH_IN` in from its front - over its edge toward the white key (pair) or its
+      middle (triple) - touching them all; two whites, between them (C-D in front of the black key between,
+      `CLUSTER_FRONT_GAP_IN`, in `_key_depths` and `_key_box`). On the finger's timeline a run is one held key
+      (`_unify_clusters`: every note until the last is let go; the end cuts at the finger's next note skip mates),
+      while each note sounds its own length (`_fingered_performance`).
+    - Ten MAESTRO files (Ninthie, 39,000 notes, 4 workers): seen incidents solver 11 -> 9, speed 1 -> 1, anatomy
+      2 -> 2, timing 3 -> 2, corrected 2 -> 2; none new. Clusters used per file 0-52 (from 0-8), planning time about
+      the same (+8% at most); Hanon 60's fingering unchanged.
+    - **Slips** (v26.1.21.MAESTRO-TESTING, after the author still saw clear smudges given fingers of their own): a
+      finger firmly on its key slipping onto the one beside it. `fingering.find_slips(notes, vpitch, given)`
+      {id(slip): note}: a neighbouring key ("pair") struck while the note is held, more than `SMUDGE_TOL` and up to
+      `SLIP_T` 0.4 s after it, let go with it (`SLIP_HOLD_T` 0.03 s), quiet and short - at most `SLIP_VEL` 0.75 of
+      its velocity and `SLIP_LEN_T` 0.15 s / `SMUDGE_LEN` of its length. (A first version also took smudges struck
+      with the note, or up to `SMUDGE_TOL` before it: in ten files that forced one finger onto the soft first
+      instance of a deliberate repeated second, LH B0+C1, and onto a note struck before the one it "slipped" from -
+      2 more solver incidents. Those stay the planner's, `cluster_cost` / `smudge_split`.) The note it slips from is the loudest such; the keys stay coverable (pair or triple); a
+      given finger other than the note's (file, editor) means it isn't a slip; a note that is a slip slips
+      nothing. Slips are left out of the plan (`plan_with_slips`: `finger_hand`, the editor's `_resolve`;
+      `HandAnimator` does the same) and take their note's finger. In `HandAnimator` a slip joins its note's
+      chord; `cluster_key` holds the keys the finger holds as one (`_mates`), while `pair_key` (where it aims)
+      is the note's own key until the slip (unless caught within `SMUDGE_TOL`: the keys from the start), then the
+      keys slipped across by then - the finger slides over to touch both. A held voice as loud as the melody, or
+      a trill (nothing held across another), isn't a slip. Ten MAESTRO files (Ninthie): 39 slips in 34,087 notes;
+      the check's incidents as without slips (solver 9, speed 1, anatomy 2, timing 2, corrected 2); Hanon 60
+      unchanged.
+    - PIG (the author's run, all 150 pieces): with Ninthie, the planner before and after give the same fingering
+      on every piece - no smudge or cluster is taken there. Test split 001-030, both hands: default pianist
+      general 65.97% / high 72.00% / soft 87.56% (the reference now; 66.23% was measured in September, before
+      later fingering changes); Ninthie 65.54 / 71.78 / 86.99 (its larger hand prices stretches differently).
+      All 150 pieces: 69.3% general for both.
   - **The thumb bridging two black keys** (v26.1.19.SNAPSHOT-01; Brahms Sonata Op. 5, MAESTRO 2006, 3:20, RH
     D#4-F#4 by the thumb): aimed between the keys, the thumb pointed up the white keys between them (E-F). A real
     thumb lies straight across: its tip on the far key (away from the other fingers), its side on the near one.
@@ -1160,6 +1535,13 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
     must fit in the hand: no wider than the thumb-little finger stretch plus `TREM_REACH_EXTRA` 1.25 white keys
     (v26.1.6: Ocean's repeated broken chords, 11-12 keys a cycle, were held still halfway between their notes -
     pressed tips up to 2.4 keys off; Hanon 60's tenths, 9 keys, are still tremolos).
+    And (v26.1.21.SNAPSHOT-01) the drawn hand, held still, must reach every key of the widest cycle:
+    `_chord_fits(cycle, TREM_SLACK_WK` 0.35 white keys more per key than a chord gets - rocking the forearm). Chopin
+    Sonata No. 2 (MAESTRO 2013) 0:15.8-18.3 LH A#2-F3-(A#3+C#4)-F3, 5-3-(2+1)-3, a tenth (8.8 keys): within the
+    planner's stretch + 1.25, so held still, and the little finger missed A#2 by up to 34 px, the thumb C#4 by
+    10; now swaying, none off (Ninthie and default). Elsewhere only two other tremolos go (the sonata's RH 17:51.1,
+    Bach MAESTRO 2006 LH 10:31.8), both of which had keys missed too (8 px; 18 px); Hanon 60, Dante, Ocean,
+    Scarbo, Ballade 1, Polonaise, HR 10, Rachmaninoff unchanged.
   - `_hand_at`: averaged over +-`TREM_HOLD_T` 0.5 s from poses within the tremolo (`_hand_avg`), eased in and out
     inside it (`_trem_w`, so the hand is free by the next figure).
   - `_key_fix`: inside a tremolo every finger playing in its current cycle (`_trem_note`: its key from the hand's

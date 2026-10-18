@@ -58,7 +58,8 @@ from common import (ACCENT, LANE_WHITE, set_key_style, PANEL, PANEL_EDGE, blit_s
 import paths
 import pianist as pianists
 import recent
-from hands import build_hands, draw_hands, load_with_hands, prepare_hands
+from hands import (HOLD_BUDGET, build_hands, draw_hands, hands_waiting, live_poses, load_with_hands, prepare_hands,
+                   settle_heap)
 from midi_loader import LEFT, RIGHT
 from audio_sync import WAVE_H, PlaybackSetup
 from version import VERSION
@@ -124,6 +125,9 @@ class Visualizer(Transport):
         self._wave_cache = (None, None)
         self.window_secs = DEFAULT_WINDOW_SECS
         self.dragging_bar = False
+        self._pose_state = {}             # (hands.live_poses: when the quick pose last gave way to the exact one)
+        self._waiting = False             # the song waiting for the hands after a jump (hands.hands_waiting)...
+        self._audio_resume = False        # ...the recording stopped meanwhile, to start again with it
         self._glow_cache = {}
         self._finger_cache = {}          # (text, colour, size) -> rendered finger number
         self._finger_fonts = {}
@@ -459,6 +463,19 @@ class Visualizer(Transport):
                 self._end_export()
             return
         held = self.dragging_wave is not None or self.dragging_bar
+        # after a jump (and as the player opens) the song waits for the hands' exact pose, worked out in
+        # each frame's spare time (hands.hands_waiting) - the recording with it
+        self._waiting = bool(self.song and self.hands and self.show_hands and not self.paused and not held
+                             and hands_waiting(self.hands.values(), self.t, self.keyboard, self._pose_state))
+        if self._waiting:
+            if self.audio and not self._audio_resume:
+                self.audio.stop()
+                self._audio_resume = True
+            return
+        if self._audio_resume:
+            self._audio_resume = False
+            if self.audio and not self.paused:
+                self._start_audio()
         if self.audio and self.song and not self.paused and not held:
             # the song follows the recording's (the wall) clock, not the frame clock
             t_a, wall = self._anchor
@@ -480,8 +497,11 @@ class Visualizer(Transport):
             self.seek(frac * self.song.duration)
 
     def idle(self, budget):
-        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare)."""
-        if self.song and self.hands and self.export is None:
+        """The frame's spare time (App.run): the hands work ahead (HandAnimator.prepare) - not while the
+        bar is dragged (each jump would start the motion's chain over, the stall the quick pose avoids)."""
+        if self.song and self.hands and self.export is None and not self.dragging_bar:
+            if self._waiting:
+                budget = max(budget, HOLD_BUDGET)
             prepare_hands(self.hands.values(), self.t, self.keyboard, budget)
 
     def leave(self):
@@ -643,7 +663,11 @@ class Visualizer(Transport):
         draw_hand_area(s, self.hand_rect)
         if self.hands and self.show_hands:
             s.set_clip(pygame.Rect(0, self.felt_rect.top, s.get_width(), s.get_height()))
-            draw_hands(s, [a.pose(self.t, kb) for a in self.hands.values()])
+            if video is None:                   # (quick while scrubbed or until the exact pose is worked out after a jump)
+                poses = live_poses(self.hands.values(), self.t, kb, self.dragging_bar, self._pose_state)
+            else:
+                poses = [a.pose(self.t, kb) for a in self.hands.values()]
+            draw_hands(s, poses)
             s.set_clip(None)
         pedals = video is None or video.get("pedals")
         draw_pianist_badge(s, self.fonts, self.hand_rect, pianists.active(),
@@ -1328,6 +1352,7 @@ class App:
         self.mode.leave()
         self.mode = mode
         self._fresh = True
+        settle_heap()                           # (the last mode's song collected, this one's kept out of gc passes)
 
     def menu(self, message=""):
         if isinstance(self.mode, Visualizer) and not self.mode.audio:
@@ -1471,7 +1496,8 @@ class App:
             pygame.display.flip()
             # what's left of this frame's time goes to work done ahead (instead of sleeping in tick)
             spare = 1.0 / (self.fps_cap or UNCAPPED_IDLE_HZ) - (time.perf_counter() - frame_start) - IDLE_MARGIN_T
-            if spare > 0 and hasattr(self.mode, "idle"):
+            # (none left: still called - the hands' work ahead takes a little when it has fallen behind)
+            if hasattr(self.mode, "idle"):
                 self.mode.idle(spare)
         self.close()
 
@@ -1653,6 +1679,8 @@ def main():
         if hasattr(app.mode, "seek"):
             app.mode.seek(args.at)
             app.mode.paused = True
+        if hasattr(app.mode, "idle"):
+            app.mode.idle(2.0)                  # (the hands' exact pose worked out first, not the quick one)
         app.mode.render()
         app.draw_version()
         pygame.image.save(app.screen, args.screenshot)

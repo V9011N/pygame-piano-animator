@@ -264,7 +264,7 @@ def test_version_and_changelog_headings_are_well_formed():
     import os
     import re
     from version import VERSION
-    assert re.fullmatch(r"v\d\d\.\d+\.\d+(\.SNAPSHOT-\d+)?", VERSION)
+    assert re.fullmatch(r"v\d\d\.\d+\.\d+(\.SNAPSHOT-\d+|\.[A-Z][A-Z0-9-]*)?", VERSION)
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
     with open(path, encoding="utf-8") as fh:
         top = next(line for line in fh if line.startswith("## "))
@@ -493,3 +493,119 @@ def test_overview_scrolls_a_hovered_finger_and_the_shape_button_resets(screen):
     st._action("shape")
     assert st.bends == {} and st.shape == "natural"
     assert "bends" not in st.work.to_json()                 # (a preview: nothing saved)
+
+
+def test_scrubbing_the_bar_draws_quick_poses_and_lets_go_to_the_exact_ones(screen):
+    # dragging the progress bar: every frame a jump - a quick pose each (HandAnimator.pose(quick=True)), the
+    # work ahead paused; let go, the exact pose, which the quick ones left unchanged
+    import hands
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.render()
+    seen = []
+    real = hands.HandAnimator.pose
+
+    def spy(self, t, kb, quick=False):
+        seen.append(quick)
+        return real(self, t, kb, quick=quick)
+    hands.HandAnimator.pose = spy
+    try:
+        r = v.bar_rect
+        y = r.centery
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 4, y)))
+        for k in range(1, 6):
+            app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(r.x + r.w // 4 + 20 * k, y), rel=(20, 0),
+                                                buttons=(1, 0, 0)))
+            v.update(1 / 60)
+            v.render()
+            warm = [a._warm_k for a in v.hands.values()]
+            v.idle(0.01)
+            assert [a._warm_k for a in v.hands.values()] == warm      # (no work ahead while scrubbed)
+        assert seen and all(seen)
+        seen.clear()
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 4 + 100, y)))
+        v.render()
+        assert seen and all(seen)                   # let go: quick until the exact pose is worked out...
+        settle(v.hands.values(), v)
+        seen.clear()
+        v.render()
+        assert False in seen                        # ...then blended into it
+        v._pose_state["blend_from"] -= 1.0
+        seen.clear()
+        v.render()
+        assert seen and not any(seen)               # ...and exact
+    finally:
+        hands.HandAnimator.pose = real
+    # the quick poses left nothing behind: the exact pose is a fresh pair of hands' worked out the same way
+    t = v.t
+    fresh = hands.build_hands(v.song)
+    settle(fresh.values(), v)
+    for h, a in v.hands.items():
+        assert real(a, t, v.keyboard)["struct"]["chains"] == real(fresh[h], t, v.keyboard)["struct"]["chains"]
+
+
+def settle(anims, v):
+    """The work ahead run (as each frame's spare time does) until the exact pose at v.t is worked out."""
+    import hands
+    anims = list(anims)
+    for _ in range(500):
+        if all(a.exact_ready(v.t, v.keyboard) for a in anims):
+            return
+        hands.prepare_hands(anims, v.t, v.keyboard, 0.01)
+    raise AssertionError("the exact pose never got worked out")
+
+
+def test_after_a_jump_the_song_waits_for_the_hands_then_stays_exact(screen):
+    # a click to jump while playing: the song holds (and the quick pose stands in) until the exact pose is worked
+    # out in the frames' spare time; from then on it's exact every frame as the song plays on, whatever the work
+    # ahead gets done - no flicker between the two (the quick one has no speed limit: the hands jumped)
+    import hands
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.paused = False
+    r = v.bar_rect
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.x + r.w // 2, r.centery)))
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=(r.x + r.w // 2, r.centery)))
+    t0 = v.t
+    v.update(1 / 60)
+    assert v._waiting and v.t == t0                  # held
+    for _ in range(300):
+        if not v._waiting:
+            break
+        v.idle(0.01)
+        v.update(1 / 60)
+    assert not v._waiting
+    seen = []
+    real = hands.HandAnimator.pose
+
+    def spy(self, t, kb, quick=False):
+        seen.append(quick)
+        return real(self, t, kb, quick=quick)
+    hands.HandAnimator.pose = spy
+    try:
+        v._pose_state["blend_from"] -= 1.0
+        for _ in range(60):                          # played on, no spare time for the work ahead at all
+            v.update(1 / 60)
+            v.render()
+        assert v.t > t0 + 0.5
+        assert seen and not any(seen)
+    finally:
+        hands.HandAnimator.pose = real
+
+
+def test_a_second_jump_before_the_first_settles_waits_afresh(screen):
+    # the wait after a jump is timed from the last jump: a second click before the first one's exact pose was
+    # shown doesn't inherit its time (it would give up waiting at once and work the pose out in one frame)
+    app = app_on(screen)
+    app.play(midi_path("demo_song.mid"))
+    v = app.mode
+    v.paused = False
+    v.seek(5.0)
+    v.update(1 / 60)
+    assert v._waiting
+    v._pose_state["since"] -= 5.0                    # (as if that jump had been long ago, never settled)
+    v.seek(12.0)
+    v.update(1 / 60)
+    assert v._waiting and v.t == 12.0

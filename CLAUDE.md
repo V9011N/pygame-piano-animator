@@ -47,7 +47,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `progress.py` | How far a long job has got: `report(frac)` from deep loops, nested `stage(lo, hi)` |
 | `midi_loader.py` | `MidiSong` / `Note`, MIDI + PIG loading, hand assignment, fingering markers, `save_fingered_midi`, `pedal_switches` |
 | `hand_split.py` | Beam search that splits single-track MIDI into hands |
-| `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, thumb/pinky pairs, `score_fingering`) |
+| `fingering.py` | Fingering planner (beam search over chord states, cost weights, `LEARNED_W`, one finger on neighbouring keys - `cluster_shape`, smudges, `score_fingering`) |
 | `glissando.py` | Glissando detection (strings of next-door white or black keys), marked glissandos (`Note.gliss`), episodes |
 | `figures.py` | Figure recognition (scales, arpeggios, chromatic, octaves, repeated notes, trills, double notes) feeding the planner |
 | `hands.py` | `HandGeometry`, `HandAnimator` (per-hand IK, crossings, rolled chords, wrist gestures), hand-crossing layering, skeleton drawing, `build_hands` / `load_with_hands` |
@@ -58,6 +58,11 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Hand-thesia` or a portable `pianists` folder beside the .exe when compiled) |
 | `build.py` | Nuitka single-file build (`dist/Hand-thesia.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
 | `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
+| `anim_check.py` | Does the drawn hand match what's played: `check_song` (notes with no finger, tips pulled onto / off their keys, late strikes; anatomy / speed / solver) |
+| `tools/maestro_check.py` | `anim_check` over every MIDI file in a folder (the MAESTRO dataset, renamed files + rename map), in parallel, resumable, live progress; report.md + incidents.csv |
+| `tools/maestro_diff.py` | Two maestro_check runs compared: incidents fixed / new / still there, counted by pattern (coarse: hand, category, what; fine: + keys, register, size, fingers) |
+| `tools/perf_check.py` | Every MIDI file in a folder played through the player offscreen, frame by frame (hands only, or `--draw` whole frames; spare time to `Visualizer.idle` as `App.run`), plus load and seek times: hitches grouped into stalls with their song times and the functions they were spent on; report.md + stalls.csv |
+| `tools/regress.py` | A round's checks with history: tests, PIG test split (`pig_eval.TEST`, `summary`), Hanon vs the book, a MAESTRO bench sample vs a baseline run (runs/history.jsonl) |
 | `pig_eval.py`, `learn_weights.py` | PIG benchmark and weight tuning (need the dataset locally) |
 
 ## Conventions and gotchas
@@ -76,6 +81,14 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - A drawn finger never points up past its knuckle or rears its knuckle up (`TIP_BELOW_KNUCKLE`, `solve_chain`'s
   `lift_max`), and a chord is rolled when the drawn hand can't hold it (`HandAnimator._chord_fits` decides near the planner's spans,
   either side).
+- One finger may hold neighbouring keys (`fingering.cluster_shape`: white + black, two whites, white-black-white;
+  two blacks only for the thumb) - a smudge is played by its note's finger. `HandAnimator.pair_key` maps each note of
+  such a run to the keys it aims at, `cluster_key` to the keys it holds as one (`_mates`, `_unify_clusters`). A finger
+  slipping onto the key beside its note (`fingering.find_slips`) isn't planned: the slip takes its note's finger
+  (`plan_with_slips`), which slides over when it sounds.
+- Strict key contact: a finger holding a key has its tip on it (`_finger_pose` clamps it into `_key_box`, then
+  `_settle_on_keys` shifts the whole hand if the bones fall short); what can't be is logged with its time in the file,
+  as are notes with no finger (`HandAnimator.unplaced`). Check a change with `anim_check` / `tools/maestro_check.py`.
 - Hands crossing: the crosser goes over (`crossing_episodes`); hands interlocked (trilling on top of each other) lie
   by depth instead - the one playing further in (black keys) on top - and the layers never flip for a blip, nor
   swap while the hands overlap (`_layer_top` settles each stretch of contact ahead, from the notes).
@@ -83,6 +96,11 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   fingering, the timeline (`HandAnimator._speed_schedule`) and the drawn motion all keep to it.
 - Audio (and every lit key or note) follows the hands' performance (`HandAnimator.performance`),
   not the raw MIDI note times - keys let go early or struck late to keep to the top speed; pedals are sent as switches (`MidiSong.controls`), raw values kept in `raw_controls`.
+- On screen the hands are drawn through `hands.live_poses`: quick (`HandAnimator.pose(quick=True)`) while the song
+  is scrubbed (the work ahead, `idle`, pauses) or after a jump until the exact pose is worked out (`exact_ready`;
+  `prepare` builds it a step at a time), then blended in and exact from then on - an exact pose straight after a
+  jump costs 200+ ms. Meanwhile the song waits (`hands_waiting`: the player's and editor's clocks, a synced
+  recording): played on, the quick pose would stand in for the motion. Videos and `anim_check` call `pose`: exact.
 - What a video records is `Visualizer._draw_scene` - draw anything new for the screen only (controls, hints)
   in `render`, not there.
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
@@ -96,7 +114,7 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - Versions and the changelog are the author's call (from `v26.1.18.SNAPSHOT-01`): don't change
   `version.py` or `CHANGELOG.md` unless the prompt says what to set. **Before committing, if the prompt
   didn't give the version (and whether to add a changelog entry), ask for it - don't guess.** Formats:
-  `vYY.MAJOR.MINOR` or `vYY.MAJOR.MINOR.SNAPSHOT-NN` (older: `vYYYY.MM.DD.HHMM` commit times); changelog
+  `vYY.MAJOR.MINOR`, `vYY.MAJOR.MINOR.SNAPSHOT-NN` or a named build like `vYY.MAJOR.MINOR.MAESTRO-TESTING` (older: `vYYYY.MM.DD.HHMM` commit times); changelog
   entries `## <version> - title` with user-facing bullets, newest first (the main menu's "What's new";
   it glows when the top entry changes, not the version). Keep entries as general as possible: never name
   the pieces, files, recordings, datasets or other media used to find or develop a fix or feature (no
