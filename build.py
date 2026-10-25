@@ -130,6 +130,8 @@ def command(console=False, tcl_tk=()):
         "--include-package-data=pretty_midi",                         # its General MIDI soundfont: a video's sound
                                                                        # when no soundfont is chosen (video_export)
         "--include-package-data=imageio_ffmpeg",                      # the ffmpeg binary video export pipes to
+        "--include-package=miditool",                                 # the fingering editor (imported when opened;
+                                                                       # its worker processes import its jobs)
         "--assume-yes-for-downloads",
         "--product-name=Hand-thesia",
         f"--product-version={numeric_version()}",

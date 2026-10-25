@@ -27,6 +27,8 @@ def isolate_pianists(folder):
 @pytest.fixture(autouse=True)
 def _pianists_tmp(tmp_path):
     isolate_pianists(str(tmp_path / "pianists"))
+    from miditool import jobs
+    jobs.INLINE = True                  # (the fingering editor's jobs run here and now: no worker processes)
     yield
 
 

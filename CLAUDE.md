@@ -8,8 +8,9 @@ changing a subsystem, and update it when you change behaviour.
 
 A pygame app that plays MIDI files as falling notes above an 88-key keyboard, with
 procedurally animated hands (seen from above) whose fingering is planned automatically, plus a
-fingering editor and a pianist/hand editor. Flat module layout at the repository root; modules
-import each other by name.
+fingering editor (a piano-roll MIDI editor, the `miditool` package) and a pianist/hand editor. Flat
+module layout at the repository root, modules importing each other by name - except the editor,
+a package with relative imports that uses the root modules by name.
 
 ## Run
 
@@ -54,7 +55,13 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 | `skins.py` | Skinned hand drawing (cartoon, gloves, robot) from the pose structure |
 | `pianist.py` | `Pianist` model (anatomy, behaviour settings, skin), storage in `pianists/` |
 | `hand_editor.py` | "Pianists & hands" studio (browser, overview - with fingers curled by the wheel, `hands.bend_chain` - anatomy, behaviour pages) |
-| `editor.py` | Fingering editor (piano roll, context menus, undo, sequential mode, difficulty, export) |
+| `miditool/` | The fingering editor (from MIDI Tool): a piano-roll MIDI editor - notes, velocity / pedal / tempo lanes, tempo ramps and bake, combining files, fingering profiles, imposing a perfect source, `.miditool` projects, lossless SMF round trip. Its modules below |
+| `miditool/app.py` | `EditorMode` (a mode of `main.App`: `App.edit`): top bar (+ `common.VolumeSlider`, Menu), status line, files, dialogs, impose jobs; `settle` (tests, screenshots); `shared_jobs` (one set of worker processes for the app, stopped by `App.close`) |
+| `miditool/hands_panel.py` | `HandsPanel`: the keyboard and animated hands under the roll (built in a thread from the notes, their fingering and the suggestions; `live_poses` / `hands_waiting` / `prepare_hands` like the player), hidden and shown by a translucent arrow or H (app setting `editor_hands`) |
+| `miditool/editor.py`, `render.py`, `lanes.py`, `fingering_ui.py`, `compare.py`, `view.py` | The roll: `Editor` (layout, input, editing, selection, clipboard) with its mixins - drawing, the lanes, fingering (menus, sequential mode, `sugg` from `fingerjob`), the impose review; `Axis` (eased scroll / zoom) |
+| `miditool/document.py`, `smf.py`, `timing.py`, `tempo.py`, `combine.py`, `project.py` | `Document` (notes with their fingering marker, every other event kept; transactions + undo; `export` verified by reading back; `from_song`), lossless SMF, tempo / meter maps, tempo keyframes and ramps, overlay / append, project files |
+| `miditool/fingerjob.py`, `profiles.py`, `jobs.py`, `impose.py`, `cleaner/` | Worker-process jobs (no pygame): the planner on plain data (`suggest`, `resolve`, `difficulty`), fingering profiles (`ProfileStore` in `pianists/fingering profiles`; a profile goes on top of the active pianist, `planner_input` / `prepare`), the pool (`INLINE` for tests), impose (the Human MIDI Cleaner's alignment and plan) |
+| `miditool/playback.py`, `widgets.py`, `theme.py`, `helpview.py`, `filedialogs.py` | `Player` through `HostOut` (Hand-thesia's synth: hand channels, pedals), the editor's widgets, colours and `px()` (fonts via `common.ui_font`), the F1 page, tkinter dialogs |
 | `paths.py` | Where bundled files are (`resource()`) and where the user's data goes (`DATA_DIR`: beside the code from source; `%APPDATA%\Hand-thesia` or a portable `pianists` folder beside the .exe when compiled) |
 | `build.py` | Nuitka single-file build (`dist/Hand-thesia.exe`); `requirements-build.txt`, `assets/` (icon, from `tools/make_icon.py`) |
 | `version.py` | `VERSION` (`vYY.MAJOR.MINOR`, e.g. `v26.1.0`), shown in the window title and bottom-left corner |
@@ -75,9 +82,16 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
   thread behind a progress bar. Never touch the display from the job.
 - Call `hands.pair_hands` on the animators whenever you build them: an idle hand moves out of the playing
   hand's way (`HandAnimator._placed_at`), and `crossing_episodes` assumes it does.
-- `HandAnimator` is rebuilt whenever fingering changes; the editor defers that rebuild while
-  typing in sequential mode (`_rebuild_due`). `editor.notes` is the song's own list - update
-  `editor.index` when replacing a note object.
+- The fingering editor works on a `miditool.document.Document` (ticks; seconds only through `doc.tempo_map()`),
+  not a `MidiSong`: every edit inside `doc.begin(label)` / `doc.commit()` and through `note_with` / `put_note`, so a
+  note's fingering (written as its marker right before its note-on) survives every export - `Document.export`
+  refuses a file that doesn't read back the same. Never change a note's fingering automatically: the planner's
+  suggestions stay in `Editor.sugg` until applied.
+- The editor's hands (`miditool/hands_panel.py`) are rebuilt from the document whenever its notes, timing,
+  fingering, suggestions or the active pianist change (`HandsPanel._key`), in a thread; the suggestions come from
+  `fingerjob.suggest` in a worker process (`jobs.py`, "spawn") - keep pygame out of `fingerjob`, `profiles`,
+  `impose`, `cleaner`, and keep every script that opens the editor under `if __name__ == "__main__":`. Tests run the
+  jobs inline (`conftest`: `jobs.INLINE`); `EditorMode.settle()` waits for the fingering and the hands.
 - A drawn finger never points up past its knuckle or rears its knuckle up (`TIP_BELOW_KNUCKLE`, `solve_chain`'s
   `lift_max`), and a chord is rolled when the drawn hand can't hold it (`HandAnimator._chord_fits` decides near the planner's spans,
   either side).
@@ -106,6 +120,9 @@ gestures, editor state after scripted keys). Keep tests fast and free of local d
 - The frame clock is capped (`MAX_FRAME_DT`) so slow loads never jump the song ahead. With a synced
   recording the player's clock follows the wall clock instead (audio heard at song time t:
   `offset + t / speed`), and the synth is muted.
+- A fingering profile (the editor's Fingering… window) is the active pianist with some behaviour choices and figure
+  firmness on top (`miditool.profiles.planner_pianist`); "Default" is the active pianist as it is. Planner calls in the
+  app's own process (`fingering_ui._resolve`) put the planner back on the active pianist after (`restore_host`).
 - Every fingering weight is user-tunable per pianist (`fingering.FINE_TUNE`, `Pianist.weights`, applied last by
   `apply_pianist`): add any new weight to `FINE_TUNE` (a test checks).
 - Keep the fingering planner deterministic; check changes against the PIG test split

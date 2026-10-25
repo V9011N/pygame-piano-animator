@@ -136,7 +136,7 @@ Detailed design notes, kept up to date as features were added. Start with `CLAUD
 - Finger numbers on the falling notes: bold, `FINGER_PX_MAX` 17 px (13 before) or as big as fits the narrowest
   notes (`_finger_size`: a black key's lane), smaller on a note too short for it (down to `FINGER_PX_MIN` 11),
   with a drop shadow - dark under a light number (plus its thin outline), light under a dark one.
-- `editor.py` – `FingeringEditor`, a horizontal piano roll (DAW style) with the keyboard and animated hands below. See the Fingering editor section.
+- `miditool/` – the fingering editor (`EditorMode`), a piano-roll MIDI editor with the keyboard and animated hands below. See the Fingering editor section.
 - (old) main.py visualizer notes:
   - `Visualizer.hands` is {RIGHT/LEFT: HandAnimator}, drawn with `draw_hands`.
   - Keys: H toggles hands, F toggles finger numbers.
@@ -889,23 +889,59 @@ menu (kept as `"keys"` in `pianists/settings.json`, read with `pianist.app_setti
   200 steps. `test_finetune` checks every weight is listed - a new weight must be added to `FINE_TUNE`.
 - With no fine-tuning the fingering is unchanged (Op. 25 No. 6, HR10, Dante, Winter Wind: 0 of 13,218 notes).
 
-## Fingering editor (editor.py)
-- Layout, top to bottom:
-  - top bar (Follow pitch / Open / Export / Menu buttons);
-  - info line;
-  - bar ruler;
-  - roll (a vertical key gutter on the left, playhead fixed at 30% of the width, 6 s view, 12 px rows);
-  - felt, keyboard and hands.
-- Rows fit the song's range when that fits; otherwise the view follows the pitch.
-- Editing:
-  - Click or drag-box to select.
-  - Right-click one note → hand → finger 1-5. The edit is kept exactly; neighbours are unchanged.
-  - Right-click several notes → hand. Those notes are freed and re-planned (`_resolve`: `plan_fingering` over the hand's notes ±3 s, with every other finger fixed).
-  - Keys: 1-5 set the finger of a single selected note; R/L re-hand the selection (and re-finger it); Ctrl+Z/Y undo/redo; Ctrl+S export.
-  - Unsaved changes prompt Export / Discard / Cancel.
-- State is kept per note index: `notes`, `finger`, `user_set`.
-  - `_rebuild()` makes a new MidiSong (stable order) and `HandAnimator(song, hand, fingering=...)`, which skips the planner.
-- `fingering._states`: fingers given by the file or the user are always honoured, even when they aren't monotonic or repeat a finger. Free notes take the fingers that are left.
+## Fingering editor (miditool/, v26.1.22.SNAPSHOT-01)
+The editor is MIDI Tool, a piano-roll MIDI editor built in a separate project from Hand-thesia's fingering
+editor (which it replaces: the old `editor.py` is gone), brought in as the `miditool` package and run as one of
+`main.App`'s modes (`miditool.app.EditorMode`, from `App.edit`, the menu, Recent and `--edit`).
+- What it edits: a `Document` - the file's tracks with every note pulled out (`Note`: ticks, channel, velocity,
+  `hand` / `finger` / `gliss`, where its note-on / note-off sat in its track) and every other event kept as it
+  was. Export writes the events back in their places and each note's fingering marker right before its note-on
+  ("R3", "Lg"...: the same markers `midi_loader` reads), then reads the file back and refuses to keep it if anything
+  differs. Undo works by transaction (`begin` / `commit`). A loaded song without a MIDI file of its own (a PIG
+  file, notes made in memory) becomes a new document at 120 BPM (`Document.from_song`: a hand per track, the
+  pedals with the right hand). Projects (`.miditool`): the exported MIDI plus the editor's state.
+- Layout, top to bottom: top bar (Open MIDI… - new, on top, append -, Save Project…, Export MIDI, undo / redo,
+  select left / right of the cursor, Draw, Snap, Fingering…, Impose…, Menu; the volume - `common.VolumeSlider`,
+  Hand-thesia's synth -, play and the time); status line (messages, the hovered note, channel chips); ruler;
+  roll (a key gutter on the left, scroll bars) with the velocity / pedal / tempo lanes under it (a dragged
+  divider); then the felt, keyboard and hands (`HandsPanel`).
+- Fingering: a note's own fingering is a solid tag; the planner's suggestion for the rest a hollow one
+  (`Editor.sugg`, from `fingerjob.suggest`: midi_loader's hand rules - markers, track names or registers, else
+  `hand_split` - then each hand's glissandos, slips and `plan_fingering`, honouring every finger given). Right-click
+  one note: hand, then finger; several: one hand, the planner re-fingers them with everything around fixed
+  (`fingerjob.resolve`, here and now, then `profiles.restore_host`). Sequential mode as before. "Apply suggested
+  fingering" makes suggestions real; nothing else changes a note's fingering.
+- Fingering profiles (the Fingering… window): choices for chromatic scales, octaves (4 on black keys / 5 / 4
+  always), scales in thirds (legato / 1-3 2-4 3-5), chromatic thirds (Hanon 50 / 1-3 2-4), sixths, repeated notes,
+  trills, the hand's habits, and how firmly each figure keeps its fingering. A profile goes on top of the active
+  pianist (`planner_pianist`: its behaviour choices, its firmness as fine-tuned figure weights); "Default" is the
+  pianist as it is (`follow_pianist` keeps it up to date). Stored in `pianists/fingering profiles/`; the active one
+  is the app setting "fingering_profile". The new figure choices are pianist behaviours too (`pianist.BEHAVIORS`
+  thirds, chrom_thirds, sixths, octaves "4all", trill "24"; `figures.PREFS`), defaults unchanged - the
+  planner's results with the defaults are the same as before.
+- Long work runs in worker processes (`jobs.py`: a `ProcessPoolExecutor`, "spawn", two workers; one job per
+  kind, the newest inputs taken when one finishes, a stale result dropped by its token): the suggestions and
+  impose's comparison. One pool for the app (`shared_jobs`, `App.editor_jobs`), started on the first visit and
+  stopped by `App.close`; leaving the editor drops its jobs. Inputs are plain data - the active pianist goes as
+  `profiles.pianist_data` - so a worker never reads the user's files. Tests run jobs inline (`jobs.INLINE`).
+- The hands (`hands_panel.py`): built from the document's piano parts (not drums) with each note's own hand /
+  finger, else the suggestion's, in seconds (`doc.note_seconds`), the pedals from its controllers - a `MidiSong`
+  and `HandAnimator(..., fingering=..., repair=False)` per hand, paired; in a thread (a long piece takes a
+  while), `REBUILD_DEBOUNCE` after the last change of notes, timing, events, suggestions or the active pianist;
+  the last ones stay on screen meanwhile. The suggestions are worked out whenever the panel shows, the fingering
+  tags shown or not (`EditorMode.wants_fingering`). They play at the cursor, or the playhead while it plays;
+  `live_poses` (quick while the cursor is dragged on the ruler, or after a jump until `exact_ready`), playback
+  waits for the exact pose after a jump (`hands_waiting`: the player's `update` gets dt 0), `prepare_hands` in the
+  frame's spare time (`EditorMode.idle`). The keys lit are the hands' performance.
+- Hiding the hands: a small translucent tab with a chevron - hanging from the felt over the keys (down: hide)
+  or, hidden, in a 20 px strip at the bottom (up: show); H too. The roll and lanes take the room. Kept in the
+  app setting "editor_hands".
+- Sound: `playback.Player` (the document's timeline in seconds, programs and controllers chased when starting
+  midway) through `HostOut`: Hand-thesia's synth (system or soundfont), the file's odd channels on the left
+  hand's channel and the rest on the right's, the pedals sent as switches, nothing else; without a synth it
+  plays silently (the playhead and hands still move).
+- Esc lets go of a drag, the selection or Draw, then goes back to the menu; leaving (Esc, Menu, closing the
+  window, dropping another file) asks about unsaved changes (Save Project… / Export MIDI / Discard / Cancel).
 
 ## Pianists (pianist.py, hand_editor.py) - added 2026-09-26
 - `Pianist` fields: name, color, anatomy (19 bone ids: mc1-5, pp1-5, mp2-5, dp1-5; in model units, about 1.088 cm each) and behavior.

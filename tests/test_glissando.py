@@ -99,22 +99,26 @@ def test_marking_a_glissando_in_the_editor_and_exporting_it(screen, tmp_path):
     src = tmp_path / "s.mid"
     pm.write(str(src))
     app = main.App(screen, sound=False)
-    app.edit(midi_loader.load_song(str(src)))
-    ed = app.mode
-    run_idx = [i for i, n in enumerate(ed.notes) if n.pitch in ps]
-    chord_idx = [i for i, n in enumerate(ed.notes) if n.pitch not in ps]
-    assert not any(ed.is_gliss(i) for i in run_idx)
-    assert ed.gliss_candidates(chord_idx) is None             # a chord is no glissando
-    assert ed.gliss_candidates(run_idx)
-    ed.set_gliss(run_idx, True)
-    assert all(ed.notes[i].gliss and ed.is_gliss(i) for i in run_idx)
-    ed.render()
+    app.edit(str(src))
+    mode = app.mode
+    ed = mode.editor
+    doc = ed.doc
+    run_ids = [n.id for n in doc.notes.values() if n.pitch in ps]
+    chord_ids = [n.id for n in doc.notes.values() if n.pitch not in ps]
+    mode.settle()                                             # (the suggestions: each note's hand)
+    assert not any(doc.notes[i].gliss for i in run_ids)
+    assert ed.gliss_candidates(chord_ids) is None             # a chord is no glissando
+    assert ed.gliss_candidates(run_ids)
+    ed.set_gliss(run_ids, True)
+    assert all(doc.notes[i].gliss for i in run_ids)
+    mode.settle()
+    assert all(mode.panel.anims[RIGHT].is_gliss(n) for n in mode.panel.song.notes if n.pitch in ps)   # slid
+    mode.render()
     ed.undo()
-    assert not any(ed.notes[i].gliss for i in run_idx)
+    assert not any(doc.notes[i].gliss for i in run_ids)
     ed.undo(redo=True)
     out = tmp_path / "g.mid"
-    fing = {id(n): ("g" if n.gliss else f) for n, f in zip(ed.notes, ed.finger)}
-    midi_loader.save_fingered_midi(str(src), str(out), ed.notes, fing)
+    doc.export(str(out))
     back = midi_loader.load_song(str(out))
     assert sorted(n.pitch for n in back.notes if n.gliss) == ps
     assert not any(n.gliss for n in back.notes if n.pitch not in ps)

@@ -206,7 +206,8 @@ CHROM_R = {0: 2, 1: 3, 2: 1, 3: 3, 4: 1, 5: 2, 6: 3, 7: 1, 8: 3, 9: 1, 10: 3, 11
 CHROM_L = {0: 1, 1: 3, 2: 1, 3: 3, 4: 2, 5: 1, 6: 3, 7: 1, 8: 3, 9: 1, 10: 3, 11: 2}   # 2 on E and B
 
 # A pianist's preferred fingerings for some figures (set by fingering.apply_pianist)
-DEFAULT_PREFS = {"chromatic": "13", "repeated": "321", "trill": "auto", "octaves": "4black"}
+DEFAULT_PREFS = {"chromatic": "13", "repeated": "321", "trill": "auto", "octaves": "4black",
+                 "thirds": "legato", "chrom_thirds": "hanon", "sixths": "4black"}
 PREFS = dict(DEFAULT_PREFS)
 
 # Chromatic fingerings, right hand, by pitch class (the left hand uses the
@@ -400,11 +401,12 @@ def _kp(p):
 
 
 def octave_pair(lo, hi, hand):
-    """RH thumb below, 5 on top (4 on a black key); LH 5 below (4 on black), thumb on top."""
-    four = PREFS.get("octaves", "4black") == "4black"
+    """RH thumb below, 5 on top (4 on a black key); LH 5 below (4 on black), thumb on top.
+    PREFS "octaves": "4black" as just said, "5" always 5, "4all" always 4."""
+    style = PREFS.get("octaves", "4black")
     if hand == RIGHT:
-        return 1, (4 if four and hi % 12 in BLACK else 5)
-    return (4 if four and lo % 12 in BLACK else 5), 1
+        return 1, (4 if style == "4all" or (style == "4black" and hi % 12 in BLACK) else 5)
+    return (4 if style == "4all" or (style == "4black" and lo % 12 in BLACK) else 5), 1
 
 
 # ----------------------------------------------------------------- detection
@@ -859,7 +861,13 @@ def _broken_octaves(notes, ps, hand, put):
         # after a finger change on a repeated note (2-1 in the RH) the thumb
         # spans the octave: the outer note takes 5
         partner_rep = any(abs(ps[k] - p) == 12 and repeated(k) for k in nb)
-        outer = 5 if (partner_rep or not black) else 4
+        style = PREFS.get("octaves", "4black")
+        if partner_rep or style == "5":
+            outer = 5
+        elif style == "4all":
+            outer = 4
+        else:
+            outer = 5 if not black else 4
         if hand == RIGHT:
             f = 1 if role == 'low' else outer
         else:
@@ -882,9 +890,13 @@ def _double_notes(pairs, hand, context, put):
                 j += 1
             if j - i >= 3:
                 tab = CHROM3_R if hand == RIGHT else CHROM3_L
+                simple = [(1, 3), (2, 4)] if hand == RIGHT else [(3, 1), (4, 2)]
                 for k in range(i, j + 1):
                     a, b = pairs[k]
-                    fl, fh = tab[a.pitch % 12]
+                    if PREFS.get("chrom_thirds", "hanon") == "simple":
+                        fl, fh = simple[(k - i) % 2]
+                    else:
+                        fl, fh = tab[a.pitch % 12]
                     put(a, fl, W_THIRDS)
                     put(b, fh, W_THIRDS)
                 i = j + 1
@@ -898,6 +910,18 @@ def _double_notes(pairs, hand, context, put):
             while (j + 1 < n and ivs[j + 1] in (3, 4) and 1 <= abs(lows[j + 1] - lows[j]) <= 2
                    and (j == i or (lows[j + 1] > lows[j]) == (lows[j] > lows[j - 1]))):
                 j += 1
+            if j - i >= 3 and PREFS.get("thirds", "legato") == "simple":
+                # the same three positions again and again (RH up 1-3 2-4 3-5, down 3-5 2-4 1-3;
+                # LH up 5-3 4-2 3-1, down 3-1 4-2 5-3), the hand shifting between them
+                up = lows[j] > lows[i]
+                tab = T3R if hand == RIGHT else T3L
+                for idx, q in enumerate(range(i, j + 1)):
+                    a, b = pairs[q]
+                    fl, fh = tab[idx % 3 if up else 2 - idx % 3]
+                    put(a, fl, W_THIRDS)
+                    put(b, fh, W_THIRDS)
+                i = j + 1
+                continue
             if j - i >= 3:
                 seg = range(i, j + 1)
                 pcs = set(pairs[k][0].pitch % 12 for k in seg) | set(pairs[k][1].pitch % 12 for k in seg)
@@ -991,9 +1015,13 @@ def _double_notes(pairs, hand, context, put):
                 i = j + 1
                 continue
         i += 1
-    # --- other sixths: 1-5, 4 on a black key (RH); LH 5-1, 4 on black
+    # --- other sixths: 1-5, 4 on a black key (RH); LH 5-1, 4 on black (PREFS "sixths": "5" / "4" always)
+    style = PREFS.get("sixths", "4black")
+
+    def outer(p):
+        return 5 if style == "5" else 4 if style == "4" else (4 if p % 12 in BLACK else 5)
     for a, b in pairs:
         if b.pitch - a.pitch in (8, 9):
-            fl, fh = (1, 4 if b.pitch % 12 in BLACK else 5) if hand == RIGHT else (4 if a.pitch % 12 in BLACK else 5, 1)
+            fl, fh = (1, outer(b.pitch)) if hand == RIGHT else (outer(a.pitch), 1)
             put(a, fl, W_SIXTHS)
             put(b, fh, W_SIXTHS)

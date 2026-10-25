@@ -27,30 +27,61 @@ def test_menu_player_and_studio_render(screen):
     assert type(app.mode).__name__ == "PianistStudio"
 
 
-def test_editor_sequential_fingering(screen):
+def test_editor_plays_its_fingering_with_the_hands_and_hides_them(screen):
+    import pianist
+    from midi_loader import RIGHT
     app = app_on(screen)
     app.edit(midi_loader.load_song(midi_path("demo_song.mid")))
-    ed = app.mode
-    assert type(ed).__name__ == "FingeringEditor"
-    first = min(range(len(ed.notes)), key=lambda i: (ed.notes[i].start, -ed.notes[i].pitch))
-    ed.start_sequential(first)
-    hand = ed.seq["hand"]
-    assert all(ed.notes[j].hand == hand for st in ed.seq["steps"] for j in st)
-    ed.render()
-
-    key(app, pygame.K_3)                                  # same hand, finger 3
-    assert ed.finger[first] == 3 and first in ed.user_set
-    assert ed.seq_note() != first                         # moved on
-    nxt = ed.seq_note()
-    key(app, pygame.K_QUOTE if hand == "R" else pygame.K_LSHIFT)   # that hand's 5
-    assert ed.finger[nxt] == 5
-    key(app, pygame.K_BACKSPACE)
-    assert ed.seq_note() == nxt
-    ed.update(0.5)                                        # deferred rebuild of the hands
-    assert ed._rebuild_due is None
-    ed.render()
+    mode = app.mode
+    assert type(mode).__name__ == "EditorMode"
+    ed = mode.editor
+    mode.settle()                                         # suggestions worked out, hands built from them
+    assert len(ed.sugg) == len(ed.doc.notes) and set(mode.panel.anims) == {"R", "L"}
+    roll_with_hands = ed.roll.h
+    # sequential fingering: the hands are built again with the new finger
+    ed.show_fingering = True
+    first = min((n for n in ed.doc.notes.values() if ed.hand_of(n) == RIGHT), key=lambda n: (n.start, -n.pitch))
+    ed.start_sequential(first.id)
+    key(app, pygame.K_3)
+    assert ed.doc.notes[first.id].finger == 3 and ed.seq is not None
     key(app, pygame.K_ESCAPE)
-    assert ed.seq is None and ed.dirty
+    mode.settle()
+    a = mode.panel.anims[RIGHT]
+    n = next(n for n in mode.panel.song.notes if n.hand == RIGHT and n.pitch == first.pitch
+             and abs(n.start - ed.doc.tempo_map().sec(first.start)) < 1e-6)
+    assert a.finger_for(n) == 3
+    mode.seek(1.0)
+    mode.idle(2.0)
+    mode.render()
+    # the arrow hides the keyboard and hands (the roll takes the room), and shows them again
+    arrow = mode.panel.arrow.center
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=arrow))
+    assert not mode.panel.shown and ed.roll.h > roll_with_hands
+    assert pianist.app_setting("editor_hands") is False
+    mode.render()
+    assert mode.panel.arrow.bottom <= screen.get_height() and ed.area.bottom <= mode.panel.arrow.top
+    app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=mode.panel.arrow.center))
+    assert mode.panel.shown and ed.roll.h == roll_with_hands
+    key(app, pygame.K_h)                                  # H too
+    assert not mode.panel.shown
+    key(app, pygame.K_h)
+    assert mode.panel.shown
+    # playing: the hands follow the playhead
+    mode.toggle_play()
+    for _ in range(5):
+        mode.update(0.05)
+    mode.render()
+    assert mode.player.playing and mode.hands_time() > 0.0
+    key(app, pygame.K_SPACE)
+    assert not mode.player.playing
+    # Esc with nothing to clear: back to the menu (nothing unsaved after undoing the finger)
+    key(app, pygame.K_z, pygame.KMOD_CTRL)
+    assert not ed.doc.dirty
+    ed.selection = {first.id}
+    key(app, pygame.K_ESCAPE)                             # (first the selection goes)
+    assert not ed.selection and app.mode is mode
+    assert key(app, pygame.K_ESCAPE) is True
+    assert isinstance(app.mode, main.MainMenu)
 
 
 def test_nail_shrinks_to_the_tip_and_goes_as_the_finger_curls():
@@ -246,11 +277,17 @@ def test_leaving_with_the_pedal_down_silences_the_synth(screen):
             app.edit(song)
         v = app.mode
         v.seek(0.5)
-        if v.paused:
-            v.toggle_pause()
+        if mode == "player":
+            if v.paused:
+                v.toggle_pause()
+        else:
+            v.toggle_play()
+            assert v.player.playing
         for _ in range(10):
             v.update(0.05)
         assert any(m[:3] == (0xB0, 64, 127) for m in port.sent if isinstance(m[0], int))   # the pedal went down
+        if mode == "editor":
+            assert any(m[0] == "on" for m in port.sent)                 # (the notes play through the synth)
         port.sent.clear()
         app.menu()                                                      # leave mid-performance
         for ch in (0, 1):
@@ -407,6 +444,7 @@ def test_volume_and_top_bar_tooltips(screen):
     ed = app.mode
     ed.render()
     assert abs(ed.volume.value - 0.25) < 0.03
+    assert not any(b and b.rect.colliderect(ed.volume.rect) for b in ed.buttons + [ed.play_btn])
     r = ed.volume._track()
     app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(r.right, r.centery)))
     assert app.midi.volume == 1.0

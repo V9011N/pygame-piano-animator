@@ -49,12 +49,12 @@ def test_the_list_keeps_the_newest_five_setups_once_each(tmp_path):
 
 
 def test_launches_are_recorded_and_open_again(screen, tmp_path):
-    import editor
     import main
+    from miditool.app import EditorMode
     app = main.App(screen, sound=False)
     path = song_copy(tmp_path)
     app.edit(path)
-    assert isinstance(app.mode, editor.FingeringEditor)
+    assert isinstance(app.mode, EditorMode)
     app.menu()
     app.play(path)
     assert isinstance(app.mode, main.Visualizer)
@@ -71,7 +71,7 @@ def test_launches_are_recorded_and_open_again(screen, tmp_path):
     assert menu.recent is not None
     menu.render()
     app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_2, mod=0, unicode="2"))
-    assert isinstance(app.mode, editor.FingeringEditor) and app.mode.song.path == path
+    assert isinstance(app.mode, EditorMode) and app.mode.editor.doc.path == path
     assert recent.entries()[0]["mode"] == "edit"                    # (to the top again)
 
 

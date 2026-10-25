@@ -9,7 +9,7 @@ main.py - Hand-thesia: falling-notes player and fingering editor, built on Pygam
 
 Main menu
     Play a MIDI file    browse for a file and watch it in falling-notes mode
-    Fingering editor    browse for a file, fine-tune its fingering, export it
+    Fingering editor    browse for a file, edit its notes and fingering, export it
     Pianists & hands    create pianists (hand anatomy, colour, technique) and
                         choose the active one, used for the hands everywhere
 
@@ -30,7 +30,9 @@ the MIDI synth, or a recording synced to the notes - its speed chosen
 first and fixed. With a recording, its waveform runs under the top bar:
 drag it (Shift: finer) or press , / . (Shift: x10) to line it up.
 
-The editor's controls are listed in editor.py (and shown in the editor itself).
+The fingering editor (a piano-roll MIDI editor: notes, velocities, pedals,
+tempo, fingering) is the miditool package; its controls are listed in
+miditool/editor.py and in the editor itself (F1).
 
 Layout of the player, top to bottom: progress bar, falling-notes area,
 keyboard, and the hand area. The hand skeletons (hands.py, both hands) are
@@ -1403,14 +1405,17 @@ class App:
                 recent.add_play(song.path, soundfont=getattr(self.midi, "path", None),
                                 audio=audio.path if audio else None, speed=speed)
 
-    def edit(self, path_or_song):
-        from editor import FingeringEditor
-        # the editor shows the file's fingering as it is, even where it can't be played
-        song, hands = self._load(path_or_song, repair=False)
-        if song:
-            self._switch(FingeringEditor(self, song, hands))
-            if song.path:
-                recent.add_edit(song.path)
+    def edit(self, path_or_song=None):
+        """The fingering editor (miditool.app.EditorMode) on a MIDI file or project, a loaded song, or nothing."""
+        from miditool.app import EditorMode
+        if isinstance(path_or_song, str) and not os.path.isfile(path_or_song):
+            if isinstance(self.mode, MainMenu):
+                self.mode.message = f"Could not open {os.path.basename(path_or_song)}: no such file"
+            return
+        self._switch(EditorMode(self, path_or_song))
+        path = getattr(path_or_song, "path", None)
+        if path and os.path.isfile(path):
+            recent.add_edit(path)
 
     def open_recent(self, entry):
         """
@@ -1590,6 +1595,9 @@ class App:
     def close(self):
         self.mode.leave()
         self.midi.close()
+        jobs = getattr(self, "editor_jobs", None)          # (the fingering editor's worker processes)
+        if jobs is not None:
+            jobs.shutdown()
 
 
 # --------------------------------------------------------------------------- #
@@ -1679,6 +1687,8 @@ def main():
         if hasattr(app.mode, "seek"):
             app.mode.seek(args.at)
             app.mode.paused = True
+        if hasattr(app.mode, "settle"):
+            app.mode.settle()                   # (the editor: its fingering and hands worked out)
         if hasattr(app.mode, "idle"):
             app.mode.idle(2.0)                  # (the hands' exact pose worked out first, not the quick one)
         app.mode.render()

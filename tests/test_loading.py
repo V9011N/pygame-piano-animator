@@ -72,9 +72,14 @@ def test_the_editor_opens_another_file(screen):
     import main
     app = main.App(screen, sound=False)
     app.edit(midi_path("demo_song.mid"))
-    ed = app.mode
-    first = ed.song
-    assert ed._load_path(midi_path("demo_song.mid"))
-    assert ed.song is not first and ed.hands and len(ed.finger) == len(ed.notes)
-    ed._load_path(midi_path("demo_song.mid") + ".missing")    # a message, not a crash
-    ed.render()
+    mode = app.mode
+    mode.settle()
+    first = mode.editor.doc
+    assert mode.panel.anims
+    assert mode.open_path(midi_path("demo_song.mid"))
+    assert mode.editor.doc is not first and len(mode.editor.doc.notes) == len(first.notes)
+    mode.settle()
+    assert mode.panel.anims and mode.panel.built_for[0] == id(mode.editor.doc)     # (the hands follow)
+    mode.open_path(midi_path("demo_song.mid") + ".missing")    # a message, not a crash
+    assert mode.dialog is not None and "Couldn't open" in mode.dialog.title
+    mode.render()

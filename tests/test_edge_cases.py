@@ -25,10 +25,14 @@ def test_a_file_without_notes_says_so(screen, tmp_path):
     path = write_midi(tmp_path / "silent.mid", [])
     song = midi_loader.load_song(path)
     assert song and len(song) == 0                    # loaded, though empty
-    for go in (app.choose_playback, app.play, app.edit):
+    for go in (app.choose_playback, app.play):
         app.menu()
         go(path)
         assert isinstance(app.mode, main.MainMenu) and "no notes" in app.mode.message
+    app.menu()
+    app.edit(path)                                    # (the editor takes it: notes can be added)
+    assert type(app.mode).__name__ == "EditorMode" and not app.mode.editor.doc.notes
+    app.mode.render()
     # an empty song handed over directly still plays and edits without trouble
     app.play(song)
     v = app.mode
@@ -44,14 +48,21 @@ def test_a_file_without_notes_says_so(screen, tmp_path):
 def test_resizing_under_the_editors_dialog(screen):
     app = main.App(screen, sound=False)
     app.edit(midi_path("demo_song.mid"))
-    ed = app.mode
-    ed.dirty = True
-    ed._guard(lambda: True)                           # "Unsaved fingering changes" asks
-    assert ed.dialog is not None
+    mode = app.mode
+    ed = mode.editor
+    n = next(iter(ed.doc.notes.values()))
+    ed.selection = {n.id}
+    ed.delete_selection()                             # (a change: leaving asks first)
+    ed.selection.clear()
+    assert app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode="")) is True
+    assert mode.dialog is not None and "Unsaved" in mode.dialog.title
     pygame.display.set_mode((700, 480), pygame.RESIZABLE)
     app.handle_event(pygame.event.Event(pygame.VIDEORESIZE, size=(700, 480), w=700, h=480))
-    assert ed.dialog is not None and ed.keyboard.rect.bottom <= 480
-    ed.render()
+    assert mode.dialog is not None and mode.panel.keyboard.rect.bottom <= 480
+    mode.render()
+    mode.dialog.choice = "discard"                    # Discard: back to the menu
+    app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=(1, 1), rel=(0, 0), buttons=(0, 0, 0)))
+    assert isinstance(app.mode, main.MainMenu)
 
 
 def test_dragging_the_waveform_from_the_left_edge(screen, tmp_path):
@@ -82,20 +93,21 @@ def test_a_pianist_called_settings_keeps_the_settings_file():
     assert os.path.exists(pianist.SETTINGS)
 
 
-def test_undo_in_sequential_mode_reaching_the_other_hand(screen):
-    from midi_loader import LEFT, RIGHT
+def test_undo_in_sequential_mode(screen):
+    from midi_loader import RIGHT
     app = main.App(screen, sound=False)
     app.edit(midi_path("demo_song.mid"))
-    ed = app.mode
-    li = next(i for i, n in enumerate(ed.notes) if n.hand == LEFT)
-    ri = next(i for i, n in enumerate(ed.notes) if n.hand == RIGHT)
-    ed.set_note(li, LEFT, 3 if ed.finger[li] != 3 else 2)      # an edit to the left hand...
-    ed.start_sequential(ri)                                    # ...then right-hand sequential fingering
-    at = ed.seq_note()
+    mode = app.mode
+    ed = mode.editor
+    ed.show_fingering = True
+    mode.settle()
+    first = min((n for n in ed.doc.notes.values() if ed.hand_of(n) == RIGHT), key=lambda n: (n.start, -n.pitch))
+    ed.start_sequential(first.id)
+    app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_3, mod=0, unicode="3"))
+    assert ed.doc.notes[first.id].finger == 3 and ed.seq is not None
     app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_z, mod=pygame.KMOD_CTRL, unicode=""))
-    assert ed.seq is not None and ed.seq_note() == at          # undone, and still where it was
-    assert not ed.undo_stack
-    ed.render()
+    assert not ed.doc.notes[first.id].finger                   # undone
+    mode.render()
 
 
 def test_the_speed_given_on_the_command_line_is_kept_in_range(screen):

@@ -30,10 +30,13 @@ editable by hand.
 - **Procedural hands**: inverse kinematics per finger, crossings, thumb-unders, hand
   crossings (the crossing hand always goes over), wrist bounce on repeated chords and forearm
   rotation in tremolos.
-- **Fingering editor**: a DAW-style piano roll above the keyboard and hands. Select notes,
-  right-click to set hand and finger, re-plan groups, see per-note difficulty, and finger note
-  by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift). Exports a copy of
-  the MIDI file with the fingering embedded (or PIG text).
+- **Fingering editor**: a piano-roll MIDI editor above the keyboard and animated hands (a small
+  arrow, or H, hides them). Add, move, resize and delete notes; edit velocities, pedals and tempo
+  (ramps, bake) in lanes under the roll; open another file on top or append it; impose a clean
+  "perfect source" on a played file; save projects (.miditool). Right-click to set hand and finger,
+  finger note by note in **sequential mode** (number keys, or M K O ; ' / V D W A LShift), let the
+  planner suggest the rest (F shows it; fingering profiles choose how scales, octaves, thirds...
+  are fingered). Exports the MIDI file with the fingering embedded, everything else kept as it was.
 - **Recent**: the main menu lists the last five setups you opened - a MIDI file with its soundfont or
   synced recording, or a file in the fingering editor - to open again in one click.
 - **Settings**: drag the keyboard higher or lower on the screen, choose realistic or equal keys,
@@ -74,8 +77,8 @@ remove the old one first): `pip uninstall -y pygame` then `pip install -r requir
 Other options: `--no-sound`, `--speed 0.5`, `--screenshot frame.png --at 12.5`, and
 `--audio recording.wav --audio-speed 0.75 --audio-offset 1.5` to play a synced recording straight away.
 
-Keyboard controls are listed at the top of `main.py` (player) and `editor.py` (editor), and in
-the app's status lines.
+Keyboard controls are listed at the top of `main.py` (player) and `miditool/editor.py` (editor; F1
+shows them in the editor), and in the app's status lines.
 
 ## A single .exe (Windows)
 

@@ -429,7 +429,10 @@ def _apply_preferences(p, base):
     W["pinky_black"] = base["pinky_black"] * b
     W["cross_thumb_black"] = base["cross_thumb_black"] * b
     figures.PREFS.update(chromatic=p.b("chromatic"), repeated=p.b("repeated"),
-                         trill=p.b("trill"), octaves=p.b("octaves"))
+                         trill=p.b("trill"), octaves=p.b("octaves"), thirds=p.b("thirds"),
+                         chrom_thirds=p.b("chrom_thirds"), sixths=p.b("sixths"))
+    if p.b("octaves") == "4all":
+        W["octave_4_white"] = 0.0             # (the model's own dislike of 4 on a white key's octave)
 
 
 # This pianist's reach between each pair of fingers against the default hand's (hands.reach_scale; 1 = the
